@@ -10,10 +10,10 @@ test that plants its condition, and a check that each named test exists.
 
 **What counts as a check.** A top-level function in `src/hub` named `verdict`, `*_verdict`,
 `gate`, `run_gate`, `screen` or `*_screen` -- the names this repo gives the functions that
-turn a measurement into a disposition. That naming is the discovery rule; a decision function
-named otherwise escapes this file, and the fix is to name it what it is -- or, for a guard
-whose name is its job (`review_width`), to list it in `EXPLICIT_GUARDS`, which is a deliberate
-act with a control beside it.
+turn a measurement into a disposition -- plus any function or method marked
+`@hub.declare.decision`, the attribute a guard whose name is its job carries (`Ledger.record`).
+Name and mark are the discovery rule; a decision function with neither escapes this file, and
+the fix is to name it what it is or mark it. There is no hand-kept list of exceptions (#387).
 
 **What counts as a control.** A test that constructs the case the decision exists to detect
 -- a challenger that clears the bar, a gain inside the noise, a ceiling below the MDE, a
@@ -42,13 +42,14 @@ TESTS = ROOT / "tests"
 
 _DECISION_NAME = re.compile(r"^(verdict|[a-z_]+_verdict|gate|run_gate|screen|[a-z_]+_screen)$")
 
-# Guards that decide something without carrying a decision name. Named here so the naming
-# rule stays the discovery rule for everything else, and so a guard added to this list is a
-# deliberate act with a control beside it. `Ledger.record` flags a narrowing interval; on
-# 2026-09-21 its predecessor (`review_width`) compared a --holdout run against a non-holdout
-# one and flagged nothing real -- #385 moved the guard to a method, which is why `_decisions`
-# below also looks inside classes for a name on this list rather than only at module level.
-EXPLICIT_GUARDS: tuple[str, ...] = ("hub.ledger.Ledger.record",)
+
+
+def _marked(node: ast.FunctionDef) -> bool:
+    """Carries `@decision` (`hub.declare.decision`), spelled bare or dotted."""
+    return any((isinstance(d, ast.Name) and d.id == "decision")
+               or (isinstance(d, ast.Attribute) and d.attr == "decision")
+               for d in node.decorator_list)
+
 
 # module.function -> (test file, the control tests). Each named test plants the condition
 # its decision exists to detect. Where a decision has two directions, both are named.
@@ -141,9 +142,8 @@ OWED: dict[str, str] = {
 
 def _decisions(src: Path) -> dict[str, Path]:
     """`module.function` -> file, for every top-level function whose name says it decides,
-    plus every method named in `EXPLICIT_GUARDS` -- `Ledger.record` (#385) is a guard behind a
-    class, not a module-level function, so the naming regex alone cannot find it; the registry
-    still can, deliberately, the same way it already does for a module-level guard."""
+    and every function or method marked `@decision` -- `Ledger.record` (#385) is a guard
+    behind a class, found by its mark rather than a list naming it (#387)."""
     found: dict[str, Path] = {}
     for path in sorted(src.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -153,14 +153,14 @@ def _decisions(src: Path) -> dict[str, Path]:
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 qualified = f"{module}.{node.name}"
-                if _DECISION_NAME.match(node.name) or qualified in EXPLICIT_GUARDS:
+                if _DECISION_NAME.match(node.name) or _marked(node):
                     found[qualified] = path
             elif isinstance(node, ast.ClassDef):
                 for sub in node.body:
                     if not isinstance(sub, ast.FunctionDef):
                         continue
                     qualified = f"{module}.{node.name}.{sub.name}"
-                    if qualified in EXPLICIT_GUARDS:
+                    if _marked(sub):
                         found[qualified] = path
     return found
 
@@ -214,8 +214,12 @@ def test_a_planted_decision_function_is_discovered_and_reported(tmp_path):
     pkg = tmp_path / "hub" / "models"
     pkg.mkdir(parents=True)
     (pkg / "planted.py").write_text(
-        "def verdict(x):\n    return 'ADOPT'\n\n\ndef helper():\n    pass\n", encoding="utf-8")
+        "from hub.declare import decision\n\n\n"
+        "def verdict(x):\n    return 'ADOPT'\n\n\ndef helper():\n    pass\n\n\n"
+        "class Keeper:\n    @decision\n    def flag(self):\n        return True\n\n"
+        "    def unmarked(self):\n        return True\n", encoding="utf-8")
     found = _decisions(tmp_path / "hub")
-    assert found == {"hub.models.planted.verdict": pkg / "planted.py"}, found
+    planted = {"hub.models.planted.verdict", "hub.models.planted.Keeper.flag"}
+    assert found == dict.fromkeys(planted, pkg / "planted.py"), found
     missing = set(found) - (set(CONTROLLED) | set(OWED))
-    assert missing == {"hub.models.planted.verdict"}
+    assert missing == planted, "a marked method is found by its mark, with no list naming it"

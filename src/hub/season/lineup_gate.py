@@ -42,10 +42,9 @@ from hub.draft.board import board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
 from hub.models.experiment import (
-    SEASON_CLUSTER,
     Actions,
     Ceiling,
-    run_gate,
+    Harness,
     walk_forward_inputs,
 )
 from hub.names import player_key
@@ -278,10 +277,12 @@ def declared_ceiling(paired: pl.DataFrame, *,
 
     `ceiling_arm` defaults to the arm this gate declares, for the reason `compare`'s does:
     which arm that should be is #138's one line, and nothing else in the tree names one.
+
+    **#387: the one collapse.** This function's whole body is now `HARNESS._replace(
+    ceiling_arm=CEILING_ARM_NAMES[ceiling_arm]).ceiling(paired)`; it stays as a thin wrapper
+    because `main` calls it by name.
     """
-    if "ceiling_diff" not in paired.columns:
-        return None
-    return Ceiling(CEILING_ARM_NAMES[ceiling_arm], paired["ceiling_diff"])
+    return HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[ceiling_arm]).ceiling(paired)
 
 
 # #335, ADR-0019's amendment: this gate's within-season repeated-measure unit is the roster --
@@ -297,6 +298,13 @@ ACTIONS = Actions(
     remove="REMOVE: the optimiser is worse than sorting on projection. Enumerating every "
            "legal lineup to maximise a win probability actively costs points.",
     show="START YOUR PROJECTIONS: variance-awareness buys nothing detectable.")
+
+# #387: this module's Harness -- one of the seven. `ceiling_arm` is the one field a run
+# overrides: `--ceiling-arm` (#138) picks which of `CEILING_ARM_NAMES` plays, so `main` builds
+# `HARNESS._replace(ceiling_arm=...)` rather than a fifth `Ceiling(...)` construction.
+HARNESS = Harness(name="lineup", arm_a="optimiser", arm_b="projections", within=WITHIN,
+                  ceiling_arm=CEILING_ARM_NAMES[DECLARED_CEILING_ARM], actions=ACTIONS,
+                  unit=UNIT)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -388,11 +396,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             rosters[yr] = made
 
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
-                       name="lineup",
-                       arm_a="optimiser", arm_b="projections", unit=UNIT,
-                       ceiling=declared_ceiling(paired, ceiling_arm=a.ceiling_arm), seed=a.seed,
-                       boards=boards)
+        # #387: `ceiling_arm` is the one field #138 lets a run choose.
+        harness = HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[a.ceiling_arm])
+        run = harness.run(paired, seed=a.seed, boards=boards)
         for line in run.lines:
             print(line)
         print(f"\n  {run.verdict[1]}")

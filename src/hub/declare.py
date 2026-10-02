@@ -36,6 +36,7 @@ module holding a constant can take a spelling from it without a cycle.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
@@ -63,6 +64,20 @@ def not_an_input(value: T, why: str) -> T:
     """A number no prediction can reach, kept out of the digest for the reason given: a
     cache bound, a harness's threshold, the recorded output of a fit a test guards."""
     return value
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def decision(fn: F) -> F:
+    """A guard that decides something without a decision name (`verdict`, `gate`, ...).
+
+    The mark is the discovery rule for rule 18: `tests/contracts/
+    test_every_check_has_a_positive_control.py` finds a function or method carrying it the
+    way it finds a `verdict`, so a guard whose name is its job needs no registry entry (#387).
+    Sets `__decision__` and returns `fn` unchanged."""
+    vars(fn)["__decision__"] = True
+    return fn
 
 
 SPELLINGS = frozenset({fitted.__name__, chosen.__name__, not_an_input.__name__})

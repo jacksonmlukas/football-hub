@@ -77,11 +77,9 @@ from hub.league import REG_SEASON_WEEKS
 from hub.ledger import Ledger
 from hub.models.experiment import (
     BOOTSTRAP,  # used by `noise_sensitivity`, and tests reach it as `bt.BOOTSTRAP`
-    SEASON_CLUSTER,
     Actions,
-    Ceiling,
+    Harness,
     realised_ppg,  # noqa: F401 -- same
-    run_gate,
     stamped_for_publication,  # noqa: F401 -- same; it was written here and moved (#135)
     summarise,  # noqa: F401 -- same
     walk_forward_inputs,
@@ -699,16 +697,18 @@ def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame
                          n_draft_sims=n_draft_sims, n_season_sims=n_season_sims,
                          on_draft=on_draft, correlation=correlation, opp_noise=scale,
                          workers=workers, holdout=holdout)
-        bound = None
-        if with_ceiling:
-            top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
-                          on_draft=on_draft, opp_noise=scale)
-            bound = Ceiling(CEILING_ARM, top["diff"])
+        # An empty frame, not None, without a ceiling: `paired` carries the arms' own `diff`,
+        # the column this harness's ceiling reads, and `Harness.run` reads None as `paired`.
+        top = (ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
+                       on_draft=on_draft, opp_noise=scale)
+               if with_ceiling else pl.DataFrame())
+        bound = HARNESS.ceiling(top)
         rates = join_failure_rates(paired)
-        run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS,
-                       name=f"draft noise x{scale:g}", arm_a="optimizer", arm_b="market",
-                       void=void_condition(rates), ceiling=bound, seed=seed,
-                       bootstrap=bootstrap, boards=boards, ledger=Ledger(write=False))
+        run = HARNESS.run(paired, ceiling_frame=top, name=f"draft noise x{scale:g}",
+                          void=void_condition(rates), seed=seed, bootstrap=bootstrap,
+                          boards=boards,
+                          ledger=HARNESS.ledger if HARNESS.ledger is not None
+                          else Ledger(write=False))
         stamps = (run.stamped.select(STAMPS).row(0, named=True) if run.stamped.height
                   else dict.fromkeys(STAMPS))
         rows.append({"noise_scale": float(scale),
@@ -964,6 +964,15 @@ ACTIONS = Actions(
     remove="REMOVE: championship equity leaves the draft-night output. A tiebreaker "
            "measurably worse than the market steers close calls the wrong way.",
     show="NO CHANGE: the market leads and equity stays a tiebreaker.")
+
+# #387: this module's Harness -- one of the seven, shared by both `run_gate` call sites
+# (`default_gate_mode` and `noise_sensitivity`) since both name the same arms, unit and
+# actions and differ only in `name` and `bootstrap`, which `Harness.run`/the call itself
+# override. `ceiling_column="diff"` names `ceiling()`'s own frame -- not `paired`'s, which
+# carries the *arms'* diff under the same name -- so a caller always hands `HARNESS.ceiling`
+# that separate frame (`top`, below) rather than `paired` itself.
+HARNESS = Harness(name="draft", arm_a="optimizer", arm_b="market", within=WITHIN,
+                  ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff")
 
 
 # Above this share of either arm's drafted names lost to a join failure, the run is VOID
@@ -1299,17 +1308,15 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     for line in correlation.repair_lines():
         print(line)
 
-    bound = None
+    top = pl.DataFrame()  # no ceiling: see noise_sensitivity on why not None
     if ceiling_flag:
         print("  measuring the ceiling: the same arm, given the season in advance ...")
         top = ceiling(boards, realised, n_drafts=n_drafts, seed=seed, rounds=rounds,
                       on_draft=_tick("ceiling") if progress else None)
-        bound = Ceiling(CEILING_ARM, top["diff"])
 
     rates = join_failure_rates(paired)
-    run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=ACTIONS, name="draft",
-                   arm_a="optimizer", arm_b="market", void=void_condition(rates),
-                   ceiling=bound, seed=seed, boards=boards)
+    run = HARNESS.run(paired, ceiling_frame=top, void=void_condition(rates), seed=seed,
+                      boards=boards)
     lines = [*join_report(rates), *run.lines]
     for line in lines:
         print(line)

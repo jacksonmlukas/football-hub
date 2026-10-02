@@ -558,7 +558,7 @@ def test_this_gate_stamps_by_the_one_rule_rather_than_by_a_second_copy_of_it():
     src = inspect.getsource(lg)
     assert "stamped_for_publication" not in src
     assert "cfg_digest" not in src and "data_digest" not in src
-    assert "run_gate(" in src
+    assert "harness.run(" in src, "the run goes through the declaration (#387), not a copy"
 
 
 # --- the gate names its own reads, however it is invoked (issue #247) ---------------------
@@ -577,12 +577,10 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
     accept, since each is exercised above and the seam here is what the stamp names. The
     width history is pointed nowhere.
     """
-    from functools import partial
 
     from hub.draft import cohort as cohort_mod
     from hub.fetch import nflverse as nv
     from hub.models import predict
-    from hub.models.experiment import run_gate
 
     board = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"],
                           "proj_ppg": [20.0, 15.0], "games": [16, 16]})
@@ -607,7 +605,7 @@ def _in_process_gate(monkeypatch, tmp_path, *, inner):
     monkeypatch.setattr(cohort_mod, "cohort",
                         lambda *a, **k: cohort_mod.Cohort([[0, 1]], [[]], ["QB", "RB"]))
     monkeypatch.setattr(lg, "compare", lambda *a, **k: paired)
-    monkeypatch.setattr(lg, "run_gate", partial(run_gate, ledger=Ledger(path=None, write=False), bootstrap=100))
+    monkeypatch.setattr(lg, "HARNESS", lg.HARNESS._replace(ledger=Ledger(path=None, write=False), bootstrap=100))
     out = tmp_path / "paired.parquet"
     assert lg.main(["--seasons", "2024", "--drafts", "1", "--out", str(out)]) == 0
     return pl.read_parquet(out)

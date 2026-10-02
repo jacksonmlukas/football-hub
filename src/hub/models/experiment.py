@@ -1457,3 +1457,114 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
         *stamp.split("\n"),
     ]
     return GateRun(summary, seasons, verdict, lines, stamped)
+
+
+# --- one declaration per gate (#387) -----------------------------------------------------
+#
+# Before this, one gate module assembled the same eight things by hand -- a within-season
+# unit, a ceiling arm's name, three action sentences, a name, a unit, places -- and built its
+# `Ceiling` one of four different ways: `Ceiling(arm, top["diff"])` off a second frame
+# (`backtest.ceiling`'s), two near-identical `declared_ceiling(paired)` functions
+# (`weekly_gate.py`, `lineup_gate.py`), an inline column at the call site (`coverage.py`,
+# `starter_change.py`), and `wf["ceiling_gain"]` twice over (`margin.py`'s two verdicts). Three
+# contract tests then re-listed which gate had which unit, by hand, and drifted from the seven
+# call sites they were meant to describe (#387's own ticket measures the drift). `Harness` is
+# the one declaration: a gate module builds one, once, and reads its ceiling and its verdict
+# off it rather than off four different hand-built shapes.
+#
+# `cluster` is deliberately not a field. `test_gates_cluster_on_the_season.py` already holds
+# every gate to `SEASON_CLUSTER`, so a field here would be a second place that claim could
+# drift from the one every harness in this repo makes; `Harness.run`/`Harness.decide` pass
+# `SEASON_CLUSTER` themselves.
+
+
+class Harness(NamedTuple):
+    """One gate's declaration: what it compares, its own unit and rendering, and the ceiling
+    it reads. `name`, `arm_a`, `arm_b`, `within`, `ceiling_arm`, `actions`, `unit` and `places`
+    are exactly `run_gate`'s own fields, minus `cluster` (see above) and minus the paired
+    frame itself, which a call supplies.
+
+    `ceiling_column` is the one thing a hand-built `Ceiling(...)` call used to spell four
+    different ways: which column of *some* frame carries this harness's ceiling arm's paired
+    difference. It defaults to `"ceiling_diff"`, the column `weekly_gate`, `lineup_gate` and
+    `coverage`'s shape gate all already used; a gate whose ceiling lives under another name
+    (`starter_change`'s `"ceiling"`, `margin`'s `"ceiling_gain"` on its own per-season frame,
+    `backtest`'s `"diff"` on the separate frame its own `ceiling()` returns) names it here
+    instead of a fifth hand-built `Ceiling(...)`.
+
+    `bootstrap` and `ledger` are Harness configuration rather than a `run_gate` call a test
+    monkeypatches past: a fast, isolated test builds `HARNESS._replace(bootstrap=100,
+    ledger=Ledger(path=None))` rather than reaching for `monkeypatch.setattr(module,
+    "run_gate", ...)`.
+    """
+
+    name: str
+    arm_a: str
+    arm_b: str
+    within: tuple[str, ...]
+    ceiling_arm: str
+    actions: Actions
+    unit: str = "points per team game"
+    places: int = 2
+    ceiling_column: str = "ceiling_diff"
+    bootstrap: int = BOOTSTRAP
+    # `None` is `run_gate`'s own default, the file-backed ledger. A test configures an
+    # in-memory one with `HARNESS._replace(ledger=Ledger(path=None))` -- the declaration,
+    # not a monkeypatch of the function it feeds.
+    ledger: Ledger | None = None
+
+    def ceiling(self, frame: pl.DataFrame | None) -> Ceiling | None:
+        """This harness's `Ceiling` off `frame`'s own `ceiling_column` -- the one collapse of
+        the four hand-built constructions #387 replaces. `frame` need not be the paired frame
+        a verdict is read off: `backtest`'s own `ceiling()` returns a second frame and
+        `margin`'s per-season frame carries `"ceiling_gain"` where its paired frame does not,
+        so a caller hands in whichever frame actually carries the column this harness names.
+
+        `None` when `frame` is `None` or carries no such column -- how a run with no
+        `--ceiling`, or a frame this harness never attaches one to, reaches `gate` with no
+        bound, exactly as every hand-built call already did.
+        """
+        if frame is None or self.ceiling_column not in frame.columns:
+            return None
+        return Ceiling(self.ceiling_arm, frame[self.ceiling_column])
+
+    def run(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
+           name: str | None = None, void: str | None = None, seed: int = 0,
+           bootstrap: int | None = None, boards: Mapping[int, ReportedFrame] | None = None,
+           show_n: bool = True, ledger: Ledger | None = None,
+           recipe: str | None = None) -> GateRun:
+        """`run_gate` (#135's composition: `gate` + render + stamp), reading everything but
+        the frame and the run's own preconditions off this declaration.
+
+        `ceiling_frame` defaults to `paired` itself -- the common case, where the ceiling
+        arm's diff rides on the same frame the verdict is read from -- and is given explicitly
+        by a caller whose ceiling lives on a different frame (`backtest`'s `top`).
+
+        `name` overrides the declared name for a caller that varies it per run
+        (`backtest.noise_sensitivity`'s `f"draft noise x{scale:g}"`); every other run reads
+        the declaration's own name. `bootstrap` overrides the declared bootstrap the same way
+        a test's `HARNESS._replace(bootstrap=...)` would, without requiring the replacement.
+        """
+        return run_gate(
+            paired, cluster=SEASON_CLUSTER, within=self.within, actions=self.actions,
+            name=self.name if name is None else name, arm_a=self.arm_a, arm_b=self.arm_b,
+            unit=self.unit, places=self.places, show_n=show_n, void=void,
+            ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
+            seed=seed, bootstrap=self.bootstrap if bootstrap is None else bootstrap,
+            boards=boards, ledger=self.ledger if ledger is None else ledger,
+            recipe=recipe)
+
+    def decide(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
+              void: str | None = None, seed: int = 0,
+              bootstrap: int | None = None) -> GateRun:
+        """`gate` (#386's pure seam) alone -- no render, no stamp, no width write -- for a
+        caller that runs the rule many times over in one process and was never publishing a
+        report each time (`margin`'s two verdicts, each scoring several challengers). Reading
+        `run_gate`'s docstring: this is the half of the composition `Harness.run` is the whole
+        of, and the two exist separately because collapsing them would give `margin` a
+        `run_gate`-shaped side effect -- a width-history write per challenger -- it never had.
+        """
+        return gate(paired, cluster=SEASON_CLUSTER, within=self.within,
+                   ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
+                   actions=self.actions, void=void, seed=seed,
+                   bootstrap=self.bootstrap if bootstrap is None else bootstrap)

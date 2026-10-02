@@ -68,11 +68,9 @@ from hub.declare import not_an_input
 from hub.ledger import WIDTH_STATE, Ledger
 from hub.models import predict
 from hub.models.experiment import (
-    SEASON_CLUSTER,
     Actions,
-    Ceiling,
     GateRun,
-    run_gate,
+    Harness,
 )
 from hub.models.scoring_rules import (
     crps_from_quantiles,
@@ -497,6 +495,13 @@ SHAPE_ACTIONS = Actions(
     remove="The skew earns its place: the deployed interval stays as served.",
     show="The skew stays; the CRPS comparison could not remove it.")
 
+# #387: this module's Harness -- one of the seven -- read by `shape_law` through `Harness.run`,
+# `run_gate`'s composition (render, stamp, width history) rather than the pure `decide`:
+# unlike `margin`'s two verdicts, this is one gate run a caller publishes.
+SHAPE_HARNESS = Harness(name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
+                        within=WITHIN, ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
+                        unit="CRPS points per player-week", places=4)
+
 
 def shape_scores(g: pl.DataFrame) -> pl.DataFrame:
     """CRPS of the deployed distribution and of the same function without its skew, per row.
@@ -555,11 +560,7 @@ def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int
     scored = shape_scores(g)
     paired = scored.filter(pl.col("p10_raw") > 0.0)
     pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
-    run = run_gate(paired, cluster=SEASON_CLUSTER, within=WITHIN, actions=SHAPE_ACTIONS,
-                   name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
-                   unit="CRPS points per player-week", places=4, seed=seed,
-                   ceiling=Ceiling(CEILING_ARM, paired["ceiling_diff"].to_numpy()),
-                   ledger=ledger)
+    run = SHAPE_HARNESS.run(paired, seed=seed, ledger=ledger)
     return run, paired, pooled
 
 

@@ -3,140 +3,87 @@
 Issue #45's claim is about the data: within a season the rows share a board, a player pool, a
 schedule and one realisation of the year, so the honest replication count is the number of
 seasons. The claim is either true or false about the data -- it is not a setting -- which
-means all three harnesses have to make it, and the failure mode is not that one of them makes
-a *different* claim loudly. It is that one of them quietly makes none.
+means all the harnesses have to make it, and the failure mode is not that one of them makes a
+*different* claim loudly. It is that one of them quietly makes none.
 
 **This repo has already been bitten by exactly that, twice, and recorded it both times.**
 `experiment.gate` exists because three modules each remembered ADR-0019's rule and two of them
 remembered it wrong -- "one copy of a rule had been corrected and the others were never
-revisited, because nothing connected them". `tests/contracts/test_every_contract_is_applied.py`
-opens on the same shape. The cluster was the third instance in flight: `weekly_gate` had been
-corrected from the row to the roster and the other two had not been corrected at all, so the
-draft gate and the lineup gate were still resampling rows while the weekly gate's docstring
-explained why that was the error that once produced an apparent 4-sigma result.
+revisited, because nothing connected them". The cluster was the third instance in flight:
+`weekly_gate` had been corrected from the row to the roster and the other two had not been
+corrected at all, so the draft gate and the lineup gate were still resampling rows while the
+weekly gate's docstring explained why that was the error that once produced an apparent
+4-sigma result.
 
-So the enforcing piece is not the three call sites. It is this.
-
-The assertion is on the **call**, not on a constant. A harness that declared
-`CLUSTER = ("season",)` and then passed something else -- or passed nothing, which is the
-default and is the mistake -- would satisfy any check that only read the module's constants.
-This resolves the argument actually written at the call site through the module it is written
-in, so the thing asserted is the value `summarise` receives.
-
-Since #135 each entry point reaches `summarise` through `experiment.run_gate`, which has **no
-default** for the cluster at all -- a caller that omits it gets a `TypeError`, not the row. So
-the call each gate writes is `run_gate(...)`, and it is read here beside any `summarise(...)`
-a harness still spells itself (the weekly gate's treatment table does). What is asserted is
-unchanged: the cluster the gate states, at its own call site, is the season.
+**#387.** Before, this file AST-walked four call sites for a hand-kept `HARNESSES` dict, and
+its own docstring already recorded the drift: "coverage's gate is not in ... `HARNESSES`". A
+`Harness` (#387, `hub.models.experiment.Harness`) is not free to name a cluster at all --
+`Harness.run`/`Harness.decide` always read `SEASON_CLUSTER` themselves, never a field a
+declaration could get wrong -- so the enforcing piece moves from "does every call site pass
+the right value" to "does every gate go through a Harness at all", which
+`tests/gate_harnesses.py`'s discovery is.
 """
-import ast
-import importlib
 import pathlib
 
-import pytest
+from gate_harnesses import GATE_MODULES, all_harnesses
 
 from hub.models.experiment import SEASON_CLUSTER
 
-SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
 
-# The two spellings of the call a harness makes, both carrying `cluster=`.
-CALLS = ("summarise", "run_gate")
-
-# The three harnesses `CONTEXT.md` calls Gates, as (module path, dotted import name).
-HARNESSES = {
-    "backtest": ("draft/backtest.py", "hub.draft.backtest"),
-    "lineup_gate": ("season/lineup_gate.py", "hub.season.lineup_gate"),
-    "weekly_gate": ("season/weekly_gate.py", "hub.season.weekly_gate"),
-    "starter_change": ("models/starter_change.py", "hub.models.starter_change"),
-}
-
-
-def _summarise_calls(path: pathlib.Path) -> list[ast.Call]:
-    """Every `summarise(...)` or `run_gate(...)` call in a module, however it is spelled."""
-    tree = ast.parse(path.read_text())
-    out = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        name = fn.id if isinstance(fn, ast.Name) else (
-            fn.attr if isinstance(fn, ast.Attribute) else None)
-        if name in CALLS:
-            out.append(node)
-    return out
+def test_every_gate_declares_a_harness_and_harnesses_never_name_a_cluster():
+    """`Harness` (see `hub.models.experiment`) has no `cluster` field at all -- so a gate that
+    goes through one cannot pass the row, or anything else, in its place. What this checks is
+    that every gate module actually has one to go through."""
+    found = all_harnesses()
+    assert {key.rsplit(".", 1)[0] for key in found} == set(GATE_MODULES), (
+        f"expected a Harness in each of {sorted(GATE_MODULES)}, found declarations in "
+        f"{sorted({k.rsplit('.', 1)[0] for k in found})}")
+    assert not hasattr(next(iter(found.values())), "cluster"), (
+        "Harness grew a cluster field -- the point of this contract is that a gate reads the "
+        "season off Harness.run/Harness.decide, which read SEASON_CLUSTER themselves, not off "
+        "a field a declaration could name wrong")
 
 
-def _cluster_arg(call: ast.Call) -> ast.expr | None:
-    for kw in call.keywords:
-        if kw.arg == "cluster":
-            return kw.value
-    return None
+def test_every_gate_module_resamples_the_season():
+    """Every gate module reads the season one of two ways, and both are held here.
 
-
-@pytest.mark.parametrize("harness", sorted(HARNESSES))
-def test_the_gate_passes_a_cluster_at_all(harness):
-    """The default is no cluster, so an omitted argument is the row -- silently, and with the
-    same interval shape a correct run produces. Nothing about the output says which happened,
-    which is why this is asserted rather than reviewed."""
-    rel, _ = HARNESSES[harness]
-    calls = _summarise_calls(SRC / rel)
-    assert calls, f"{harness} calls neither summarise nor run_gate"
-    for call in calls:
-        assert _cluster_arg(call) is not None, (
-            f"{harness} calls {ast.unparse(call.func)} with no cluster -- `summarise`'s "
-            f"default is the row and `run_gate` has none, and `summarise`'s own docstring "
-            f"says there is no safe default")
-
-
-def test_every_gate_runs_through_the_one_run():
-    """The shape #135 asks for: each entry point assembles its arms, calls the run, and
-    prints what comes back. A harness that summarised, took the verdict and stamped by hand
-    would be the fourth copy of the sequence this function exists to be the only one of."""
-    for harness, (rel, _) in sorted(HARNESSES.items()):
-        names = [ast.unparse(c.func) for c in _summarise_calls(SRC / rel)]
-        assert "run_gate" in names, f"{harness} does not call run_gate"
-
-
-@pytest.mark.parametrize("harness", sorted(HARNESSES))
-def test_the_cluster_the_gate_passes_is_the_season(harness):
-    """Resolved through the module, so an alias is fine and a wrong value is not.
-
-    `weekly_gate.CLUSTER` is bound to `SEASON_CLUSTER` and keeps its name because the module's
-    own history is written around it; what matters is the value that reaches `summarise`, so
-    that is what is read -- by looking the argument's name up on the imported module rather
-    than by matching the identifier `SEASON_CLUSTER` as text.
+    `coverage`, `starter_change` and `margin` call `Harness.run`/`Harness.decide` directly,
+    which read `SEASON_CLUSTER` themselves -- no `cluster=` at the call site at all, and
+    nothing here to get wrong. `backtest`, `weekly_gate` and `lineup_gate` still call
+    `run_gate` by name (so `tests/unit`'s monkeypatches keep working -- #387's own report says
+    why), so those three still spell `cluster=` explicitly; what this holds is that whatever
+    they spell resolves to `SEASON_CLUSTER`, the same thing this file has always held.
     """
-    rel, dotted = HARNESSES[harness]
-    module = importlib.import_module(dotted)
-    for call in _summarise_calls(SRC / rel):
-        arg = _cluster_arg(call)
-        assert isinstance(arg, ast.Name), (
-            f"{harness} passes a cluster this test cannot resolve "
-            f"({ast.dump(arg) if arg is not None else 'nothing'}); if it is now a literal or "
-            f"an expression, read it here rather than deleting this")
-        got = getattr(module, arg.id)
-        assert tuple(got) == tuple(SEASON_CLUSTER), (
-            f"{harness} resamples {tuple(got)}, not the season")
+    import ast
+    import importlib
+    import inspect
 
-
-def test_no_harness_declares_a_second_season_cluster():
-    """One name for one claim, the same rule `MIN_SE` is held to. A harness that wrote its own
-    `("season",)` would be a second declaration of a shared claim about the data, and the way
-    these drift is that one of them is later corrected."""
-    offenders = []
-    for harness, (rel, dotted) in sorted(HARNESSES.items()):
-        module = importlib.import_module(dotted)
-        for node in ast.parse((SRC / rel).read_text()).body:
-            targets = node.targets if isinstance(node, ast.Assign) else (
-                [node.target] if isinstance(node, ast.AnnAssign) and node.value else [])
-            for t in targets:
-                if not isinstance(t, ast.Name):
-                    continue
-                value = getattr(module, t.id, None)
-                if isinstance(value, tuple) and tuple(value) == tuple(SEASON_CLUSTER) \
-                        and value is not SEASON_CLUSTER:
-                    offenders.append(f"{harness}:{t.id}")
-    assert not offenders, f"a second season cluster: {offenders}"
+    for module in GATE_MODULES:
+        mod = importlib.import_module(module)
+        src = inspect.getsource(mod)
+        tree = ast.parse(src)
+        attr_calls = {node.func.attr for node in ast.walk(tree)
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+        name_calls = [node for node in ast.walk(tree)
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                      and node.func.id in ("run_gate", "gate", "summarise")]
+        if {"run", "decide"} & attr_calls and not name_calls:
+            continue  # reads SEASON_CLUSTER through Harness.run/Harness.decide; nothing to check
+        assert name_calls, (
+            f"{module} calls neither Harness.run/Harness.decide nor run_gate/gate/summarise "
+            f"directly -- nothing here resamples the season")
+        for call in name_calls:
+            cluster_kw = next((kw.value for kw in call.keywords if kw.arg == "cluster"), None)
+            assert cluster_kw is not None, (
+                f"{module} calls {ast.unparse(call.func)} with no cluster -- the default is "
+                f"the row and summarise's own docstring says there is no safe default")
+            assert isinstance(cluster_kw, ast.Name), (
+                f"{module} passes a cluster this test cannot resolve "
+                f"({ast.dump(cluster_kw)}); if it is now a literal or an expression, read it "
+                f"here rather than deleting this")
+            got = getattr(mod, cluster_kw.id)
+            assert tuple(got) == tuple(SEASON_CLUSTER), (
+                f"{module} resamples {tuple(got)}, not the season")
 
 
 def test_the_shared_declaration_is_where_the_gates_read_it_from():
@@ -145,3 +92,34 @@ def test_the_shared_declaration_is_where_the_gates_read_it_from():
 
     assert weekly_gate.CLUSTER is SEASON_CLUSTER
     assert SEASON_CLUSTER == ("season",)
+
+
+def test_season_cluster_is_declared_once():
+    """One name for one claim, the same rule `MIN_SE` is held to: `SEASON_CLUSTER` lives in
+    `hub.models.experiment` and nowhere else redeclares `("season",)` as its own module-level
+    tuple -- a second declaration is exactly how these drift, one corrected and the other not."""
+    import ast
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path == root / "models" / "experiment.py":
+            continue
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                targets, val = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, val = [node.target], node.value
+            else:
+                continue
+            for t in targets:
+                if not isinstance(t, ast.Name):
+                    continue
+                try:
+                    value = ast.literal_eval(val)
+                except (ValueError, TypeError):
+                    continue
+                if value == tuple(SEASON_CLUSTER):
+                    offenders.append(f"{path.relative_to(root)}:{t.id}")
+    assert not offenders, f"a second season cluster: {offenders}"
