@@ -289,6 +289,15 @@ repair cannot bring inside the bound is refused exactly as before. A repair that
 on the terminal as it happens, and in the **Pin** beside the cache entry it wrote, because the
 repaired frame is served from that entry long after the line has scrolled past.
 
+**Replay**:
+A source adapter that serves a run's nflverse reads from a recorded set instead of the
+network, byte for byte, so a run can be repeated offline and its data digest reproduced. The
+second adapter at the one nflverse seam (the network is the first), which is what makes that
+seam real rather than hypothetical. Not a **Snapshot**: a Snapshot is one dated capture of the
+betting market and is itself the record; a Replay is a recording of what one run read, kept so
+the run can be repeated, and it never stands in for a fetch the run did not make.
+_Avoid_: frozen capture, panel archive (the test helper it replaces).
+
 ### In-season
 
 **Usage**:
