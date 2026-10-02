@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from hub import atomic
 from hub.paths import ROOT
 
 if TYPE_CHECKING:                  # `board` imports this module, so runtime would cycle
@@ -78,10 +79,8 @@ def snapshot(board: pl.DataFrame, *, on: date | None = None,
         return None
     day = on or _today()
     out = (base or ARCHIVE) / f"date={day.isoformat()}"
-    out.mkdir(parents=True, exist_ok=True)
     path = out / "adp.parquet"
-    rows.with_columns(pl.lit(day.isoformat()).alias("date")).write_parquet(path)
-    return path
+    return atomic.write_parquet(rows.with_columns(pl.lit(day.isoformat()).alias("date")), path)
 
 
 def history(base: Path | None = None) -> pl.DataFrame:

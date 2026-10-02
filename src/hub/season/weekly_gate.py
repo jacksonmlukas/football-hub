@@ -67,11 +67,13 @@ import argparse
 import sys
 import textwrap
 from collections.abc import Sequence
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import polars as pl
 
+from hub import atomic
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
 from hub.declare import not_an_input
@@ -964,7 +966,7 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                           *treatment_report(effects, restricted=restrict)]))
         print(f"\n  {run.verdict[1]}")
         if a.out:
-            run.stamped.write_parquet(a.out)
+            atomic.write_parquet(run.stamped, Path(a.out))
             print(f"\n  wrote {run.stamped.height} paired rows to {a.out}")
         return 0
 
