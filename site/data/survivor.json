@@ -1,15 +1,10 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-09-30T16:39:15+00:00",
+  "generated_at": "2026-10-03T17:53:08+00:00",
   "shape": "rows",
-  "n": 2,
+  "n": 1,
   "rows": [
-    {
-      "week": 4,
-      "team": "BAL",
-      "win_prob": 0.8166303325052899
-    },
     {
       "week": 5,
       "team": "DAL",
@@ -24,7 +19,7 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.6304817503356368,
+  "survival": 0.7720528190539049,
   "unpriced_weeks": [
     6,
     7,
@@ -41,15 +36,16 @@
     18
   ],
   "weeks_remaining": [
-    4,
     5
   ],
   "weeks_played": [
     1,
     2,
-    3
+    3,
+    4
   ],
   "spent": [
+    "BAL",
     "JAX",
     "KC",
     "SF"
