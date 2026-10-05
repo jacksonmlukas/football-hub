@@ -673,21 +673,20 @@ def test_a_pin_killed_before_the_replace_leaves_the_previous_pin_byte_identical(
     def killed(src, dst):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("hub.atomic.os.replace", killed)
     # `diagnose_mode` only writes when the pin is absent, so the write is driven the way a
     # first run reaches it: the path claims to be absent while the old bytes are on disk.
     class Unpinned(Path):
         def exists(self, **_):
             return False
 
-    try:
+    # Scoped, so the kill is lifted for the read below without `undo()` also lifting the
+    # autouse network and data guards. `raises` is the assertion that the kill fired: a write
+    # that never reached `os.replace` passes this block's body and fails here, which is what
+    # makes the test a control.
+    with monkeypatch.context() as kill, pytest.raises(KeyboardInterrupt):
+        kill.setattr("hub.atomic.os.replace", killed)
         bt.diagnose_mode(board_path=Unpinned(snap), rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
                          n_season_sims=250, seed=0, out=None)
-    except KeyboardInterrupt:
-        pass
-    else:
-        raise AssertionError("the planted kill never fired: the write is not routed")
-    monkeypatch.undo()
     assert snap.read_bytes() == before
 
 

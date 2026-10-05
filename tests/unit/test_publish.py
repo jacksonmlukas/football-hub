@@ -457,6 +457,12 @@ def test_an_empty_board_from_a_reachable_espn_is_published(site, tmp_path, monke
     assert json.loads((site / "live.json").read_text())["rows"] == []
 
 
+# `--week` named, because without it `main` asks the store for the latest week -- the real
+# `data/processed`, whose presence would then decide a test's coverage (#410). The live overlay
+# does not use a week at all.
+_WEEK_1 = ["--week", "1"]
+
+
 def test_the_cli_says_which_of_the_three_outcomes_happened(tmp_path, monkeypatch, capsys):
     """What the unattended refresher branches on, and the reason it is an exit code.
 
@@ -465,15 +471,13 @@ def test_the_cli_says_which_of_the_three_outcomes_happened(tmp_path, monkeypatch
     with games and a board with none are both ESPN answering, and both are published.
     """
     monkeypatch.setattr(publish, "SITE", tmp_path)
-    # `--week` named, because without it `main` asks the store for the latest week -- the real
-    # `data/processed`, whose presence would then decide this test's coverage (#410). The live
-    # overlay does not use a week at all.
+    argv = ["--live", *_WEEK_1]
     _espn_answering(monkeypatch, tmp_path / "cache", _ONE_GAME)
-    assert publish.main(["--live", "--week", "1"]) == 0
+    assert publish.main(argv) == 0
     _espn_answering(monkeypatch, tmp_path / "cache", {"events": []})
-    assert publish.main(["--live", "--week", "1"]) == 0, "an empty board is an answer, and is published"
+    assert publish.main(argv) == 0, "an empty board is an answer, and is published"
     _espn_answering(monkeypatch, tmp_path / "cache", None)
-    assert publish.main(["--live", "--week", "1"]) == publish.NOTHING_FRESH
+    assert publish.main(argv) == publish.NOTHING_FRESH
     assert publish.NOTHING_FRESH not in (0, 1), "0 is published and 1 is a broken program"
     assert "unavailable; last-good kept" in capsys.readouterr().out
 
@@ -485,7 +489,7 @@ def test_the_overlays_league_is_the_one_asked_for(tmp_path, monkeypatch):
     asked = []
     monkeypatch.setattr("hub.fetch.espn.live_state",
                         lambda league="nfl", **_: asked.append(league) or [])
-    assert publish.main(["--live", "--league", "cfb", "--week", "1"]) == 0  # --week: see #410
+    assert publish.main(["--live", "--league", "cfb", *_WEEK_1]) == 0
     assert asked == ["cfb"]
     assert json.loads((tmp_path / "live.json").read_text())["league"] == "cfb"
 
