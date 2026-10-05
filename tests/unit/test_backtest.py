@@ -7,6 +7,8 @@ pre-registered design went unrecorded. See ADR-0007.
 Everything here runs offline. That is the point: a backtest whose statistics can only be
 exercised by hitting ESPN is one nobody re-runs, which is how P0 ended up unreproducible.
 """
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 import pytest
@@ -656,6 +658,37 @@ def test_diagnose_pins_the_board_on_the_first_run_and_reuses_it_on_the_second(
     assert not live[0].report.served and pinned[0].report.served
     assert pinned[0].frame.columns == live[0].frame.columns
     assert pinned[1]["rounds"] == bt.DEFAULT_ROUNDS and pinned[1]["n_draft_sims"] == 12
+
+
+def test_a_pin_killed_before_the_replace_leaves_the_previous_pin_byte_identical(
+        monkeypatch, tmp_path):
+    """#408: the pin is not scratch -- every later `--diagnose` reads it back as its input,
+    and `exists()` means pinned. A write over it that dies after the scratch is written and
+    before the replace must leave the previous pin as it was, not truncated."""
+    _diagnose_seams(monkeypatch, [_CLEAR])
+    snap = tmp_path / "board.parquet"
+    pl.DataFrame({"player": ["old pin"]}).write_parquet(snap)
+    before = snap.read_bytes()
+
+    def killed(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("hub.atomic.os.replace", killed)
+    # `diagnose_mode` only writes when the pin is absent, so the write is driven the way a
+    # first run reaches it: the path claims to be absent while the old bytes are on disk.
+    class Unpinned(Path):
+        def exists(self, **_):
+            return False
+
+    try:
+        bt.diagnose_mode(board_path=Unpinned(snap), rounds=bt.DEFAULT_ROUNDS, n_draft_sims=12,
+                         n_season_sims=250, seed=0, out=None)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("the planted kill never fired: the write is not routed")
+    monkeypatch.undo()
+    assert snap.read_bytes() == before
 
 
 def test_diagnose_without_a_pin_builds_live_and_writes_nothing(monkeypatch, tmp_path,
