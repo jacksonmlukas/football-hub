@@ -477,6 +477,33 @@ def test_advancing_the_field_through_the_week_prices_what_a_chalk_pick_cannot_ea
     assert crowded.advanced > crowded.unadvanced
 
 
+def test_a_ranking_handed_to_leverage_is_priced_instead_of_the_live_one():
+    """#406. The `ranking=` branch of `leverage` (what `scripts/leverage_study.py` takes, so a
+    re-run prices the committed free pick and candidates rather than re-ranking the live
+    board) was reached by no test: coverage reported its one line missing because it *was*
+    missing. On HOARD the live free pick is KC; handing it ("SF", [SF, BUF]) must price
+    exactly those two against SF, so KC appears nowhere -- not as the fallback, not as a row."""
+    field = pool.Field(HOARD, [1, 2])
+    live_free, live = pool.candidate_ranking(field.grid, 1, field.cfg, [], None, 3)
+    assert live_free == "KC"
+    handed = [c for c in live if c[0] in {"SF", "BUF"}]
+    assert {t for t, _, _ in handed} == {"SF", "BUF"}
+    rows = pool.leverage(field, week=1, entries=12, pot=420.0, at=(1.0,), trials=40,
+                         rng=np.random.default_rng(3), ranking=("SF", handed))
+    assert [(r.team, r.fallback) for r in rows] == [("BUF", "SF")]
+
+
+def test_a_ranking_whose_free_pick_is_not_a_candidate_is_refused():
+    """#406. The guard on the line after the ranking is read -- every other candidate is
+    compared against the free pick's figure, so a free pick with no tuple has nothing to be
+    compared against. Reached only through `ranking=`, since `candidate_ranking` returns the
+    free pick as its own first candidate."""
+    field = pool.Field(HOARD, [1, 2])
+    _, live = pool.candidate_ranking(field.grid, 1, field.cfg, [], None, 3)
+    with pytest.raises(ValueError, match="'ZZZ' is not among the 3 candidates"):
+        pool.leverage(field, week=1, entries=12, pot=420.0, trials=10, ranking=("ZZZ", live))
+
+
 def test_a_week_with_nothing_ahead_has_no_term_to_measure():
     with pytest.raises(ValueError, match="nothing priced after it"):
         pool.leverage(pool.Field(HOARD, [1, 2]), week=2, entries=12, pot=420.0, trials=10)
