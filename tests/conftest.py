@@ -54,6 +54,18 @@ def _is_local(address: object) -> bool:
     return False
 
 
+def _repo_frames() -> str:
+    """The innermost three frames inside this repo, `a.py:1 <- b.py:2 <- c.py:3`.
+
+    What a guard's message says besides the address or path it caught: the address names
+    nothing a reader can act on, and the frames say which seam to stub or which default to
+    redirect.
+    """
+    ours = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()
+            if f"{os.sep}hub{os.sep}" in f.filename or "tests" in f.filename]
+    return " <- ".join(ours[-3:]) or "outside this repo"
+
+
 @pytest.fixture(autouse=True)
 def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
     """Every test that is not `golden` runs with the wire cut, and the attempt is recorded.
@@ -83,9 +95,7 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
                 return real(self, address, *a, **k)
             # The address alone is an IP, which names nothing a reader can act on. The frames
             # inside this repo are what say which seam to stub.
-            ours = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()
-                    if f"{os.sep}hub{os.sep}" in f.filename or "tests" in f.filename]
-            reached.append(f"{address} via {' <- '.join(ours[-3:]) or 'outside this repo'}")
+            reached.append(f"{address} via {_repo_frames()}")
             raise LiveCallInTheOfflineSuite(
                 f"{request.node.nodeid} opened a socket to {address!r}.")
         return _blocked
@@ -186,9 +196,7 @@ def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_fa
             if under(path):
                 # The path alone names a file, not the default that led there; the frames
                 # inside this repo say which constant to redirect.
-                ours = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()
-                        if f"{os.sep}hub{os.sep}" in f.filename]
-                touched.append(f"{name}({os.fspath(path)!r}) via {' <- '.join(ours[-3:])}")
+                touched.append(f"{name}({os.fspath(path)!r}) via {_repo_frames()}")
                 raise RealDataTouched(f"{request.node.nodeid} reached {path!r} via {name}.")
             return real(path, *a, **k)
         return _watched
