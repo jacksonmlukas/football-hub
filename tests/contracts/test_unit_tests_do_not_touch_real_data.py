@@ -13,6 +13,7 @@ the guard has to fire on a checkout with no `data/` as well as on one with.
 """
 from __future__ import annotations
 
+import importlib
 import re
 import subprocess
 import sys
@@ -21,7 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import REDIRECTED_DEFAULTS, WRAPPED_CALLS
+# The guard's own tables. By name, not `from tests.conftest import`: the type checker's search path
+# has `tests/` on it as a root, so it cannot find the module under that dotted name.
+_GUARD = importlib.import_module("tests.conftest")
+REDIRECTED_DEFAULTS, WRAPPED_CALLS = _GUARD.REDIRECTED_DEFAULTS, _GUARD.WRAPPED_CALLS
 
 ROOT = Path(__file__).resolve().parents[2]
 
