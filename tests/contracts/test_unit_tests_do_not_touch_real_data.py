@@ -13,6 +13,7 @@ the guard has to fire on a checkout with no `data/` as well as on one with.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -23,11 +24,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _run(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
-    (tmp_path / "test_planted.py").write_text(textwrap.dedent(body))
+def _run(tmp_path: Path, body: str, where: str = "") -> subprocess.CompletedProcess[str]:
+    planted = tmp_path / where / "test_planted.py"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(textwrap.dedent(body))
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(tmp_path / "test_planted.py"), "-q",
+        [sys.executable, "-m", "pytest", str(planted), "-q",
          "-c", str(tmp_path / "pytest.ini"), "--rootdir", str(tmp_path),
          "-p", "tests.conftest", "-p", "no:cacheprovider"],
         cwd=ROOT, capture_output=True, text=True, timeout=120)
@@ -44,6 +47,53 @@ def test_a_test_that_stats_a_real_data_path_fails(tmp_path):
     assert got.returncode != 0, got.stdout
     assert "touched the repo's real data/ directory" in got.stdout, got.stdout
     assert "roster.parquet" in got.stdout
+
+
+def _callers(out: str) -> list[str]:
+    """Every `file:line` a guard's message names after `via`, from a child pytest's output."""
+    segments = re.findall(r"via ([\w.]+:\d+(?: <- [\w.]+:\d+)*)", out)
+    assert segments, out
+    return [frame for seg in segments for frame in seg.split(" <- ")]
+
+
+def test_the_data_guard_names_its_repo_callers_not_itself(tmp_path):
+    # #414: `_repo_frames()` counted its own frame and the guard closure, both in conftest.py,
+    # so the three slots held `conftest.py <- conftest.py` and the `hub/` frame saying which
+    # default to redirect was gone. Nothing failed: only the message got worse. The plant
+    # reaches `inspect._available`, a `hub/` function that stats its argument.
+    got = _run(tmp_path, """
+        from hub import inspect
+        from hub.paths import DATA
+
+        def test_leaks():
+            try:
+                inspect._available(DATA / "planted_leak")
+            except Exception:
+                pass
+        """)
+    assert got.returncode != 0, got.stdout
+    frames = _callers(got.stdout)
+    assert not [f for f in frames if f.startswith("conftest.py:")], frames
+    assert any(f.startswith("inspect.py:") for f in frames), frames
+
+
+def test_the_network_guard_names_its_repo_callers_not_itself(tmp_path):
+    # The same defect in the network guard. The plant lives under a `tests/` directory, which is
+    # what the helper's filter takes for this repo's own code; 203.0.113.0/24 is TEST-NET-3 and
+    # the guard raises before any packet is sent.
+    got = _run(tmp_path, """
+        import socket
+
+        def test_reaches():
+            try:
+                socket.socket().connect(("203.0.113.1", 9))
+            except Exception:
+                pass
+        """, where="tests")
+    assert got.returncode != 0, got.stdout
+    frames = _callers(got.stdout)
+    assert not [f for f in frames if f.startswith("conftest.py:")], frames
+    assert any(f.startswith("test_planted.py:") for f in frames), frames
 
 
 def test_a_test_that_stays_in_its_tmp_path_passes(tmp_path):

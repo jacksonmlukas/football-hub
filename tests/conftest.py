@@ -54,15 +54,25 @@ def _is_local(address: object) -> bool:
     return False
 
 
+_THIS_FILE = os.path.abspath(__file__)
+
+
 def _repo_frames() -> str:
-    """The innermost three frames inside this repo, `a.py:1 <- b.py:2 <- c.py:3`.
+    """The innermost three callers inside this repo, `a.py:1 <- b.py:2 <- c.py:3`.
 
     What a guard's message says besides the address or path it caught: the address names
     nothing a reader can act on, and the frames say which seam to stub or which default to
     redirect.
+
+    Frames from *this file* are dropped by filename, not by position (#414). This function and
+    the guard closure that called it are always on the stack and are never what a reader wants;
+    a fixed `[:-2]` would be right today and wrong the day a guard grows a helper between the
+    closure and here, and it would go wrong silently -- the message would just name conftest
+    again. Nothing this file does is a caller worth naming, so the filter cannot over-trim.
     """
     ours = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()
-            if f"{os.sep}hub{os.sep}" in f.filename or "tests" in f.filename]
+            if os.path.abspath(f.filename) != _THIS_FILE
+            and (f"{os.sep}hub{os.sep}" in f.filename or "tests" in f.filename)]
     return " <- ".join(ours[-3:]) or "outside this repo"
 
 
