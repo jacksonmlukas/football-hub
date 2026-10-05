@@ -28,6 +28,8 @@ limit is written here so the next reader does not assume more cover than exists.
 """
 from __future__ import annotations
 
+import builtins
+import io
 import os
 import socket
 import traceback
@@ -116,6 +118,90 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
             f"about its fixture, and one that passes because the wire was refused is "
             f"exercising a degradation path it did not mean to. Stub the reach, or move the "
             f"test to tests/golden and mark it `golden`.")
+
+
+class RealDataTouched(RuntimeError):
+    """A unit or contract test reached under the repo's own `data/`."""
+
+
+@pytest.fixture(autouse=True)
+def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_factory):
+    """A test's result, and its coverage, must not depend on the developer's `data/` (#410).
+
+    `publish`'s `if not src.exists()` on `ROSTER_PARQUET` and `inspect._available`'s `if not
+    base.exists()` were covered on a fresh clone and uncovered on a maintainer checkout, because
+    some tests resolved the real default path rather than a tmp one. The coverage ratchet then
+    disagreed with CI. It is also CLAUDE.md rule 1: a test that opens a real data file is the
+    thing that must never happen.
+
+    So `stat`, `scandir`, `listdir`, `open` and `os.open` are wrapped, and any call whose path
+    lies under `hub.paths.DATA` is **recorded, and the test fails at teardown** -- recorded and
+    not only raised, for the reason the network guard above gives: this repo's broad `except
+    Exception` handlers swallow a raise and the test passes. It fires whether or not `data/`
+    exists, because the *path* is the leak, not the file.
+
+    Fix a hit with `tmp_path`, or redirect the default as `nflverse.RAW` is redirected above.
+    **Not covered:** native readers (polars, duckdb) open files without Python, so a real path
+    handed straight to one is caught only if something stats it first, as every `.exists()`
+    guard in `src/` does.
+    """
+    if request.node.get_closest_marker("golden"):
+        yield
+        return
+    from hub.paths import DATA
+    root = os.fspath(DATA)
+    touched: list[str] = []
+    # The defaults a test reaches when it names no path, pointed at a fresh clone's answer:
+    # nothing there. One redirect here rather than a `tmp_path` threaded through every test
+    # that falls through to a default -- these are module constants bound at import
+    # (`from hub.paths import ROSTER_PARQUET`, `from hub.fetch.nflverse import RAW`), so the
+    # `nflverse.RAW` redirect above never reached the copies `inspect` took. Absent rather than
+    # empty-but-present, because absent is what CI and every fresh worktree see, and the
+    # `if not path.exists()` branches are the ones that must stay covered everywhere. A test that
+    # wants the state writes it where its own argument points.
+    #
+    # `store.DATA` is deliberately *not* redirected: `test_names` and `test_board_main` assert the
+    # production value of that constant, and a redirect would make them assert the redirect.
+    # Tests that reach the store's default name a base or a week instead.
+    from hub import inspect as hub_inspect
+    from hub import publish
+    from hub.draft import state as draft_state
+    nowhere = tmp_path_factory.mktemp("no-data")
+    monkeypatch.setattr(publish, "ROSTER_PARQUET", nowhere / "processed" / "roster.parquet")
+    monkeypatch.setattr(hub_inspect, "DATA", nowhere / "processed")
+    monkeypatch.setattr(hub_inspect, "RAW", nowhere / "raw" / "nflverse")
+    monkeypatch.setattr(draft_state, "STATE", nowhere / "processed" / "draft_state.json")
+
+    def under(path: object) -> bool:
+        if isinstance(path, int):
+            return False
+        try:
+            p = os.path.abspath(os.fsdecode(os.fspath(path)))  # type: ignore[arg-type]
+        except TypeError:
+            return False
+        return p == root or p.startswith(root + os.sep)
+
+    def watch(real, name):
+        def _watched(path, *a, **k):
+            if under(path):
+                # The path alone names a file, not the default that led there; the frames
+                # inside this repo say which constant to redirect.
+                ours = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()
+                        if f"{os.sep}hub{os.sep}" in f.filename]
+                touched.append(f"{name}({os.fspath(path)!r}) via {' <- '.join(ours[-3:])}")
+                raise RealDataTouched(f"{request.node.nodeid} reached {path!r} via {name}.")
+            return real(path, *a, **k)
+        return _watched
+
+    for mod, name in ((os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"),
+                      (os, "open"), (builtins, "open"), (io, "open")):
+        monkeypatch.setattr(mod, name, watch(getattr(mod, name), f"{mod.__name__}.{name}"))
+    yield
+    if touched:
+        pytest.fail(
+            f"this test touched the repo's real data/ directory: {sorted(set(touched))!r}. "
+            f"A result that depends on the developer's `data/` is not the same result on CI. "
+            f"Use `tmp_path`, or redirect the default the way `nflverse.RAW` is in tests/conftest.py.")
 
 
 @pytest.fixture
