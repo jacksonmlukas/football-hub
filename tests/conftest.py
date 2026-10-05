@@ -140,6 +140,35 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
             f"test to tests/golden and mark it `golden`.")
 
 
+# What the real-data guard wraps and what it redirects, as data, so the contract that plants a
+# control for each (tests/contracts/test_unit_tests_do_not_touch_real_data.py, #415) is checked
+# against the guard itself and not against a second hand-kept list.
+#
+# `(module, attribute)`; the contract's key for an arm is `f"{module.__name__}.{attribute}"`.
+_WRAPPED = ((os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"),
+            (os, "open"), (builtins, "open"), (io, "open"))
+WRAPPED_CALLS = tuple(f"{mod.__name__}.{name}" for mod, name in _WRAPPED)
+
+# The defaults a test reaches when it names no path, pointed at a fresh clone's answer: nothing
+# there. `module.attribute` -> where under the absent tmp root it now points. One redirect rather
+# than a `tmp_path` threaded through every test that falls through to a default -- these are module
+# constants bound at import (`from hub.paths import ROSTER_PARQUET`, `from hub.fetch.nflverse
+# import RAW`), so the `nflverse.RAW` redirect above never reached the copies `inspect` took.
+# Absent rather than empty-but-present, because absent is what CI and every fresh worktree see,
+# and the `if not path.exists()` branches are the ones that must stay covered everywhere. A test
+# that wants the state writes it where its own argument points.
+#
+# `store.DATA` is deliberately *not* redirected: `test_names` and `test_board_main` assert the
+# production value of that constant, and a redirect would make them assert the redirect. Tests
+# that reach the store's default name a base or a week instead.
+REDIRECTED_DEFAULTS = {
+    "hub.publish.ROSTER_PARQUET": ("processed", "roster.parquet"),
+    "hub.inspect.DATA": ("processed",),
+    "hub.inspect.RAW": ("raw", "nflverse"),
+    "hub.draft.state.STATE": ("processed", "draft_state.json"),
+}
+
+
 class RealDataTouched(RuntimeError):
     """A unit or contract test reached under the repo's own `data/`."""
 
@@ -171,26 +200,9 @@ def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_fa
     from hub.paths import DATA
     root = os.fspath(DATA)
     touched: list[str] = []
-    # The defaults a test reaches when it names no path, pointed at a fresh clone's answer:
-    # nothing there. One redirect here rather than a `tmp_path` threaded through every test
-    # that falls through to a default -- these are module constants bound at import
-    # (`from hub.paths import ROSTER_PARQUET`, `from hub.fetch.nflverse import RAW`), so the
-    # `nflverse.RAW` redirect above never reached the copies `inspect` took. Absent rather than
-    # empty-but-present, because absent is what CI and every fresh worktree see, and the
-    # `if not path.exists()` branches are the ones that must stay covered everywhere. A test that
-    # wants the state writes it where its own argument points.
-    #
-    # `store.DATA` is deliberately *not* redirected: `test_names` and `test_board_main` assert the
-    # production value of that constant, and a redirect would make them assert the redirect.
-    # Tests that reach the store's default name a base or a week instead.
-    from hub import inspect as hub_inspect
-    from hub import publish
-    from hub.draft import state as draft_state
     nowhere = tmp_path_factory.mktemp("no-data")
-    monkeypatch.setattr(publish, "ROSTER_PARQUET", nowhere / "processed" / "roster.parquet")
-    monkeypatch.setattr(hub_inspect, "DATA", nowhere / "processed")
-    monkeypatch.setattr(hub_inspect, "RAW", nowhere / "raw" / "nflverse")
-    monkeypatch.setattr(draft_state, "STATE", nowhere / "processed" / "draft_state.json")
+    for target, parts in REDIRECTED_DEFAULTS.items():
+        monkeypatch.setattr(target, nowhere.joinpath(*parts))
 
     def under(path: object) -> bool:
         if isinstance(path, int):
@@ -211,8 +223,7 @@ def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_fa
             return real(path, *a, **k)
         return _watched
 
-    for mod, name in ((os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"),
-                      (os, "open"), (builtins, "open"), (io, "open")):
+    for mod, name in _WRAPPED:
         monkeypatch.setattr(mod, name, watch(getattr(mod, name), f"{mod.__name__}.{name}"))
     yield
     if touched:

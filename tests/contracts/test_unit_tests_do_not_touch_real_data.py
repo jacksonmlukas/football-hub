@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import REDIRECTED_DEFAULTS, WRAPPED_CALLS
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -34,19 +36,6 @@ def _run(tmp_path: Path, body: str, where: str = "") -> subprocess.CompletedProc
          "-c", str(tmp_path / "pytest.ini"), "--rootdir", str(tmp_path),
          "-p", "tests.conftest", "-p", "no:cacheprovider"],
         cwd=ROOT, capture_output=True, text=True, timeout=120)
-
-
-def test_a_test_that_stats_a_real_data_path_fails(tmp_path):
-    got = _run(tmp_path, """
-        from hub.paths import ROSTER_PARQUET
-
-        def test_leaks():
-            # The shape of the original offender: a swallowed `.exists()` on a real default.
-            ROSTER_PARQUET.exists()
-        """)
-    assert got.returncode != 0, got.stdout
-    assert "touched the repo's real data/ directory" in got.stdout, got.stdout
-    assert "roster.parquet" in got.stdout
 
 
 def _callers(out: str) -> list[str]:
@@ -105,10 +94,13 @@ def test_a_test_that_stays_in_its_tmp_path_passes(tmp_path):
 
 
 # One planted leak per wrapped entry point (#411). Dropping a wrapper from the guard's tuple
-# turned nothing red before: `Path.exists()` above only ever reached `os.stat`. Each plant swallows
+# turned nothing red before: `Path.exists()` only ever reached `os.stat`. Each plant swallows
 # the guard's raise, as this repo's broad `except Exception` handlers do, so the only thing that
-# can turn it red is the recorded teardown failure. The path does not exist, on purpose.
+# can turn it red is the recorded teardown failure. The path does not exist, on purpose. `os.stat`
+# is an arm like the rest (#415): it used to be a separate `Path.exists()` test with no swallowing
+# `except`, which proved the raise, not the record.
 _ARMS = {
+    "os.stat": "os.stat(leak)",
     "os.lstat": "os.lstat(leak)",
     "os.scandir": "os.scandir(leak)",
     "os.listdir": "os.listdir(leak)",
@@ -116,6 +108,15 @@ _ARMS = {
     "builtins.open": "builtins.open(leak)",
     "io.open": "io.open(leak)",
 }
+
+
+def test_every_wrapped_entry_point_has_a_planted_arm():
+    # #415: this table restated by hand what the guard wraps, so a wrapped call added in conftest
+    # left the contract green with the new arm unplanted -- the gap #411 existed to close, one
+    # level up. The guard's own list is `WRAPPED_CALLS`; the plants must be exactly it.
+    assert set(_ARMS) == set(WRAPPED_CALLS), (
+        f"unplanted: {sorted(set(WRAPPED_CALLS) - set(_ARMS))}, "
+        f"no longer wrapped: {sorted(set(_ARMS) - set(WRAPPED_CALLS))}")
 
 
 @pytest.mark.parametrize("arm", _ARMS)
@@ -139,13 +140,20 @@ def test_every_wrapped_entry_point_fails_a_test_that_reaches_real_data(tmp_path,
 # One control per redirect (#411). Each constant is a module-level default a test reaches when it
 # names no path; the guard points it at an absent tmp path. The planted test uses the default as
 # production code does, and must come back green. With the redirect dropped it resolves under the
-# real `data/` and goes red -- seen by mutation, recorded in the commit that added this.
+# real `data/` and goes red -- seen by mutation, recorded in the commit that added this. Keyed by
+# `module.attribute`, as the guard's `REDIRECTED_DEFAULTS` is; the value is the plant's import.
 _DEFAULTS = {
-    "publish.ROSTER_PARQUET": ("from hub import publish as m", "m.ROSTER_PARQUET"),
+    "hub.publish.ROSTER_PARQUET": ("from hub import publish as m", "m.ROSTER_PARQUET"),
     "hub.inspect.DATA": ("from hub import inspect as m", "m.DATA"),
     "hub.inspect.RAW": ("from hub import inspect as m", "m.RAW"),
     "hub.draft.state.STATE": ("from hub.draft import state as m", "m.STATE"),
 }
+
+
+def test_every_redirected_default_has_a_planted_control():
+    assert set(_DEFAULTS) == set(REDIRECTED_DEFAULTS), (
+        f"unplanted: {sorted(set(REDIRECTED_DEFAULTS) - set(_DEFAULTS))}, "
+        f"no longer redirected: {sorted(set(_DEFAULTS) - set(REDIRECTED_DEFAULTS))}")
 
 
 @pytest.mark.parametrize("default", _DEFAULTS)
