@@ -1022,10 +1022,12 @@ def default_week(season: int, base: Path | None = None) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    # Imported here rather than at module scope for the reason `live` imports `live_state`
-    # inside the function: `hub.fetch.espn` opens its cache directory on import, and
-    # `--help` must reach nothing. The names of the two boards have one owner, so `--league`
-    # takes its choices from there rather than restating them.
+    # Imported here rather than at module scope, as `live` imports `live_state`: this module
+    # is imported by every artifact producer, and only `--league` needs ESPN's names. The
+    # import has no side effects (#401 removed the cache directory it used to open), so this
+    # is about not loading `hub.fetch.espn` and `requests` for the other commands, not safety.
+    # The names of the two boards have one owner, so `--league` takes its choices from there
+    # rather than restating them.
     from hub.fetch.espn import LEAGUE_PATHS
 
     ap = argparse.ArgumentParser(
