@@ -102,8 +102,8 @@ def test_a_collapsed_cluster_frame_gives_the_row_level_verdict(gh):
                 rows.append((2022 + yr, roster, week, rng.normal(mu, 8.0)))
     long = pl.DataFrame(rows, schema=["season", "unit", "week", "diff"], orient="row")
     wide = long.group_by("season", "unit").agg(pl.col("diff").mean()).sort("season", "unit")
-    kw = dict(cluster=experiment.SEASON_CLUSTER, within=("unit",), ceiling=gh._TOP,
-              actions=gh._ACTIONS, bootstrap=400, seed=5)
+    kw = {"cluster": experiment.SEASON_CLUSTER, "within": ("unit",), "ceiling": gh._TOP,
+          "actions": gh._ACTIONS, "bootstrap": 400, "seed": 5}
     a, b = experiment.gate(long, **kw), experiment.gate(wide, **kw)
     assert a.verdict[0] == b.verdict[0]
     assert a.summary["mean"] == pytest.approx(b.summary["mean"])
