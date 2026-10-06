@@ -220,6 +220,55 @@ def test_a_roster_where_nobody_plays_a_full_slate_is_not_a_roster_of_suspensions
     assert lk.gain is not None
 
 
+def _midseason(*extra, played=4, suspended=None, season=17):
+    """The 2026-09-26 shape (issue #419): ESPN's totals for players cover the games still to
+    play, so every ratio is `season - played` -- while a team defence's total does not shrink,
+    and one is on the roster. `suspended` maps a name to the games ESPN still projects missed."""
+    suspended = suspended or {}
+    left = season - played
+    players = [_p(n, pos, 10.0, 10.0 * (left - suspended.get(n, 0)), slot=slot)
+               for n, pos, _, slot in _SQUAD]
+    players.extend(extra)
+    board = _board(player=[n for n, _, _, _ in _SQUAD],
+                   proj_blend=[mu for _, _, mu, _ in _SQUAD],
+                   pos=[p for _, p, _, _ in _SQUAD])
+    return R.build(E.roster_rows(_Team([], players)), board)
+
+
+def _defence():
+    """A team defence whose ESPN total still covers seventeen games."""
+    return _p("Browns D/ST", "D/ST", 4.2, 4.2 * 17, slot="D/ST", injury="NORMAL")
+
+
+def test_a_defence_holding_a_full_season_does_not_withhold_players_who_have_played():
+    """Issue #419. The Eagles D/ST joined the roster between 09-23 and 09-26 and its ESPN total
+    still covered seventeen games, where every player's covered the games left. `full` was the
+    roster's maximum, so it became 17 and every healthy player read as missing the weeks
+    already played: 14 of 17 withheld, no lineup, and a manifest that said `ok`."""
+    rows = _midseason(_defence())
+    healthy = rows.filter(pl.col("pos") != "D/ST")
+    assert healthy["missing_games"].to_list() == [0] * healthy.height
+    lk = R.lock(rows)
+    assert lk.withheld == []
+    assert lk.gain is not None
+
+
+def test_one_full_season_ratio_mid_season_is_the_outlier_not_the_standard():
+    """The audit's guess at the same defect, kept as its own case: whichever single row holds
+    a full-season ratio, the standard is what the roster shares, not the largest."""
+    rows = _midseason(_p("Late Pickup", "WR", 10.0, 170.0))
+    assert rows.filter(pl.col("player") == "Josh Jacobs")["available"][0] is True
+
+
+def test_a_suspension_is_still_caught_mid_season():
+    """The reason `availability` exists. With the standard taken from what the roster shares,
+    a player ESPN projects out for three of the remaining games still reads as missing them."""
+    rows = _midseason(_defence(), suspended={"Josh Jacobs": 3})
+    got = rows.filter(pl.col("player") == "Josh Jacobs")
+    assert got["missing_games"][0] == 3 and got["available"][0] is False
+    assert R.lock(rows).withheld == ["Josh Jacobs"]
+
+
 # --- the market half, refreshed against live ESPN ---
 
 def _with_board(players, board):
@@ -379,15 +428,17 @@ def test_a_lock_that_could_not_fill_a_lineup_names_nobody_in_one():
 
 def test_a_lock_with_nobody_left_to_pick_from_names_nobody_in_a_lineup():
     """The other declining branch, and it declines the same way. Both projected players are
-    short of a full slate -- the kicker, whom the board does not project, is what makes the
-    roster's own maximum a full one -- so the pool empties before the optimiser is asked.
+    short of a full slate -- the three players the board does not project (two kickers and a
+    defence) are what make the roster's shared count a full one, since `full` is the count most
+    of the roster shares -- so the pool empties before the optimiser is asked.
 
     Both of them are set as starters, which is the case that matters: there is a lineup as
     set here for the old reconstruction to have published as the best one.
     """
     players = [_p("Josh Jacobs", "RB", 10.0, 110.0, slot="RB"),
                _p("Ja'Marr Chase", "WR", 10.0, 110.0, slot="WR"),
-               _p("Eddy Pineiro", "K", 10.0, 170.0, slot="K")]
+               _p("Eddy Pineiro", "K", 10.0, 170.0, slot="K"),
+               _p("Backup Kicker", "K", 10.0, 170.0), _p("Browns D/ST", "D/ST", 4.0, 68.0)]
     df = R.build(E.roster_rows(_Team([], players)),
                  _board(player=["Josh Jacobs", "Ja'Marr Chase"], proj_blend=[15.5, 19.6],
                         pos=["RB", "WR"]))

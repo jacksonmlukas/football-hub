@@ -37,7 +37,7 @@ from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
-from hub.season.roster import lock
+from hub.season.roster import degenerate, lock
 
 if TYPE_CHECKING:
     # Typing only. `survivor` imports the real module locally, the way every other
@@ -767,6 +767,7 @@ def roster(out: Path | None = None,
     # best-XI tick, so a roster that can field no legal lineup ticked everybody (issue #130).
     # An empty lineup ticks nobody, which is what declining means.
     best = set(lk.best_lineup)
+    bad = degenerate(df, lk)
 
     rows = []
     for r in df.iter_rows(named=True):
@@ -789,7 +790,18 @@ def roster(out: Path | None = None,
     payload = jsonio.artifact("roster", "roster.parquet", rows,
                         as_of=jsonio.file_stamp(src),
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
-                        withheld=lk.withheld, start=lk.start, sit=lk.bench)
+                        withheld=lk.withheld, start=lk.start, sit=lk.bench, degraded=bad)
+    if bad:
+        # A call the lock could not stand behind is stale, with the reason, and last-good stays
+        # where it is (issue #419). What is withheld is `lock`'s refusal and stays; what was
+        # missing is anyone hearing it. Written once if nothing is published, so the page has a
+        # file to read, and `degraded` is how that file says so.
+        dest = out or SITE
+        if (dest / "roster.json").exists():
+            print(f"  roster: {bad}; keeping the call last published", flush=True)
+            return Kept(f"{bad}; keeping the call last published")
+        _write(dest, "roster", payload)
+        return Kept(f"{bad}; published once, flagged, so the page has a file to read")
     return _publish(out or SITE, "roster", payload)
 
 
