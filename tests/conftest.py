@@ -31,10 +31,13 @@ from __future__ import annotations
 import builtins
 import io
 import os
+import re
 import socket
 import traceback
 from pathlib import Path
 
+import duckdb
+import polars as pl
 import pytest
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0", ""}
@@ -144,10 +147,44 @@ def _the_suite_stays_offline(request, monkeypatch, tmp_path_factory):
 # control for each (tests/contracts/test_unit_tests_do_not_touch_real_data.py, #415) is checked
 # against the guard itself and not against a second hand-kept list.
 #
-# `(module, attribute)`; the contract's key for an arm is `f"{module.__name__}.{attribute}"`.
-_WRAPPED = ((os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"),
-            (os, "open"), (builtins, "open"), (io, "open"))
-WRAPPED_CALLS = tuple(f"{mod.__name__}.{name}" for mod, name in _WRAPPED)
+# `(owner, attribute, how it names a path)`; the contract's key for an arm is
+# `f"{owner_name}.{attribute}"` with `owner_name` the module's `__name__` or the class's
+# `module.qualname`.
+#
+# How a call names the path is the one thing that differs, and it is why there are two kinds:
+#   "path" -- the first positional argument, or one of `_PATH_KEYWORDS`, *is* the path (or a list
+#             of them, or a glob). `os.stat`, every polars reader, `duckdb.connect`, and duckdb's
+#             `read_parquet`/`read_csv`/`read_json` all take it that way.
+#   "sql"  -- the argument is a query. The path is a quoted literal inside it, `FROM
+#             read_parquet('<path>')` or `FROM '<path>'`, which is how `hub.store` reads.
+_POLARS_READERS = ("read_parquet", "scan_parquet", "read_csv", "scan_csv", "read_ndjson",
+                   "scan_ndjson", "read_json", "read_ipc", "scan_ipc")
+_DUCKDB_CALLS = (("sql", "sql"), ("query", "sql"), ("execute", "sql"),
+                 ("read_parquet", "path"), ("read_csv", "path"), ("read_json", "path"))
+_WRAPPED = (
+    *((m, n, "path") for m, n in ((os, "stat"), (os, "lstat"), (os, "scandir"), (os, "listdir"),
+                                  (os, "open"), (builtins, "open"), (io, "open"))),
+    *((pl, n, "path") for n in _POLARS_READERS),
+    (duckdb, "connect", "path"),
+    *((duckdb, n, kind) for n, kind in _DUCKDB_CALLS),
+    # The same calls on a connection object, which is how `hub.store` and every `con.execute`
+    # reaches them. pybind11 classes accept attribute assignment, so these are wrapped in place.
+    *((duckdb.DuckDBPyConnection, n, kind) for n, kind in _DUCKDB_CALLS),
+)
+_PATH_KEYWORDS = ("source", "path", "file", "database", "path_or_buffer", "file_name", "name")
+
+
+def _owner_name(owner: object) -> str:
+    if isinstance(owner, type):
+        return f"{owner.__module__}.{owner.__qualname__}"
+    return owner.__name__  # type: ignore[attr-defined]
+
+
+WRAPPED_CALLS = tuple(f"{_owner_name(o)}.{name}" for o, name, _ in _WRAPPED)
+
+# A quoted literal that holds a path separator. The separator is what keeps `WHERE pos = 'data'`
+# from resolving, against a cwd of the repo root, to the data directory itself.
+_QUOTED = re.compile(r"'((?:[^']|'')*/(?:[^']|'')*)'")
 
 # The defaults a test reaches when it names no path, pointed at a fresh clone's answer: nothing
 # there. `module.attribute` -> where under the absent tmp root it now points. One redirect rather
@@ -183,16 +220,34 @@ def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_fa
     disagreed with CI. It is also CLAUDE.md rule 1: a test that opens a real data file is the
     thing that must never happen.
 
-    So `stat`, `scandir`, `listdir`, `open` and `os.open` are wrapped, and any call whose path
-    lies under `hub.paths.DATA` is **recorded, and the test fails at teardown** -- recorded and
-    not only raised, for the reason the network guard above gives: this repo's broad `except
-    Exception` handlers swallow a raise and the test passes. It fires whether or not `data/`
-    exists, because the *path* is the leak, not the file.
+    So the calls in `_WRAPPED` are wrapped, and any whose path lies under `hub.paths.DATA` is
+    **recorded, and the test fails at teardown** -- recorded and not only raised, for the reason
+    the network guard above gives: this repo's broad `except Exception` handlers swallow a raise
+    and the test passes. It fires whether or not `data/` exists, because the *path* is the leak,
+    not the file.
+
+    **Covered (#412).** Python's own file entry points (`os.stat`/`lstat`/`scandir`/`listdir`/
+    `open`, `builtins.open`, `io.open`), and the native readers, which open files without
+    Python and were once caught only if something stats the path first: polars `read_`/`scan_`
+    `parquet`, `csv`, `ndjson`, `ipc` and `read_json`; `duckdb.connect(<file>)`; and duckdb's
+    `sql`/`query`/`execute`/`read_parquet`/`read_csv`/`read_json`, as module functions and as
+    methods of a connection. A path may be a `str`, a `Path`, a list of them, or a glob (read by
+    its literal prefix, so `data/processed/**/*.parquet` is caught). In a duckdb query the path
+    is found as a quoted literal containing a `/`, which is how `hub.store` and `FROM 'x'`
+    write it.
+
+    **Not covered**, and no cover is implied: (1) SQL that builds the path at runtime *inside*
+    duckdb, or reads it from a table, so it never appears as a literal in the string passed in;
+    (2) a glob whose wildcard sits above `data/` (`<repo>/*/x.parquet`), and a relative path
+    resolved against a cwd other than the repo root only to the extent `abspath` resolves it;
+    (3) readers nobody here calls -- polars `read_excel`/`read_avro`/`read_delta`/`scan_iceberg`/
+    `scan_pyarrow_dataset`/`read_database`, duckdb's `from_parquet`/`from_csv_auto`/`executemany`,
+    pyarrow and pandas; (4) a reference taken before the guard installs (`from polars import
+    read_parquet` at import time), which `monkeypatch` cannot reach; (5) anything run in a
+    subprocess. A new native reader goes in `_WRAPPED` and gets an arm in the contract, which
+    `test_every_wrapped_entry_point_has_a_planted_arm` enforces.
 
     Fix a hit with `tmp_path`, or redirect the default as `nflverse.RAW` is redirected above.
-    **Not covered:** native readers (polars, duckdb) open files without Python, so a real path
-    handed straight to one is caught only if something stats it first, as every `.exists()`
-    guard in `src/` does.
     """
     if request.node.get_closest_marker("golden"):
         yield
@@ -205,26 +260,48 @@ def _the_suite_never_touches_the_real_data_dir(request, monkeypatch, tmp_path_fa
         monkeypatch.setattr(target, nowhere.joinpath(*parts))
 
     def under(path: object) -> bool:
-        if isinstance(path, int):
+        if isinstance(path, (int, bool)):
             return False
+        # A list of paths, as `pl.scan_parquet([...])` takes. A glob needs no case of its own: it
+        # is a path whose literal prefix is what the `startswith` below reads.
+        if isinstance(path, (list, tuple)):
+            return any(under(p) for p in path)
         try:
-            p = os.path.abspath(os.fsdecode(os.fspath(path)))  # type: ignore[arg-type]
+            text = os.fsdecode(os.fspath(path))  # type: ignore[arg-type]
         except TypeError:
-            return False
+            return False  # a buffer, a file object, None
+        if "://" in text:
+            return False  # a remote URL is not this machine's data/
+        p = os.path.abspath(text)
         return p == root or p.startswith(root + os.sep)
 
-    def watch(real, name):
-        def _watched(path, *a, **k):
-            if under(path):
-                # The path alone names a file, not the default that led there; the frames
-                # inside this repo say which constant to redirect.
-                touched.append(f"{name}({os.fspath(path)!r}) via {_repo_frames()}")
-                raise RealDataTouched(f"{request.node.nodeid} reached {path!r} via {name}.")
-            return real(path, *a, **k)
+    def named(a: tuple, k: dict) -> list[object]:
+        return [*a[:1], *(k[key] for key in _PATH_KEYWORDS if key in k)]
+
+    def sql_paths(a: tuple, k: dict) -> list[object]:
+        query = a[0] if a else k.get("query", k.get("sql_query"))
+        if not isinstance(query, str) or "/" not in query:
+            return []
+        return [m.replace("''", "'") for m in _QUOTED.findall(query)]
+
+    def watch(real, name, kind):
+        reach = named if kind == "path" else sql_paths
+
+        def _watched(*a, **k):
+            # A method is called with its receiver first (`con.execute(sql)`), a function is not.
+            args = a[1:] if a and isinstance(a[0], duckdb.DuckDBPyConnection) else a
+            for path in reach(args, k):
+                if under(path):
+                    # The path alone names a file, not the default that led there; the frames
+                    # inside this repo say which constant to redirect.
+                    touched.append(f"{name}({path!r}) via {_repo_frames()}")
+                    raise RealDataTouched(f"{request.node.nodeid} reached {path!r} via {name}.")
+            return real(*a, **k)
         return _watched
 
-    for mod, name in _WRAPPED:
-        monkeypatch.setattr(mod, name, watch(getattr(mod, name), f"{mod.__name__}.{name}"))
+    for owner, name, kind in _WRAPPED:
+        monkeypatch.setattr(owner, name,
+                            watch(getattr(owner, name), f"{_owner_name(owner)}.{name}", kind))
     yield
     if touched:
         pytest.fail(

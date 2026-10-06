@@ -103,6 +103,11 @@ def test_a_test_that_stays_in_its_tmp_path_passes(tmp_path):
 # can turn it red is the recorded teardown failure. The path does not exist, on purpose. `os.stat`
 # is an arm like the rest (#415): it used to be a separate `Path.exists()` test with no swallowing
 # `except`, which proved the raise, not the record.
+_POLARS = ("read_parquet", "scan_parquet", "read_csv", "scan_csv", "read_ndjson", "scan_ndjson",
+           "read_json", "read_ipc", "scan_ipc")
+_DUCKDB_READERS = ("read_parquet", "read_csv", "read_json")
+# The connection class lives in duckdb's C extension, so its key carries that module's name.
+_CONN = "_duckdb.DuckDBPyConnection"
 _ARMS = {
     "os.stat": "os.stat(leak)",
     "os.lstat": "os.lstat(leak)",
@@ -111,6 +116,14 @@ _ARMS = {
     "os.open": "os.open(leak, os.O_RDONLY)",
     "builtins.open": "builtins.open(leak)",
     "io.open": "io.open(leak)",
+    # Native readers (#412). The path never goes through Python's `open`, so these are the entry
+    # points the arms above cannot see. The SQL arms reach it as a quoted literal inside a query.
+    **{f"polars.{n}": f"pl.{n}(leak)" for n in _POLARS},
+    "duckdb.connect": "duckdb.connect(str(leak))",
+    **{f"duckdb.{n}": f"duckdb.{n}(SQL)" for n in ("sql", "query", "execute")},
+    **{f"duckdb.{n}": f"duckdb.{n}(str(leak))" for n in _DUCKDB_READERS},
+    **{f"{_CONN}.{n}": f"con.{n}(SQL)" for n in ("sql", "query", "execute")},
+    **{f"{_CONN}.{n}": f"con.{n}(str(leak))" for n in _DUCKDB_READERS},
 }
 
 
@@ -127,10 +140,14 @@ def test_every_wrapped_entry_point_has_a_planted_arm():
 def test_every_wrapped_entry_point_fails_a_test_that_reaches_real_data(tmp_path, arm):
     got = _run(tmp_path, f"""
         import builtins, io, os
+        import duckdb
+        import polars as pl
         from hub.paths import DATA
 
         def test_leaks():
-            leak = DATA / "planted_leak"
+            leak = DATA / "planted_leak.parquet"
+            SQL = f"SELECT * FROM read_parquet('{{leak}}')"
+            con = duckdb.connect(":memory:")
             try:
                 {_ARMS[arm]}
             except Exception:
@@ -139,6 +156,58 @@ def test_every_wrapped_entry_point_fails_a_test_that_reaches_real_data(tmp_path,
     assert got.returncode != 0, got.stdout
     assert "touched the repo's real data/ directory" in got.stdout, got.stdout
     assert f"{arm}(" in got.stdout, got.stdout
+
+
+# The shapes a path takes into a native reader (#412): a glob, a list, a `Path`, a SQL literal. The
+# glob is what `hub.store` and `inspect` hand duckdb and polars; each is planted against the one
+# entry point that takes it, swallowing the raise like the arms above.
+_SHAPES = {
+    "glob": 'pl.scan_parquet(str(DATA / "processed" / "**" / "*.parquet"))',
+    "list": 'pl.scan_parquet([str(DATA / "processed" / "a.parquet")])',
+    "path-object": 'pl.read_parquet(DATA / "processed" / "a.parquet")',
+    "sql-glob": "duckdb.sql(f\"SELECT * FROM read_parquet('{DATA}/lines/**/*.parquet')\")",
+    "sql-bare-literal": "duckdb.sql(f\"SELECT * FROM '{DATA}/processed/a.parquet'\")",
+}
+
+
+@pytest.mark.parametrize("shape", _SHAPES)
+def test_a_native_reader_is_caught_whatever_shape_the_path_takes(tmp_path, shape):
+    got = _run(tmp_path, f"""
+        import duckdb
+        import polars as pl
+        from hub.paths import DATA
+
+        def test_leaks():
+            try:
+                {_SHAPES[shape]}
+            except Exception:
+                pass
+        """)
+    assert got.returncode != 0, got.stdout
+    assert "touched the repo's real data/ directory" in got.stdout, got.stdout
+
+
+def test_native_readers_on_tmp_paths_and_non_data_literals_pass(tmp_path):
+    # The guard must not turn red on what is legitimate: real reads of a tmp file through every
+    # shape above, a duckdb catalog in tmp, and a SQL literal that merely says `data` or holds a
+    # slash that is not a path under `data/`.
+    got = _run(tmp_path, """
+        import duckdb
+        import polars as pl
+
+        def test_clean(tmp_path):
+            f = tmp_path / "x.parquet"
+            pl.DataFrame({"a": [1, 2]}).write_parquet(f)
+            assert pl.read_parquet(f).height == 2
+            assert pl.scan_parquet(str(tmp_path / "*.parquet")).collect().height == 2
+            assert pl.scan_parquet([f]).collect().height == 2
+            con = duckdb.connect(str(tmp_path / "c.duckdb"))
+            assert con.sql(f"SELECT count(*) FROM read_parquet('{tmp_path}/**/*.parquet')").fetchone() == (2,)
+            assert con.sql(f"SELECT count(*) FROM '{f}'").fetchone() == (2,)
+            assert con.sql("SELECT 'data' AS pos, 'a/b' AS ratio").fetchone() == ("data", "a/b")
+            assert duckdb.connect(":memory:").execute("SELECT 1").fetchone() == (1,)
+        """)
+    assert got.returncode == 0, got.stdout
 
 
 # One control per redirect (#411). Each constant is a module-level default a test reaches when it
