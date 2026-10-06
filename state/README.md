@@ -27,6 +27,22 @@ What this repo has spent against two metered third-party accounts:
   back, and left out of every narrowing check until this repo's gates re-baseline under the
   new key.
 
+  **The recipe, since #384.** Every gate run now carries its arm as `recipe`: `k=v` pairs,
+  sorted, comma-joined (`hub.ledger.recipe`, the one place the string is spelled), naming each
+  flag of the run that reaches the paired frame, the draw or the verdict and that the two
+  digests do not see -- `weekly_gate`'s `--churn`/`--shrink`/`--open-pool`/`--unrestricted`/
+  `--lcb`/`--expected`/`--ceiling`/`--holdout`/`--drafts`/`--seed` and its season set;
+  `backtest`'s `--drafts`/`--rounds`/`--draft-sims`/`--season-sims`/`--seed`/`--holdout`/
+  `--ceiling` and its season set; `lineup_gate`'s `--ceiling-arm` (none without `--ceiling`)/
+  `--parameter-uncertainty`/`--drafts`/`--seed`/seasons; `interval_shape`'s filters and seed;
+  `quarterback_gate`'s `--ceiling`. The gate `name` stays as it was, so `docs/gate-power.md`'s
+  references to an entry by name still name one. **A row written earlier at the same digests is
+  another recipe** -- `"recipe": null` (written between #385 and #384) is "no arm declared", and
+  a row with no `recipe` key is of unknown recipe -- and is read, kept and not compared against
+  a run that names its arm; the run says `earlier run(s) of this gate at another recipe` (or
+  `of unknown recipe`) rather than blaming a digest. The first run of each gate after #384
+  therefore has nothing to compare against, by design.
+
   **`seasons`, since #382.** Every entry written from a run that handed the Ledger a
   `per_season` frame's records carries a `seasons` field: a list of per-season dicts
   (`season`, `gain`, `se`, `m`, `disposition`), the same fields `experiment.per_season_report`

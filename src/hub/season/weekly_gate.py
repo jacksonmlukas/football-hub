@@ -79,6 +79,7 @@ from hub.config import FANTASY_WEEKS
 from hub.declare import not_an_input
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import STARTERS, starting_lineup
+from hub.ledger import recipe as _recipe
 from hub.models.experiment import (
     SEASON_CLUSTER,
     Actions,
@@ -439,6 +440,19 @@ ACTIONS = Actions(
 # its ceiling.
 HARNESS = Harness(name="weekly", arm_a="weekly", arm_b="consensus", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS, unit=UNIT, places=PLACES)
+
+
+def run_recipe(*, seasons: Sequence[int], drafts: int, seed: int, churn: bool, open_pool: bool,
+               unrestricted: bool, lcb: float, expected: bool, shrink: str | None,
+               ceiling: bool, holdout: bool) -> str:
+    """This gate's arm as the ledger's `recipe` (#384): every `weekly_gate` flag that reaches
+    the paired frame, the Cohort's draw or the verdict -- `--churn`, `--open-pool`,
+    `--unrestricted`, `--lcb`, `--expected`, `--shrink`, `--ceiling`, `--holdout`,
+    `--drafts`, `--seed` and the season set -- none of which `config_digest` or `data_digest`
+    sees. `--out` is where output goes, not part of the arm, and is not here."""
+    return _recipe(seasons=sorted(seasons), drafts=drafts, seed=seed, churn=churn,
+                   open_pool=open_pool, unrestricted=unrestricted, lcb=lcb, expected=expected,
+                   shrink=shrink, ceiling=ceiling, holdout=holdout)
 
 
 def coverage(g: GateInputs, weeks: Sequence[int] = GATE_WEEKS) -> dict[str, float]:
@@ -929,7 +943,12 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         restrict = not a.unrestricted
         paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                          ceiling=a.ceiling, restrict=restrict)
-        run = HARNESS.run(paired, show_n=False, void=void_condition(cover), seed=a.seed)
+        run = HARNESS.run(
+            paired, show_n=False, void=void_condition(cover), seed=a.seed,
+            recipe=run_recipe(seasons=seasons, drafts=a.drafts, seed=a.seed, churn=a.churn,
+                              open_pool=a.open_pool, unrestricted=a.unrestricted, lcb=a.lcb,
+                              expected=a.expected, shrink=a.shrink, ceiling=a.ceiling,
+                              holdout=a.holdout))
         s, seasons_tbl = run.summary, run.seasons
         # The assembled column's frame is handed back rather than rebuilt, so this is two extra
         # scorings and not three, and the row it fills is the one the verdict is read off. No

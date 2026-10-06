@@ -85,6 +85,7 @@ from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
 from hub.fetch import nfeloqb, odds
 from hub.ledger import Ledger
+from hub.ledger import recipe as _recipe
 from hub.models import experiment, quarterback
 from hub.models.experiment import SEASON_CLUSTER, Harness
 from hub.models.market import MARGIN_SD, normal_cdf
@@ -595,7 +596,8 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
     # An empty frame, not None: `Harness.run` reads None as "use `paired`", and a run
     # without --ceiling must reach the gate with no bound, as it always has.
     return HARNESS.run(
-        paired, ceiling_frame=paired if ceiling else pl.DataFrame(), ledger=ledger)
+        paired, ceiling_frame=paired if ceiling else pl.DataFrame(), ledger=ledger,
+        recipe=_recipe(ceiling=ceiling))
 
 
 # --- the study --------------------------------------------------------------------------------

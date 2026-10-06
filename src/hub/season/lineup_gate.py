@@ -43,6 +43,7 @@ from hub.declare import not_an_input
 from hub.draft.board import board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
+from hub.ledger import recipe as _recipe
 from hub.models.experiment import (
     Actions,
     Ceiling,
@@ -309,6 +310,16 @@ HARNESS = Harness(name="lineup", arm_a="optimiser", arm_b="projections", within=
                   unit=UNIT)
 
 
+def run_recipe(*, seasons: Sequence[int], drafts: int, seed: int, ceiling_arm: str | None,
+               parameter_uncertainty: bool) -> str:
+    """This gate's arm as the ledger's `recipe` (#384): the season set, `--drafts`, `--seed`,
+    `--parameter-uncertainty` (which changes `sd`, so the optimiser's input) and the ceiling
+    arm -- `None` when `--ceiling` was not asked, else the `--ceiling-arm` choice, since that
+    is the arm the verdict's NOT-RUNNABLE bound is read from."""
+    return _recipe(seasons=sorted(seasons), drafts=drafts, seed=seed, ceiling=ceiling_arm,
+                   parameter_uncertainty=parameter_uncertainty)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from hub.draft.cohort import DRAFTS
 
@@ -400,7 +411,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
         # #387: `ceiling_arm` is the one field #138 lets a run choose.
         harness = HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[a.ceiling_arm])
-        run = harness.run(paired, seed=a.seed, boards=boards)
+        run = harness.run(
+            paired, seed=a.seed, boards=boards,
+            recipe=run_recipe(seasons=seasons, drafts=a.drafts, seed=a.seed,
+                              ceiling_arm=a.ceiling_arm if a.ceiling else None,
+                              parameter_uncertainty=a.parameter_uncertainty))
         for line in run.lines:
             print(line)
         print(f"\n  {run.verdict[1]}")
