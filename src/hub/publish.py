@@ -790,18 +790,18 @@ def roster(out: Path | None = None,
     payload = jsonio.artifact("roster", "roster.parquet", rows,
                         as_of=jsonio.file_stamp(src),
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
-                        withheld=lk.withheld, start=lk.start, sit=lk.bench, degraded=bad)
+                        withheld=lk.withheld, start=lk.start, sit=lk.bench)
     if bad:
         # A call the lock could not stand behind is stale, with the reason, and last-good stays
         # where it is (issue #419). What is withheld is `lock`'s refusal and stays; what was
-        # missing is anyone hearing it. Written once if nothing is published, so the page has a
-        # file to read, and `degraded` is how that file says so.
+        # missing is anyone hearing it. Kept through `_keeping`, like every other keep; with
+        # nothing published yet the page gets the artifact once, through `_publish`, and the
+        # answer is still `Kept` -- the manifest carries the reason, which is what the page reads.
         dest = out or SITE
-        if (dest / "roster.json").exists():
-            print(f"  roster: {bad}; keeping the call last published", flush=True)
-            return Kept(f"{bad}; keeping the call last published")
-        _write(dest, "roster", payload)
-        return Kept(f"{bad}; published once, flagged, so the page has a file to read")
+        if kept := _keeping(dest, "roster", bad):
+            return kept
+        _publish(dest, "roster", payload)
+        return Kept(f"{bad}; published once so the page has a file to read")
     return _publish(out or SITE, "roster", payload)
 
 
