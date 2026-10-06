@@ -14,6 +14,7 @@ Why not Postgres: single user, no concurrent writers, no network. Nothing to buy
 """
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Sequence
 from datetime import datetime
@@ -25,6 +26,7 @@ import polars as pl
 from hub import atomic
 from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
+from hub.paths import STATE_DIR
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data" / "processed"
@@ -135,6 +137,28 @@ def connect(read_only: bool = False, base: Path | None = None) -> duckdb.DuckDBP
                                        hive_partitioning := true,
                                        union_by_name := true)
         """)
+    # The committed snapshots (#383), unioned under the same name. A TEMP view, so the
+    # persistent catalog is never written with rows that live in git, and `lines` resolves to
+    # it first. Local rows win a duplicate (game_id, captured_at).
+    committed = committed_lines(base)
+    if not committed.is_empty():
+        con.register("committed_lines", committed)
+        if is_table(root / "lines"):
+            # The parquet is read inline rather than through the persistent `lines` view: a
+            # temp view that is also named `lines` would bind to itself.
+            local = (f"read_parquet('{root / 'lines'}/**/*.parquet', "
+                     f"hive_partitioning := true, union_by_name := true)")
+            con.execute(f"""
+                CREATE OR REPLACE TEMP VIEW lines AS
+                SELECT * FROM {local}
+                UNION ALL BY NAME
+                SELECT c.* FROM committed_lines c
+                WHERE NOT EXISTS (SELECT 1 FROM {local} l
+                                  WHERE l.game_id = c.game_id
+                                    AND l.captured_at = c.captured_at)
+            """)
+        else:
+            con.execute("CREATE OR REPLACE TEMP VIEW lines AS SELECT * FROM committed_lines")
     return con
 
 
@@ -151,9 +175,12 @@ def tables(base: Path | None = None) -> set[str]:
     which is now enforced by there being one of it rather than asserted here in prose.
     """
     root = base or DATA
-    if not root.exists():
-        return set()
-    return {d.name for d in root.iterdir() if is_table(d)}
+    found = {d.name for d in root.iterdir() if is_table(d)} if root.exists() else set()
+    # A checkout whose only captures are the committed ones has a `lines` view all the same
+    # (`connect` builds it), so the guards that ask "is there an archive" must say yes (#383).
+    if _has_committed(base):
+        found.add("lines")
+    return found
 
 
 # The dtypes the partition keys are written with, so a read hands them back that way.
@@ -268,6 +295,99 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
     return got.drop_nulls("close_spread")
 
 
+# --- committed line snapshots (#383) ----------------------------------------------------
+#
+# `data/processed/` is gitignored, and an Actions runner starts with an empty one and discards
+# it, so every capture the scheduled polls made was written where nothing could read it again
+# (#383: the archive ended 2026-09-06). Each poll therefore also writes its validated frame to
+# a *committed*, append-only file under `state/odds/`, one per (poll, week):
+#
+#     state/odds/<season>/wk<NN>/snap-<YYYYmmddTHHMMSS>.json
+#
+# **Reader design: the committed tree is unioned with the local store, deduped by
+# (game_id, captured_at) -- option (ii), not a loader that rebuilds the parquet table (i).**
+# (i) has to run *before* a reader, so every entry point (`lines`, `lines_as_of`,
+# `staleness`, `noise_floor`, the starter-change study) would need to remember to call it, and
+# its output is a second copy of the archive on disk that can disagree with the first. (ii)
+# lives in `connect`, the one place every reader's SQL goes through, so a reader cannot
+# forget it and nothing is materialised: `lines` is a view, as it always was, that now also
+# spans the committed files. Local rows win a duplicate, which is the maintainer's own local
+# run having written the same capture to both places (same `captured_at`, same game).
+#
+# The lookahead guarantee is untouched because the union happens *under* the `lines` name
+# that `LINE_AS_OF`'s ASOF join already reads: a committed snapshot captured after `at` is
+# just a row with `captured_at > at`, and the join never matches it.
+
+SNAPSHOT_COLUMNS: dict[str, pl.DataType] = {
+    "game_id": pl.Utf8(), "close_spread": pl.Float64(), "spread_price": pl.Float64(),
+    "close_total": pl.Float64(), "total_price": pl.Float64(), "captured_at": pl.Datetime(),
+    "polls_unmoved": pl.Int64(), "unmoved_since": pl.Datetime(),
+}
+_SNAPSHOT_TIMES = ("captured_at", "unmoved_since")
+_SNAPSHOT_GLOB = "*/wk*/snap-*.json"
+
+
+def snapshot_root(base: Path | None = None) -> Path:
+    """Where committed snapshots live: `state/odds/`, or `<base>/_state/odds/` for a scratch store.
+
+    A store rooted somewhere else (every test) carries its own state tree inside it rather
+    than reading the repo's, so a test's `base` is a whole world and the snapshots a
+    scheduled run has committed cannot leak into it.
+    """
+    return STATE_DIR / "odds" if base is None else Path(base) / "_state" / "odds"
+
+
+def snapshot_path(season: int, week: int, when: datetime, base: Path | None = None) -> Path:
+    return (snapshot_root(base) / str(season) / f"wk{week:02d}"
+            / f"snap-{when:%Y%m%dT%H%M%S}.json")
+
+
+def write_snapshot(df: pl.DataFrame, season: int, week: int, when: datetime,
+                   base: Path | None = None) -> Path:
+    """Append one poll's week to the committed tree. Never rewrites an earlier file.
+
+    A second write to the same path with the same frame is a no-op (a re-run is idempotent);
+    with a different frame it raises, because the file is a *capture* -- what the betting market
+    said at `when` -- and a capture that changes is not one. Written through `hub.atomic`, so a
+    runner killed mid-write leaves no partial for the next checkout to commit.
+    """
+    p = snapshot_path(season, week, when, base)
+    body = {"season": season, "week": week, "captured_at": when.isoformat(),
+            "rows": [{k: (v.isoformat() if k in _SNAPSHOT_TIMES and v is not None else v)
+                      for k, v in row.items()} for row in df.to_dicts()]}
+    text = json.dumps(body, indent=1, sort_keys=True) + "\n"
+    if p.exists():
+        if p.read_text(encoding="utf-8") == text:
+            return p
+        raise FileExistsError(
+            f"{p} already holds a different capture. Snapshots are append-only; a poll "
+            f"that disagrees with an earlier one is a second poll, with its own timestamp.")
+    return atomic.write_text(p, text)
+
+
+def committed_lines(base: Path | None = None) -> pl.DataFrame:
+    """Every committed snapshot, as `lines` rows: the poll's columns plus league/season/week.
+
+    `week` is the zero-padded string the Hive layout gives the parquet side, so a union of the
+    two has one type for it; `lines()` casts it to an integer either way.
+    """
+    frames = []
+    for f in sorted(snapshot_root(base).glob(_SNAPSHOT_GLOB)):
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        schema = {k: (pl.Utf8() if k in _SNAPSHOT_TIMES else t)
+                  for k, t in SNAPSHOT_COLUMNS.items()}
+        part = pl.DataFrame(doc["rows"], schema=schema)
+        frames.append(part.with_columns(pl.col(c).str.to_datetime() for c in _SNAPSHOT_TIMES)
+                      .with_columns(league=pl.lit("nfl"),
+                                    season=pl.lit(doc["season"], dtype=pl.Int32),
+                                    week=pl.lit(week_key(doc["week"]), dtype=pl.Utf8)))
+    return pl.concat(frames) if frames else pl.DataFrame()
+
+
+def _has_committed(base: Path | None) -> bool:
+    return any(snapshot_root(base).glob(_SNAPSHOT_GLOB))
+
+
 # Every poll's columns, as `lines()` hands them back. `spread_price` is here although partitions
 # written before #211 do not carry it: `lines()` is where that is answered, once.
 POLLS_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "spread_price": pl.Float64,
@@ -375,7 +495,7 @@ def journal_outcomes(season: int, *, base: Path | None = None) -> pl.DataFrame |
 # It answers "what does the model say", which is what all three callers ask. It is NOT the
 # answer to "what was pre-registered": that is decided by which commit predates kickoff
 # (`docs/track-record.md` rule 1), lives in git rather than here, and is why `track_record`
-# still reports `n_preregistered: 0` rather than counting rows.
+# counts it with `hub.prereg` (#422) rather than from rows.
 LATEST_PREDICTIONS = """
 SELECT * EXCLUDE (rn) FROM (
     SELECT *, row_number() OVER (

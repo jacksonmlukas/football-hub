@@ -62,7 +62,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # Full history, not the default depth of 1 (#422). `make slate` publishes the track record,
+      # which counts pre-registered predictions by reading which
+      # commit first carried each price. A one-commit clone cannot answer that, and the record
+      # would publish `n_preregistered: null` on every run -- honest, and useless.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
 
@@ -72,8 +78,13 @@ jobs:
       #
       # A runner starts with an empty store, which is fine and was measured: `--snapshot` takes
       # one fresh pull and the as-of join wants the latest capture at or before now, so a
-      # snapshot thirty seconds old prices the whole season. The historical store is not needed
-      # and is never published -- `.gitignore` excludes it as redistributed third-party data.
+      # snapshot thirty seconds old prices the whole season. The `data/processed` store is
+      # never published -- `.gitignore` excludes it as redistributed third-party data -- and
+      # **so each poll also writes its validated frame to `state/odds/<season>/wk<NN>/
+      # snap-<ts>.json` (#383)**, which the commit step below carries. That is the archive:
+      # until then every capture a runner made was discarded with the runner, and the only
+      # lines archive was whatever the maintainer's own machine had run. `hub.store.connect`
+      # unions that committed tree under `lines`, so a fresh checkout reads every capture.
       # `CFB_WEEK_ONE` is a repository *variable* and not a secret: it is the date of the
       # college season's first game, which is public and is the whole of what this job needs
       # in order to know which college week to fetch. Set once in August; `hub.fetch.cfbd`
@@ -185,7 +196,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # `state/` as well as `site/data`. It holds the odds balance, the CFBD call
+          # `state/` as well as `site/data`. It holds the committed odds snapshots
+          # (`state/odds/`, #383 -- the captures this run's `--snapshot` made), the odds balance, the CFBD call
           # count, and `interval_coverage.json` from the measure step above. A run that
           # spends a credit and does not commit the new number leaves the next run refusing
           # -- or not refusing -- on a stale one. The counters lived under `data/raw/`
@@ -237,10 +249,13 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: uv run python -m hub.fetch.odds --snapshot
 
-      # `state/odds.json` alone -- the credit balance `CREDIT_FLOOR` reads back. The snapshot
-      # itself lands in the gitignored `data/processed` store the same way `refresh`'s does;
-      # nothing here writes `site/data`, so there is nothing else to commit.
-      - name: Commit the credit balance
+      # `state/` carries two things from this job: `state/odds.json`, the credit balance
+      # `CREDIT_FLOOR` reads back, and the capture itself under `state/odds/` (#383) -- the
+      # snapshot also lands in the gitignored `data/processed` store, which this runner
+      # discards, so the committed file is the only copy that outlives the job. Nothing here
+      # writes `site/data`. `state/` exists in the repo, so the pathspec cannot fail the way
+      # `bigten.yml`'s did on a directory that was not there yet.
+      - name: Commit the credit balance and the capture
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -249,6 +264,10 @@ jobs:
             echo "nothing changed; no commit"
             exit 0
           fi
+          # The committed snapshots are a record, so a run that spent a credit and wrote none
+          # is the failure this ticket was about arriving again, quietly.
+          git diff --cached --name-only | grep -q '^state/odds/' \
+            || echo "::warning::the poll committed no state/odds/ snapshot -- nothing was captured"
           git commit -m "odds: scheduled poll ($(date -u +%A))
 
           Captured by the scheduled odds-only poll -- see docs/track-record.md rule 1."

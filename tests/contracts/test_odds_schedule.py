@@ -90,3 +90,30 @@ def test_every_scheduled_job_has_a_timeout():
         body = text.split(f"\n  {job}:", 1)[1].split("\n  poll_odds:", 1)[0] \
             if job == "refresh" else text.split(f"\n  {job}:", 1)[1]
         assert re.search(r"timeout-minutes:\s*\d+", body), f"{job} has no timeout-minutes"
+
+
+def _jobs() -> dict[str, str]:
+    text = WORKFLOW.read_text()
+    refresh = text.split("\n  refresh:", 1)[1].split("\n  poll_odds:", 1)[0]
+    return {"refresh": refresh, "poll_odds": text.split("\n  poll_odds:", 1)[1]}
+
+
+def test_both_polling_jobs_commit_the_state_tree_the_snapshots_land_in():
+    """#383: the capture is only durable if the job that made it commits `state/odds/`.
+
+    Each job must stage a pathspec that covers `state` -- and that directory must exist in
+    the checkout, because staging a missing path fails the job (the `bigten.yml` failure).
+    `state/odds.json` is tracked, so it does; asserting it here is what notices the day
+    someone moves the balance elsewhere and leaves the pathspec dangling.
+    """
+    for name, body in _jobs().items():
+        adds = re.findall(r"^\s*git add (.+)$", body, re.M)
+        assert any("state" in a.split() for a in adds), (
+            f"{name} no longer commits `state`, so its snapshot would be discarded with the "
+            f"runner (adds: {adds})")
+    assert (ROOT / "state").is_dir()
+
+
+def test_the_committed_snapshot_path_is_under_the_tree_the_workflow_adds():
+    from hub import store
+    assert store.snapshot_root().relative_to(ROOT).parts[0] == "state"

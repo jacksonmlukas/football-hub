@@ -12,7 +12,7 @@ clock said so.
 
 **Game state, never window shape.** `live.yml`'s header is explicit that the crons are the
 only definition of a window and that the loop knows nothing about it: a second copy in code is
-the drift this repo keeps paying for (`hub.fetch.odds._game_date`, `hub.schedule._kickoff`).
+the drift this repo keeps paying for (`hub.fetch.odds._game_date`, `hub.schedule.kickoff_expr`).
 This module has no hour, no weekday and no kickoff time in it. The loop was already asking ESPN
 every five minutes; this is that same question put once more at the end.
 
