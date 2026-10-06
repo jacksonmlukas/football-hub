@@ -287,6 +287,28 @@ for it (see the script's docstring):
 | draft | 4 | 7.34 | 20 | 2.0 | **0.0113** | **0.0324** | 0.136 |
 | weekly blend (**confirmed 2026-09-21 under #378**) | 4 | 0.382 | 40 | 0.3 | **0.0186** | **0.1925** | 0.378 |
 
+**Restated 2026-10-06 (#418, rule 13; the table above is not edited).** Re-run today,
+`scripts/rule16_combined_power.py` reproduces every figure in it to the digit (0.0113 / 0.0324,
+0.0186 / 0.1925), so they stand **as the combined rule's null and power under the stand-in
+generating process stated beside them**: within-season cluster SD set equal to the between-season
+`s`, which at these `m` is a season SE of 0.060 (weekly) and 1.64 (draft). They are not the
+rule's power at the gates' own measured precision. The weekly gate's recorded season SEs are
+0.409 / 0.447 / 0.543 / 0.546 (seven to nine times wider than the stand-in's 0.060), and run at
+the same k=4 through the same `gate`, with the within-season spread estimated from them (#388's
+harness, `gate_horizon.py --rule16`, 40,000 trials), the combined rule gives **weekly null 0.0001 /
+power 0.0008** (δ=0.3) and **draft null 0.0014 / power 0.0075** (δ=2.0). The stand-in's own
+description of itself, "conservative", was wrong for the weekly gate: a season its tie test
+resolves at SE 0.06 is one the real gate ties at SE 0.5, and the observed gates tied 1 season of
+4 where the stand-in predicts 0.003 per weekly season at the gains observed. Of the 0.193 weekly
+power lost between the two processes, 73% is that within-season spread, 19% is m (40 to 20),
+5% the estimated τ, 2% the shipped bootstrap of 4000 against 200 (not distinguished); the #363
+NOT-RUNNABLE path owns none of it (the script hands `gate` a ceiling that cannot bind, and the
+same harness without one returns NOT-RUNNABLE 300 times in 300). The mechanism above, one tie
+vetoes both directions, holds more strongly, not less; the draft ADOPT branch's rule-16
+exemption below stands at 0.0075 rather than 0.0324. No rule, constant or verdict changes.
+Attribution, table and control: `docs/gate-power.md`, *What contradicts a published figure*,
+#418.
+
 **Both null sizes sit comfortably under `ALPHA` (0.05)** — the tie requirement can only make
 the conjunction rarer than the interval-alone test, never more permissive, and the simulation
 confirms it rather than assuming it.
@@ -333,7 +355,10 @@ combined rule's power for the draft gate is **0.0324** against unanimity-alone's
 ADOPT that is reachable in principle but not at any effect size this project would plausibly
 observe. Per rule 16 and #300, a branch a gate cannot practically reach is not a strict bar on
 that gate; it is an exemption, and this pre-registration names it as one rather than leaving a
-reader to infer it from the branch never firing.
+reader to infer it from the branch never firing. *Restated 2026-10-06 (#418, rule 13): the 0.0324
+here is the stand-in-process figure; at the draft gate's own recorded precision the same rule
+gives 0.0075, so the exemption stands on a smaller number (the restatement under the table
+above).*
 
 **Runnable and able to adopt are two different questions, and #376 answers only the first
 (2026-09-21).** The row above is about *power to adopt a given effect size*, computed without a

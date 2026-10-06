@@ -126,3 +126,31 @@ def test_the_render_reads_every_cell_the_grids_ask_for(gh, monkeypatch):
     sens = gh.run_cells(gh.sensitivity_cells(), procs, trials=2, workers=1)
     text = gh.render(table, sens)
     assert "Where the gap to 80% power sits" in text and "Sensitivity to the between-season" in text
+
+
+def test_the_rule16_ladder_starts_at_rule16s_process_and_ends_at_388s_cell(gh):
+    """#418: step 1 is the precedent script's process (cluster SD = between-season s, m as the
+    script set it, bootstrap 200); the last full-bootstrap step is `weekly_cell`/`draft_cell`
+    itself, so the ladder's two ends are the two published numbers' own generating processes."""
+    procs, cells, steps = gh.rule16_ladder()
+    for path, (s, m, delta), end in (("weekly", gh.R16_WEEKLY, gh.weekly_cell(4, 13, 0.3)),
+                                     ("draft", gh.R16_DRAFT, gh.draft_cell(4, 20, gh.DRAFT_DELTA))):
+        first, = [lab for p, st, lab in steps if p == path and st.startswith("1 ")]
+        last, = [lab for p, st, lab in steps if p == path and st.startswith("5 ")]
+        assert procs[first].tau == s and procs[first].row_var == pytest.approx(s * s)
+        at_first = [c for c in cells if c.path == first]
+        assert {c.seasons for c in at_first} == {((m, 1),) * 4} and {c.bootstrap for c in at_first} == {200}
+        at_last = [c for c in cells if c.path == last and c.delta == delta]
+        assert at_last[0].seasons == end.seasons and at_last[0].bootstrap == end.bootstrap
+        assert procs[last] == gh.estimates()[path]
+
+
+def test_the_rule16_ladder_renders_and_its_null_stays_under_alpha(gh, monkeypatch):
+    monkeypatch.setattr(gh, "CHUNK", 5)
+    procs, cells, steps = gh.rule16_ladder()
+    res = gh.run_cells(cells, procs, trials=5, workers=1)
+    assert "ties/season at the observed gain" in gh.render_rule16(res, steps)
+    # a planted effect through the same harness is adopted where a null is not (rule 18)
+    big = gh.run_chunk(gh.Cell("weekly:big", ((40, 1),) * 6, 20.0, 1.0, 200),
+                       procs["weekly:1 rule-16 process, bootstrap 200"], 20, np.random.SeedSequence(3))
+    assert big["ship"].get("ADOPT", 0) / big["n"] > 0.9

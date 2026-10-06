@@ -30,6 +30,13 @@ row-level frame gives -- `tests/unit/test_gate_horizon.py` holds that equality.
     uv run python scripts/gate_horizon.py --sensitivity --trials 20000 --out $TMPDIR/388-sens.json
     uv run python scripts/gate_horizon.py --render $TMPDIR/388-table.json \
         --with-sensitivity $TMPDIR/388-sens.json
+
+#418 added `--rule16`: the same harness started from `rule16_combined_power.py`'s generating
+process and moved to this one a factor at a time (`--render-rule16` prints the table):
+
+    uv run python scripts/gate_horizon.py --rule16 --trials 40000 --workers 6 \
+        --out $TMPDIR/418-rule16.json
+    uv run python scripts/gate_horizon.py --render-rule16 $TMPDIR/418-rule16.json
 """
 from __future__ import annotations
 
@@ -137,6 +144,7 @@ class Cell:
     seasons: tuple[tuple[int, int], ...]
     delta: float
     tau_scale: float = 1.0               # the between-season SD as a multiple of its estimate
+    bootstrap: int = BOOTSTRAP           # #418 sets 200, the rule-16 script's own, to match it
 
     @property
     def k(self) -> int:
@@ -156,11 +164,11 @@ def _frame(rng: np.random.Generator, proc: Process, seasons: Sequence[tuple[int,
                          "diff": np.concatenate(diff)})
 
 
-def _read(paired: pl.DataFrame, seed: int) -> dict[str, int | float]:
+def _read(paired: pl.DataFrame, seed: int, bootstrap: int = BOOTSTRAP) -> dict[str, int | float]:
     """Drive `gate` on the frame and read the shipped verdict, the pre-#335 verdict, and the
     interval half alone, off the one summary and one seasons frame `gate` produced."""
     run = gate(paired, cluster=SEASON_CLUSTER, within=("unit",), ceiling=_TOP,
-               actions=_ACTIONS, bootstrap=BOOTSTRAP, seed=seed)
+               actions=_ACTIONS, bootstrap=bootstrap, seed=seed)
     ship = run.verdict[0]
     # The pre-#335 reading: a seasons frame with no `se`/`m` is read by sign alone
     # (`_seasons_won_tied_lost`'s documented backward compatibility), the rest unchanged.
@@ -182,7 +190,8 @@ def run_chunk(cell: Cell, proc: Process, n: int, seed_seq: np.random.SeedSequenc
     tot = Counter()
     violations = 0
     for _ in range(n):
-        out = _read(_frame(rng, proc, cell.seasons, cell.delta, cell.tau_scale), int(rng.integers(2**31)))
+        out = _read(_frame(rng, proc, cell.seasons, cell.delta, cell.tau_scale), int(rng.integers(2**31)),
+                    cell.bootstrap)
         ship[out["ship"]] += 1
         sign[out["sign"]] += 1
         tot["ties"] += out["ties"]
@@ -278,6 +287,72 @@ def sensitivity_cells() -> list[Cell]:
             cells += [weekly_cell(k, 13, d, ts) for d in (0.0, 0.3)]
             cells += [draft_cell(k, 20, d, ts) for d in (0.0, DRAFT_DELTA)]
     return cells
+
+
+# --- #418: this harness at rule 16's generating process, and the steps between the two -----------
+#
+# `scripts/rule16_combined_power.py` set the within-season cluster SD equal to the between-season
+# `s`, ran the draft gate at m=20 rooms and the weekly gate at m=40 clusters, 200 bootstrap draws.
+# This harness estimates the within-season spread from published SEs and runs at the shipped 4000.
+# The ladder moves from the one to the other a factor at a time, each step through the same
+# `run_chunk`, so the gap #388 flagged is apportioned rather than guessed at.
+
+R16_WEEKLY = (0.382, 40, 0.3)            # (between-season s, within-season clusters m, delta)
+R16_DRAFT = (7.34, 20, 2.0)
+OBSERVED_DELTA = {"weekly": float(np.mean(WEEKLY_GAINS)), "draft": float(np.mean(DRAFT_GAINS))}
+
+
+def rule16_ladder() -> tuple[dict[str, Process], list[Cell], list[tuple[str, str, str]]]:
+    """(processes by label, cells, [(path, step, label)]): null and power cells at each step, and
+    at the steps that matter for ties, a cell at the mean gain the gate actually observed."""
+    est = estimates()
+    procs: dict[str, Process] = {}
+    cells: list[Cell] = []
+    steps: list[tuple[str, str, str]] = []
+
+    def add(path: str, step: str, proc: Process, m: int, r: int, bootstrap: int,
+            deltas: Sequence[float]) -> None:
+        label = f"{path}:{step}"
+        procs[label] = proc
+        cells.extend(Cell(label, ((m, r),) * 4, d, 1.0, bootstrap) for d in deltas)
+        steps.append((path, step, label))
+
+    for path, (s_r16, m_r16, delta), e, rows, m_est in (
+            ("weekly", R16_WEEKLY, est["weekly"], 13, WEEKLY_M),
+            ("draft", R16_DRAFT, est["draft"], 1, DRAFT_M)):
+        base = (0.0, delta)
+        with_obs = (0.0, delta, OBSERVED_DELTA[path])
+        r16 = Process(tau=s_r16, row_var=s_r16 ** 2)
+        add(path, "1 rule-16 process, bootstrap 200", r16, m_r16, 1, 200, base)
+        add(path, "2 + shipped bootstrap 4000", r16, m_r16, 1, BOOTSTRAP, with_obs)
+        if m_est != m_r16:
+            add(path, f"3 + m={m_est}", r16, m_est, 1, BOOTSTRAP, base)
+        add(path, "4 + estimated tau", Process(tau=e.tau, row_var=s_r16 ** 2), m_est, 1,
+            BOOTSTRAP, base)
+        add(path, "5 + estimated within-season spread (= #388's cell)", e, m_est, rows,
+            BOOTSTRAP, with_obs)
+        add(path, "6 #388's cell at bootstrap 200", e, m_est, rows, 200, base)
+    return procs, cells, steps
+
+
+def render_rule16(results: Sequence[dict], steps: Sequence[tuple[str, str, str]]) -> str:
+    by = {(r["cell"]["path"], r["cell"]["delta"]): r for r in results}
+    out: list[str] = []
+    for path, (_, _, delta) in (("weekly", R16_WEEKLY), ("draft", R16_DRAFT)):
+        out += [f"**{path}** (k=4, δ={delta}; observed mean gain {OBSERVED_DELTA[path]:.2f})", "",
+                "| step | null ADOPT | power | SE (power) | interval alone | ties/season at δ "
+                "| ties/season at the observed gain |", "|---|---|---|---|---|---|---|"]
+        for p, step, label in steps:
+            if p != path:
+                continue
+            n0, a = by[(label, 0.0)], by[(label, delta)]
+            obs = by.get((label, OBSERVED_DELTA[path]))
+            obs_ties = "" if obs is None else f"{tot(obs, 'ties') / 4:.3f}"
+            out.append(f"| {step} | {rate(n0, 'ADOPT'):.4f} | {rate(a, 'ADOPT'):.4f} | "
+                       f"{se_of(rate(a, 'ADOPT'), a['n']):.4f} | {rate(a, 'int_adopt', 'tot'):.4f} | "
+                       f"{tot(a, 'ties') / 4:.3f} | {obs_ties} |")
+        out.append("")
+    return "\n".join(out)
 
 
 # --- the controls (rule 18) ---------------------------------------------------------------------
@@ -412,6 +487,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--table", action="store_true")
     mode.add_argument("--sensitivity", action="store_true")
     mode.add_argument("--render", metavar="TABLE_JSON")
+    mode.add_argument("--rule16", action="store_true")
+    mode.add_argument("--render-rule16", metavar="RULE16_JSON")
     ap.add_argument("--with-sensitivity", metavar="JSON", default=None)
     ap.add_argument("--trials", type=int, default=40_000)
     ap.add_argument("--workers", type=int, default=6)
@@ -430,6 +507,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             with open(a.with_sensitivity) as fh:
                 sens = json.load(fh)
         print(render(table, sens))
+        return 0
+    if a.render_rule16:
+        with open(a.render_rule16) as fh:
+            print(render_rule16(json.load(fh), rule16_ladder()[2]))
+        return 0
+    if a.rule16:
+        ladder_procs, ladder_cells, _ = rule16_ladder()
+        t0 = time.time()
+        results = run_cells(ladder_cells, ladder_procs, trials=a.trials,
+                            workers=min(a.workers, 6), label="rule16")
+        print(f"{len(ladder_cells)} cells x {a.trials} trials in {time.time() - t0:.0f}s")
+        if a.out:
+            with open(a.out, "w") as fh:
+                json.dump(results, fh)
         return 0
     name = ("controls" if a.controls else "sensitivity" if a.sensitivity else "table")
     cells = control_cells() if a.controls else sensitivity_cells() if a.sensitivity else table_cells()
