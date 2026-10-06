@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import polars as pl
 
-from hub import atomic, jsonio, schedule, store
+from hub import atomic, jsonio, prereg, schedule, store
 from hub.config import (
     SEASON_AHEAD,
     UNCONFIRMED_POOL_RULES,
@@ -459,8 +459,12 @@ def _finished(out: Path) -> pl.DataFrame | None:
         from hub.fetch import nflverse
         # `refresh`: the record is scored on results that did not exist at the last pull, and
         # an undated cache entry would serve it the schedule as it stood the first time.
-        sched = (nflverse.load("schedules", nflverse.every_season(), refresh=True)
-                 .select("game_id", "result").drop_nulls("result")
+        raw = nflverse.load("schedules", nflverse.every_season(), refresh=True)
+        # Kickoff rides along for `prereg`, which compares it with a commit time. A schedule
+        # without the date columns carries none, and the count is then unverifiable, not 0.
+        kick = ([schedule.kickoff_expr()]
+                if {"gameday", "gametime"} <= set(raw.columns) else [])
+        sched = (raw.select("game_id", "result", *kick).drop_nulls("result")
                  .with_columns(pl.col("result").cast(pl.Int64)))
     except Exception as e:
         # This one stays broad -- it is a network call on a schedule that runs unattended --
@@ -493,8 +497,8 @@ def track_record(base: Path | None = None, out: Path | None = None,
 
     `n_preregistered` is deliberately separate from `n_scored`. Scoring a prediction after
     the game is a backtest; the record only means something for predictions whose commit
-    predates kickoff. Until the season starts both are zero, and the page says so rather
-    than filling the space with a backfill dressed up as history.
+    predates kickoff. It is counted from the commit history by `hub.prereg` (#422) -- it was
+    a literal 0 until then -- and is None, not 0, when that history cannot be read.
 
     **Nothing to score does not blank the record, and `_publish` is what enforces that.**
     This used to return a valid payload describing nothing, and `Artifact.record` reads a
@@ -528,6 +532,7 @@ def track_record(base: Path | None = None, out: Path | None = None,
     df = _record_of(finished)
 
     seasons = [_curve(season, rows, n_bins) for season, rows in _by_season(df)]
+    reg = _registration(out, df, seasons)
     # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
     # top level unconditionally, and a missing key and a null one render differently.
     newest = seasons[0] if seasons else {"bins": [], "log_loss": None, "brier": None}
@@ -541,12 +546,14 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # being none among the published predictions, and that stays true only as long as
         # something re-derives it (#52).
         n_tied=_n_tied(finished),
-        # Nothing is pre-registered until a prediction is committed before kickoff, which
-        # the Sunday Actions job does. Counting it here would be marking my own homework.
-        n_preregistered=0,
-        is_backtest=df.height > 0,
-        note=("No pre-registered predictions yet. A prediction counts only once its "
-              "commit predates kickoff -- see docs/track-record.md."),
+        # Counted from the commit history (#422), not asserted: see `hub.prereg`. None is
+        # "could not tell", which the page words differently from 0 -- a literal 0 here for
+        # four weeks called 64 predictions committed before kickoff a backtest.
+        n_preregistered=reg.n,
+        # True while any scored game is not pre-registered, and while that is unknown.
+        is_backtest=df.height > 0 and (reg.n is None or reg.n < df.height),
+        note=reg.note,
+        late_game_ids=reg.late, unverified_game_ids=reg.unverified,
         seasons=seasons,
         bins=newest["bins"], log_loss=newest["log_loss"], brier=newest["brier"],
         # The other half of the record, and the half that was never on the page. Log loss
@@ -559,6 +566,56 @@ def track_record(base: Path | None = None, out: Path | None = None,
         interval_coverage=coverage.published_summary(),
     )
     return _publish(out, "track_record", payload, count_key="n_scored")
+
+
+class _Registration(NamedTuple):
+    n: int | None
+    note: str
+    late: list[str] | None
+    unverified: list[str] | None
+
+
+_NO_RECORD = ("A prediction counts only once its commit predates kickoff -- see "
+              "docs/track-record.md.")
+
+
+def _registration(out: Path, df: pl.DataFrame, seasons: list[dict[str, Any]]) -> _Registration:
+    """How many scored predictions were committed before kickoff, per season and in all.
+
+    Adds `n_preregistered` and `n_backtest` to each season dict in place, so a record of 64
+    pre-registered 2026 games and sixteen backfilled 2025 ones does not carry one flag for
+    both. Everything is None, with a note saying why, when the history cannot be read.
+    """
+    history = prereg.read_history(out) if df.height else []
+    if history is None:
+        print("  track_record: commit history unreadable (shallow, or not a repository); "
+              "n_preregistered left unknown", flush=True)
+        for c in seasons:
+            c.update(n_preregistered=None, n_backtest=None)
+        return _Registration(
+            None, "Pre-registration could not be checked this run: the commit history was "
+                  "not readable, so no count is claimed. " + _NO_RECORD, None, None)
+    seen = prereg.first_seen(history)
+    cols = {"game_id", "home_win_prob", "priced_at", "kickoff"}
+    rows_of = dict(_by_season(df))
+    n, late, unverified = 0, [], []
+    for c in seasons:
+        rows = rows_of[c["season"]]
+        for col in cols - set(rows.columns):
+            rows = rows.with_columns(pl.lit(None).alias(col))
+        got = prereg.classify(rows.to_dicts(), seen)
+        c.update(n_preregistered=got.n_preregistered,
+                 n_backtest=c["n_scored"] - got.n_preregistered)
+        n += got.n_preregistered
+        late += got.late
+        unverified += got.unverified
+    if not n:
+        return _Registration(0, "No pre-registered predictions yet. " + _NO_RECORD,
+                             sorted(late), sorted(unverified))
+    return _Registration(
+        n, f"{n} of {df.height} scored predictions were committed before kickoff; the other "
+           f"{df.height - n} were scored after the fact and are a backtest. " + _NO_RECORD,
+        sorted(late), sorted(unverified))
 
 
 def _by_season(df: pl.DataFrame) -> list[tuple[int | None, pl.DataFrame]]:
