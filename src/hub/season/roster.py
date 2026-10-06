@@ -33,6 +33,7 @@ from typing import NamedTuple, cast
 import polars as pl
 
 from hub import atomic
+from hub.declare import not_an_input
 from hub.fetch.espn import my_team, roster_rows
 from hub.models.predict import blend as predict_blend
 from hub.models.predict import moments
@@ -52,10 +53,15 @@ BENCH = "BE"
 INJURED_RESERVE = "IR"
 NOT_STARTING = frozenset({BENCH, INJURED_RESERVE})
 
+# Positions whose ESPN total is not on the games-still-to-play basis a player's is, so they
+# neither set the standard nor can be short of it. Kickers are not here: read live on
+# 2026-10-06, a kicker's ratio was the same as every player's.
+NO_SLATE = frozenset({"D/ST"})
+
 
 def _standard(games: pl.Series) -> float | None:
-    """The games-count most rated players share: the mode of the rounded ratios, the larger
-    one on a tie. None when ESPN priced nobody."""
+    """The games-count most voting players share: the mode of the rounded ratios, the larger
+    one on a tie. None when nobody voted."""
     seen = games.drop_nulls().drop_nans().round(0)
     if seen.is_empty():
         return None
@@ -77,12 +83,23 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     So availability is read off the ratio rather than the designation. `full` is the count
     most of the roster shares rather than a hard-coded 17, because the number of games in a
     season is ESPN's to change and not ours to restate -- and **the most common one, not the
-    largest**, because ESPN's total covers the games still to play for a player and the whole
-    season for a team defence. From the first week played, one D/ST on the roster was the
-    largest ratio and everyone else read as missing the weeks already played: 14 of 17
-    withheld from 2026-09-26, no lineup, and a manifest that said `ok` (issue #419). A tie goes
-    to the larger count, which is the old behaviour and keeps a two-player roster reading its
-    short player as short.
+    largest**. ESPN's total covers the games still to play for a player, so from the first week
+    played every ratio is the season less the weeks played; a lone full-season outlier (a team
+    defence, whose total is not on that basis, or an injured-reserve player) then became the
+    largest and every healthy player read as missing the weeks already played: 14 of 17
+    withheld from 2026-09-26, no lineup, and a manifest that said `ok` (issue #419). Both a D/ST
+    and an IR player were on that roster, so which of them held the maximum is not proven; the
+    cure is the same for either.
+
+    **Team defences do not vote** (`NO_SLATE`), and are never short: a two-player roster of a
+    defence and one player tied 17 against 13 and the larger-count tie-break reproduced the
+    bug (issue #425). A tie among the rest still goes to the larger count, which is the old
+    behaviour and keeps a two-player roster reading its short player as short.
+
+    **The accepted trade-off:** a roster most of whose voting members are short reads their
+    count as full. Several suspensions on a small roster are the case a maximum caught and a
+    mode does not; against that, one outlier no longer withholds everybody, and the
+    suspensions that matter here are singletons.
 
     This is a **season-level** signal and says nothing about *which* games are missed. It is
     therefore only safe in one direction: a player short of a full slate is not
@@ -95,11 +112,15 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     games = pl.when(pl.col("espn_avg") > 0).then(
         pl.col("espn_total") / pl.col("espn_avg")).otherwise(None)
     out = espn.with_columns(games.alias("espn_games"))
-    full = _standard(out["espn_games"])
+    voters = (out.filter(~pl.col("pos").is_in(sorted(NO_SLATE))) if "pos" in out.columns
+              else out)
+    full = _standard(voters["espn_games"])
     if full is None:                      # ESPN published no projections at all
         return out.with_columns(pl.lit(0, dtype=pl.Int64).alias("missing_games"),
                                 pl.lit(True).alias("available"))
     missing = (pl.lit(full) - pl.col("espn_games")).round(0)
+    if "pos" in out.columns:
+        missing = pl.when(pl.col("pos").is_in(sorted(NO_SLATE))).then(0.0).otherwise(missing)
     return out.with_columns(
         missing.fill_null(0.0).cast(pl.Int64).alias("missing_games")
     ).with_columns((pl.col("missing_games") < 1).alias("available"))
@@ -255,6 +276,10 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
                 sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
 
 
+# More than this share of the projected candidates withheld is not a lineup call.
+MAJORITY = not_an_input(0.5, "a publishing threshold on the lineup call; no prediction reads it")
+
+
 def degenerate(df: pl.DataFrame, lk: Lock) -> str | None:
     """Why this lineup call should not be published as a healthy one, or None.
 
@@ -279,7 +304,7 @@ def degenerate(df: pl.DataFrame, lk: Lock) -> str | None:
     if lk.gain is None and held:
         return (f"no lineup could be filled: {held} of {n} projected players withheld as "
                 f"unavailable")
-    if held * 2 > n:
+    if held > MAJORITY * n:
         return f"{held} of {n} projected players withheld as unavailable"
     return None
 
