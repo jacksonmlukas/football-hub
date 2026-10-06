@@ -3899,3 +3899,176 @@ trusted, whatever the maintainer's `ADOPTED:` comment says. Short of that, a mai
 `ADOPTED:` comment naming a different choice among the three candidates above reopens exactly
 the axis it names and none of the others, the same granularity #364's own closing section
 used.
+
+---
+
+# Pre-registered 2026-10-05: gate horizon — null and power over cluster count, and what within-season rows buy (#388)
+
+**Written and committed before any number in this section's tables exists.** The commit that
+adds this text adds the harness (`scripts/gate_horizon.py`, tests in
+`tests/unit/test_gate_horizon.py`) and nothing it computed: the table, the controls' results and
+the answer to #381 are filled in by a later commit under *Results*, below, and the design above
+that heading is not edited after it. ADR-0024: the alternatives sit on one axis (cluster count),
+so the table is the deliverable; ADR-0007: a measurement that steers the product is committed
+code. **This changes no rule and no constant that reaches a published number**, spends no reading
+and consumes no ledger entry; freeze #326 is not touched.
+
+## The question, and the axis
+
+The combined rule's `k` is **seasons**. Every gate clusters on `SEASON_CLUSTER`; `summarise`
+bootstraps over per-season means and `per_season` groups the same way. Scored weeks in 2026 add
+no cluster. They shrink that one season's within-season SE, which decides whether the season
+resolves or **ties**, so weeks act on the verdict only through the tie mechanism. ADR-0019's
+rule-16 table read null 0.019 / power 0.19 (weekly, δ=0.3) and 0.011 / 0.032 (draft, δ=2.0) at
+k=4; nothing apportions that gap between **k=4** and **the tie mechanism**, and #381 has to decide
+the second without knowing how much of the gap it owns.
+
+## The simulated generating process
+
+Per trial, for `k` seasons and each season `s`:
+
+```
+true season effect   μ_s            ~ N(δ, τ²)             between-season spread
+cluster mean         x_{s,c}        ~ N(μ_s, σ_row² / r)   c = 1..m within-season clusters
+```
+
+`m` clusters a season (rosters for the weekly path, rooms for the draft path) and `r` rows
+averaged into each cluster (scored weeks for the weekly path, 1 for the draft path). A trial's
+paired frame is one row per cluster carrying that cluster's mean, and goes through the shipped
+`experiment.gate(paired, cluster=SEASON_CLUSTER, within=("unit",), ...)` — `summarise`,
+`per_season`, `_disposition` and `_verdict` as they stand on `main`, `BOOTSTRAP = 4000` as
+shipped (not the precedent script's 200: the tie test reads a bootstrap SE, and 200 draws leave
+it 5% wrong). Collapsing a balanced cluster to its mean is not an approximation: it is the first
+thing `summarise` and `per_season` do to the rows, and a unit test holds the row-level and the
+collapsed frame to the same verdict and the same SEs.
+
+**Ceiling.** Held non-binding (`rule16_combined_power.py`'s precedent): this measures the
+interval half and the tie-aware every-season half, not stage 2. A binding ceiling would make every
+trial NOT-RUNNABLE and the table would read 0 whatever the inputs. Stage 2 passes at 9.7× for the
+weekly gate and 1.99× for the draft gate at k=4 (ADR-0019, #376/#378) and only improves with k, so
+holding it open does not flatter either gate's *runnability*, which this table does not speak to.
+
+**Estimated from history, not assumed.** The precedent script set the within-season spread equal
+to the between-season `s`; that is the stand-in this ticket exists to replace. Each constant
+below is computed by `gate_horizon.estimates()` (`--estimates` prints it), from numbers already
+published:
+
+*Weekly* (`state/gate-width.json`, #382's re-run of the #378 recipe, the only run that recorded
+per-season SEs; m = 20 rosters a season; scored weeks 13 / 13 / 11 / 13, read off the gains'
+denominators). Per-season gains −1.1198, −1.4479, −0.2587, −1.7614; SEs 0.4088, 0.4474, 0.5428,
+0.5457.
+
+- A bootstrap SE over `m` cluster means is `s·√((m−1)/m)/√m`, so the cluster SD is
+  `s = se·m/√(m−1)`: 1.876, 2.053, 2.490, 2.504.
+- Cluster variance is `σ_row²/r`, so `σ_row² = s²·r`, pooled by the mean over the four seasons:
+  **σ_row² = 62.56 (σ_row = 7.91 points per roster-week)**.
+- Is there a roster component beyond week noise? From the frozen frame
+  `data/processed/gate/weekly_post248.parquet` (40 rosters × 11–13 weeks, read through code, a
+  summary only): the between-roster variance component, disattenuated by the within-roster week
+  variance over the weeks, is −1.98, 0.45, 0.61, −0.11 across the four seasons (mean −0.26) — zero
+  within its own noise — and the lag-1 autocorrelation of a roster's weekly diffs is −0.08, −0.04,
+  −0.09, −0.03. So the model is **row-iid with no roster component**, which is the claim that makes
+  weeks the thing that buys precision: a season's SE is `σ_row/√(m·r)`.
+- Between-season variance, **disattenuated** (the shape method.md's *Noted twice* records, now a
+  third instance: a dispersion fitted on observed variance absorbs the sampling noise of the thing
+  it is fitted on): `τ² = var(gains, ddof=1) − mean(s²/m) = 0.4193 − 0.2525 = 0.1668`,
+  **τ = 0.408**.
+
+*Draft* (the gains are #376's hold-out run, ADR-0019: −15.35, −8.41, −5.99, −19.86; the ledger's
+draft entries carry no SE, so the within-room spread is read from the one frozen draft frame with
+per-room rows, `p245_shipped_seed0.parquet`, 20 rooms × 4 seasons: room SDs 13.671, 14.062,
+13.005, 9.558). **σ_row² = mean(SD²) = 161.28 (σ_row = 12.70 per team-game)**;
+`τ² = 40.47 − 161.28/20 = 32.41`, **τ = 5.69**. The p245 frame is a different run from #376's; its
+SEs (2.1–3.1) bracket the one bound #376 itself gives (2024's tie at |−5.99| means its SE exceeds
+3.0). That mismatch is named here and carried into the sensitivity table below, not argued away.
+
+**Not in the model, stated:** season-to-season differences in σ_row (the four weekly SEs differ by
+a factor of 1.33, which is what 20 clusters' sampling variation of an SD predicts, so one common
+σ_row is used), correlation between the arm's gain and a season's noise, and any non-normality.
+
+## The grid
+
+| axis | values | why |
+|---|---|---|
+| k (seasons) | 4, 5, 6, 7, 8 | the ticket |
+| weekly within-season rows | 220 (20 rosters × 11 weeks), 260 (× 13), 280 (× 14) | 11 and 13 are the scored weeks the four held-out seasons actually had (2024 had 11); 14 is `REG_SEASON_WEEKS`, a full season |
+| weekly δ | 0.3, 0.5 (and 0 for the null) | the ticket; points per roster-week |
+| draft within-season rows | 20, 40, 80 rooms | 20 is the observed `--drafts` default and the only value any run has had; the draft has no partial season, so its "rows" are rooms, a parameter of the harness, and the larger two say what more rooms would buy |
+| draft δ | 2.0 (and 0 for the null) | ADR-0019's own row |
+| the fifth season | k=5, seasons 1–4 at 13 weeks, the fifth at **4** weeks (2026 as of this writing) or at **14** | what a complete 2026 buys, against what it has now |
+| τ sensitivity | 0× and 2× the estimate, at the observed rows, k = 4, 6, 8, both paths | τ rests on four seasons and is the least certain input; the table must not rest on it unexamined |
+
+## What each column and share means (defined now, read later)
+
+- **tie rate** — the mean over trials of (seasons whose disposition is `tie`) / k, at the first
+  nonzero δ of the row. A "P(≥1 tie)" column is also kept: ADR-0019's mechanism is that one tie
+  vetoes both directions.
+- **null ADOPT** — the fraction of trials at δ=0 on which `gate` returns ADOPT.
+- **power δ** — the same at the stated δ. **Modal verdict** — the most frequent of
+  ADOPT / REMOVE / SHOW / NOT-RUNNABLE at the first nonzero δ, with its frequency.
+- **Three rules on the same frames.** On every trial the one `GateRun` is read three ways: the
+  **shipped** rule (the verdict `gate` returns); the **pre-#335** rule (the same summary with the
+  seasons frame stripped of `se`/`m`, which `_season_records` documents as reading the sign alone
+  — equal, as a unit test holds, to raising `TIE_MIN_CLUSTERS` past any cluster count); and the
+  **interval alone** (`t_lo > 0`, the half #357 made a distributional claim). Per trial the
+  three are nested: shipped ⊆ pre-#335 ⊆ interval-alone on ADOPT.
+- **The gap and its owners, pre-registered for #381.** Gap `G = 0.80 − P(shipped)` at the cell
+  (0.80 is `experiment.POWER`). The **tie mechanism** owns `P(pre-#335) − P(shipped)` at the low
+  end — what #335 added over the sign test — and `P(interval alone) − P(shipped)` at the high
+  end, which is the most any tie rule can recover, up to dropping the every-season half altogether
+  (#381's candidate E). **k owns** `0.80 − P(interval alone)`, the power a gate at this k does not
+  have even with no every-season half and no tie to veto it. Shares are those over `G`; the tie
+  mechanism's is reported as the interval between its low and high end.
+
+## Trials, standard errors, seeds
+
+A rate's SE is `√(p(1−p)/N) ≤ 0.5/√N`. **The table claims a difference between two rates only when
+it is at least 0.025; everything under that is called not distinguished.** The SE target is a
+tenth of that, 0.0025, so **N = 40,000 trials per cell** (worst case 0.0025 at p = 0.5, 0.0018 at
+p = 0.1, 0.0006 at the null sizes near 0.02). The sensitivity table claims only differences of
+0.05 or more and runs **N = 20,000** (worst case 0.0035 < 0.005). The leverage study's 4,000-trial
+re-run is the precedent for not trusting a first pass, so a **2,000-trial pass is run first** over
+the whole grid and its rates must sit within 3.5 of their own SEs of the 40,000-trial pass; if any
+does not, the SE does not scale as claimed and the full pass is not the evidence.
+
+Seeds: `numpy.random.SeedSequence([388, cell_index])` per cell, spawned one child per 2,000-trial
+chunk; each trial's bootstrap seed is drawn from that same stream. A cell's counts therefore
+depend on nothing but its index in the grid, not on the worker count (a unit test holds it).
+Parallelism is capped at 6 worker processes, one polars thread each.
+
+## The three controls (rule 18), each of which must pass or the table is not published
+
+1. **A planted δ far above range reaches power ≈ 1.** Weekly δ = 20 (≈ 40 season SEs) at k = 8 and
+   k = 4, draft δ = 60 at k = 8, at 40,000 trials: shipped ADOPT rate ≥ 0.99 and zero
+   NOT-RUNNABLE. A rate that cannot get there is a harness that is not driving the rule it claims to.
+2. **δ = 0 reproduces the null column, and its sign half matches 2^-k.** At every k = 4..8 on both
+   paths at the observed rows: the fraction of trials in which every season's gain is positive
+   equals `2^-k` within 4 SEs (the same for every gain negative), and the shipped null ADOPT rate
+   is at most `ALPHA` = 0.05 (and, nested, at most the pre-#335 and interval-alone null rates).
+   A null that does not is a harness bug, not a finding.
+3. **A run against the pre-#335 tie handling differs from the shipped one in the direction #335
+   predicted** — "a tie-aware rule can only be *stricter* than the interval alone, never more
+   permissive". At the weekly cell k=4, 260 rows, δ=0.3 and 0.5, and the draft cell k=4, 20 rooms,
+   δ=2.0, at 40,000 trials: (i) **zero** frames on which the shipped rule ADOPTs (or REMOVEs) and
+   the pre-#335 rule does not; (ii) the pre-#335 ADOPT rate exceeds the shipped one by at least 4
+   SEs of the paired difference (`√d/N`, `d` the discordant frames); (iii) the pre-#335 reading has no
+   ties by construction (a sign test has none) while the shipped tie rate is positive. A control that cannot tell the
+   two rules apart is measuring neither.
+
+## What this cannot do
+
+It does not say whether any arm beats any incumbent: δ is planted, never read. It estimates a
+between-season *variance* and a tie *rate* from four seasons, and four seasons estimate a variance
+badly — the sensitivity table is that admission in numbers. It does not name a horizon for Audit V
+(#326's dispatch is about artifacts existing, not decidability), does not decide #381, and
+**adopts nothing**: where the results below contradict a figure ADR-0019 published, rule 13 says
+the figure moves, and that is a separate edit by whoever owns the ADR, flagged and not made here.
+
+## What would reopen this
+
+A control that fails; a 2,000-trial pass whose rates do not sit within their SEs of the full pass;
+or a proposal to change the rule being measured (then it is a decision, ADR-0024, not a table).
+
+## Results
+
+*Filled in by the commit that closes #388.*
