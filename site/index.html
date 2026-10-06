@@ -186,7 +186,9 @@ function reliabilitySVG(bins) {
 // a `seasons` key until the next slate runs. A panel that needed the new key to render
 // would go blank on the deploy that shipped it.
 function trackRecordBody(tr) {
-  const pre = tr.n_preregistered ?? 0;
+  // null is "could not tell" (#422) and must not be read as 0: a 0 that means "unchecked" is
+  // the defect that labelled 64 pre-registered predictions a backtest.
+  const pre = tr.n_preregistered ?? null;
   // Newest season first, by contract with the writer: `tr.log_loss`, `tr.brier` and
   // `tr.bins` are that season's numbers rather than a pool. Pooling 2025's sixteen scored
   // games with 2026's reports a curve neither season was measured at -- the 2025 model, its
@@ -201,8 +203,8 @@ function trackRecordBody(tr) {
   const coverage = intervalCoverageBody(tr.interval_coverage);
 
   // The framing, which decides how everything under it is read and is the whole of what
-  // this panel withholds. `n_preregistered` stays 0 until a prediction's commit predates
-  // kickoff, so it is the branch every artifact committed so far lands in; withholding the
+  // this panel withholds. `n_preregistered` is counted from the commit history (#422): 0 until a
+  // prediction's commit predates kickoff, null when the history could not be read; withholding the
   // numbers here as well -- as this did for one revision -- meant showing nobody a
   // calibration at all, while the branch that had them was code no artifact could reach.
   // Refusing to present a backtest *as a record* is the honest claim and this sentence is
@@ -212,12 +214,16 @@ function trackRecordBody(tr) {
   // asked about: the pre-registered count used to be a `{ k, v }` row inside the metrics
   // table, and lifting it out is what lets one table serve both framings instead of two
   // tables differing by a row. Recorded here so the next reader does not read it as drift.
-  const lede = pre === 0
+  const lede = pre === null
+    ? `<p class="empty">${esc(tr.note ?? "")}</p>`
+    : pre === 0
     ? `<p class="empty">${esc(tr.note ?? "")}</p>` +
       (tr.n_scored ? `<p class="empty">${esc(tr.n_scored)} predictions scored
          retrospectively. That is a backtest, not a record, and it is not shown as one.</p>`
                    : "")
-    : `<p class="legend">${esc(pre)} pre-registered, ${esc(tr.n_scored ?? 0)} scored.</p>`;
+    : `<p class="legend">${esc(pre)} pre-registered, ${esc(tr.n_scored ?? 0)} scored.</p>` +
+      (tr.n_scored > pre ? `<p class="empty">${esc(tr.n_scored - pre)} scored after the
+         fact: a backtest, not a record.</p>` : "");
 
   if (!newest) {
     // An artifact from before the split. Its numbers are pooled and nothing here can unpool

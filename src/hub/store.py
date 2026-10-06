@@ -495,7 +495,7 @@ def journal_outcomes(season: int, *, base: Path | None = None) -> pl.DataFrame |
 # It answers "what does the model say", which is what all three callers ask. It is NOT the
 # answer to "what was pre-registered": that is decided by which commit predates kickoff
 # (`docs/track-record.md` rule 1), lives in git rather than here, and is why `track_record`
-# still reports `n_preregistered: 0` rather than counting rows.
+# counts it with `hub.prereg` (#422) rather than from rows.
 LATEST_PREDICTIONS = """
 SELECT * EXCLUDE (rn) FROM (
     SELECT *, row_number() OVER (

@@ -110,7 +110,7 @@ def live_price(at: datetime) -> pl.Expr:
     return (captured >= pl.lit(at - timedelta(days=STALE_AFTER_DAYS))).fill_null(False)
 
 
-def _kickoff() -> pl.Expr:
+def kickoff_expr() -> pl.Expr:
     """Kickoff as a naive UTC moment, from nflverse's Eastern date and time.
 
     Every other moment in this repo -- `captured_at`, `predicted_at`, the as-of `at` -- is
@@ -177,7 +177,7 @@ def _nfl_slate(season: int, cache: Path | None) -> Slate:
         # When it starts, which is when it stops being forecastable. A schedule without times
         # carries a null rather than a guess -- an invented kickoff would silently decide
         # whether a game may still be predicted.
-        (_kickoff() if {"gameday", "gametime"} <= set(sched.columns)
+        (kickoff_expr() if {"gameday", "gametime"} <= set(sched.columns)
          else pl.lit(None, dtype=pl.Datetime).alias("kickoff")),
     ), league)
 

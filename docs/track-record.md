@@ -19,6 +19,18 @@ Nothing else you can do for free carries that much credibility.
 The Sunday Actions job must run and commit before the earliest kickoff, not on a "sometime
 Sunday" cron. Set it early and accept the slack.
 
+> **Corrected 2026-10-06 (#422).** `n_preregistered` was the literal `0` from the first publish
+> until this change: nothing read the history rule 1 names as the pre-registration, so 64
+> predictions the scheduled slate committed before kickoff (2026 weeks 1-4) were published as a
+> backtest. It is now counted by `hub.prereg`: a scored prediction counts when the first commit
+> whose `preds_*.json` carried the same `game_id`, `home_win_prob` and `priced_at` was committed
+> strictly before that game's kickoff. Games committed after kickoff (the sixteen 2025 week-18
+> games, backfilled) are named in `late_game_ids`, and a game no commit can place in
+> `unverified_game_ids`. History that cannot be read in full -- a shallow clone, no repository --
+> publishes `n_preregistered: null` and says so; it never publishes 0. `slate.yml` checks out
+> with `fetch-depth: 0` so the scheduled run can read it. The clock is the commit's committer
+> date, which the slate's rebase can only push later; it is not the push, which is not recorded.
+
 ### What this does and does not prove
 
 The commit proves *when*. It does not prove *from what*, and the two are worth keeping apart.

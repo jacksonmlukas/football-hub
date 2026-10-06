@@ -62,7 +62,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # Full history, not the default depth of 1 (#422). `make slate` publishes the track record,
+      # which counts pre-registered predictions by reading which
+      # commit first carried each price. A one-commit clone cannot answer that, and the record
+      # would publish `n_preregistered: null` on every run -- honest, and useless.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
 
