@@ -57,7 +57,7 @@ CLI_MODULES = (
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap",
+    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.audit_ready",
     "hub.models.conformal",
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
@@ -255,6 +255,8 @@ ABSENT_INPUT = [
     # the run history -- both exit non-zero rather than reading absence as "nothing to do".
     ("hub.live_chain", []),
     ("hub.watchdog_gap", ["--repo", "o/r", "--live-yml", "{tmp}/nope.yml"]),
+    # The audit precondition (#417): no published artifacts to read is a named refusal.
+    ("hub.audit_ready", ["--season", "2026", "--week", "4", "--site", "{tmp}"]),
     ("hub.models.component_error", ["--run"]),
     ("hub.models.conformal", ["--recalibrate", "--store", "{tmp}"]),
     ("hub.models.coverage", ["--measure", "--cache", "{tmp}"]),

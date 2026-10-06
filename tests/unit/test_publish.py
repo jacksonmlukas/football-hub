@@ -2010,3 +2010,16 @@ def test_no_branch_prints_help_and_exits_zero(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(publish, "SITE", tmp_path)
     assert publish.main(["--season", "2026", "--week", "3"]) == 0
     assert "usage:" in capsys.readouterr().out
+
+
+def test_the_track_record_names_the_games_it_scored(site, base):
+    """#417: `n_scored` says how many; the scored ids say which, so a reader of the published
+    record can tell a played week from an entered one. A game with no result is not in them."""
+    store.write(_preds([("g1", 0.6, 3.0), ("g2", 0.4, -1.0)]), "preds", "nfl", 2026, 1,
+                base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    serve(schedules=_sched(["g1"], [7]))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    (season,) = got["seasons"]
+    assert season["n_scored"] == 1 and season["scored_game_ids"] == ["g1"]
