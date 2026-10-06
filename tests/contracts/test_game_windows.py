@@ -13,7 +13,7 @@ season crossed out of daylight saving -- gaining dead time before the first kick
 losing an hour of tail, which is where a Sunday night game running past midnight lives.
 
 This repo has already paid for the fixed-offset assumption once: `hub.fetch.odds._game_date`
-records an odds snapshot that lost every primetime game to it, and `hub.schedule._kickoff`
+records an odds snapshot that lost every primetime game to it, and `hub.schedule.kickoff_expr`
 converts rather than offsetting for the same reason. Prose did not hold it the first two
 times, so this is the third statement of the rule and the first one a test can fail.
 

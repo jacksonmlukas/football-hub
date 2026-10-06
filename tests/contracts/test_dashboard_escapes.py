@@ -423,6 +423,22 @@ def test_a_pre_registered_record_reads_the_same_way(node):
     assert "0.5563" in out and "0.4111" in out and "<svg" in out
 
 
+def test_a_partly_pre_registered_record_says_how_many_are_which(node):
+    """#422: 64 pre-registered and 16 backfilled must not share one framing."""
+    out = _record_body(node, dict(PER_SEASON, n_scored=80, n_preregistered=64))
+    assert "64 pre-registered, 80 scored" in out
+    assert "16 scored after the" in out and "a backtest, not a record" in out
+
+
+def test_an_unknown_pre_registration_count_is_not_rendered_as_zero(node):
+    """`n_preregistered: null` is "could not tell". The page used to coalesce it to 0 and
+    say "backtest, not a record", the same defect as a producer that writes 0."""
+    note = "Pre-registration could not be checked this run."
+    out = _record_body(node, dict(PER_SEASON, n_preregistered=None, note=note))
+    assert note in out
+    assert "backtest" not in out and "0 pre-registered" not in out
+
+
 def test_an_artifact_written_before_the_split_shows_its_pooled_numbers(node):
     """`site/data/track_record.json` will not carry `seasons` until the next slate runs, and
     a panel that needs the new key would go blank on the deploy that shipped it. Nothing
