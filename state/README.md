@@ -126,3 +126,19 @@ counter silently — the same failure arriving by a different route.
 
 Nothing here is third-party data. These are counts and a balance about this repo's own
 accounts; `tests/contracts/test_quota_state_survives_a_runner.py` holds that line.
+
+> **Restated 2026-10-06 (#428).** The line above predates #383. `odds/` *is* derived from
+> third-party data: the betting market's consensus spread per game as The Odds API reported it,
+> medianed across books. The maintainer adopted committing it in #383 (option (a)) because a
+> lookahead price that is not kept cannot be recovered, and a capture on an ephemeral runner was
+> never kept. The rest of this directory is still counts and balances about this repo's own
+> accounts. `test_the_state_directory_carries_no_third_party_payload` still holds its mechanical
+> line (small JSON records, nothing outside `state/*.json` and this file); its docstring and the
+> sentence above are the ones out of date.
+>
+> **Back-filled 2026-10-06 (#428):** `odds/2026/wk01`–`wk18`'s files stamped 2026-08-25 to
+> 2026-09-06 (8 polls, 144 files, 1,834 rows) were *not* written by a CI poll. They were copied
+> from the maintainer's local store (`data/processed/lines`, gitignored), the only place the
+> season's pre-#383 polls survived, by `hub.store.write_snapshot` keyed on each poll's own
+> `captured_at`. They predate #211, so they carry `close_spread` only; every other snapshot
+> column reads null.
