@@ -136,6 +136,37 @@ class WidthEntry:
         )
 
 
+def _spell(v: object) -> str:
+    """One value in a recipe: a bool as `yes`/`no`, `None` as `none`, a float without
+    trailing zeros, a set sorted, a list or tuple in the order the caller gave it."""
+    if v is None:
+        return "none"
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, float):
+        return f"{v:g}"
+    if isinstance(v, set | frozenset):
+        return "+".join(sorted(_spell(x) for x in v))
+    if isinstance(v, list | tuple):
+        return "+".join(_spell(x) for x in v)
+    return str(v)
+
+
+def recipe(**arm: object) -> str:
+    """The run's arm as the ledger key's `recipe` (#384): `k=v` pairs, sorted by `k`, joined
+    by commas -- the one place any gate's recipe string is spelled.
+
+    **The rule each gate applies.** Name every flag of the run that reaches the paired frame,
+    the draw behind it, or the verdict, and that the two digests do not already cover:
+    `config_digest` is the resolved conf and fitted constants and `data_digest` is the pins,
+    so neither sees `--churn`, `--drafts`, `--seed`, `--ceiling-arm` or the like. A flag that
+    only changes where output goes (`--out`, `--progress`, `--workers`) is not part of the arm.
+    Sorted so two spellings of one arm are one string; a gate with no such flag passes no
+    recipe at all, which is `None` -- "no arm declared" -- rather than `""`.
+    """
+    return ",".join(f"{k}={_spell(v)}" for k, v in sorted(arm.items()))
+
+
 def _num(v: object, missing: float = float("nan")) -> float:
     """A number read off disk, or `missing` -- never a raise: `null`, a string or an absent
     key in one row must not take a gate run down (`Ledger.record` never raises)."""
@@ -229,6 +260,7 @@ class Ledger:
         previous: WidthEntry | None = None
         elsewhere = 0
         unknown = 0
+        rerecipe = 0
         for e in reversed(entries):
             if e.name != stamped.name:
                 continue
@@ -238,15 +270,19 @@ class Ledger:
             elsewhere += 1
             # Skipped only for want of a recipe: same digests, no "recipe" key on disk. A row
             # whose digests also differ keeps the digest line, which is the true reason for it.
-            unknown += (not e.known and (e.config_digest, e.data_digest)
-                        == (stamped.config_digest, stamped.data_digest))
+            same_digests = ((e.config_digest, e.data_digest)
+                            == (stamped.config_digest, stamped.data_digest))
+            unknown += not e.known and same_digests
+            # Known, same digests, another arm: #384's case, named as such rather than as a
+            # digest difference, which it is not.
+            rerecipe += e.known and same_digests and e.recipe != stamped.recipe
 
         said = narrowing(stamped.width, previous.width if previous is not None else None,
                          places=self.places)
         lines = list(said.lines)
-        if previous is None and elsewhere - unknown:
+        if previous is None and elsewhere - unknown - rerecipe:
             lines.append(f"  interval width {stamped.width:.{self.places}f}; "
-                         f"{elsewhere - unknown} "
+                         f"{elsewhere - unknown - rerecipe} "
                          f"earlier run(s) of this gate at another config or data digest, "
                          f"not compared -- two runs are comparable only at an identical "
                          f"digest (docs/gate-power.md)")
@@ -256,6 +292,11 @@ class Ledger:
             lines.append(f"  interval width {stamped.width:.{self.places}f}; {unknown} "
                          f"earlier run(s) of this gate of unknown recipe (written before the "
                          f"ledger key carried one), not compared -- state/README.md")
+
+        if previous is None and rerecipe:
+            lines.append(f"  interval width {stamped.width:.{self.places}f}; {rerecipe} "
+                         f"earlier run(s) of this gate at another recipe (a different arm "
+                         f"of the same gate), not compared -- state/README.md")
 
         if self.write:
             entries.append(stamped)

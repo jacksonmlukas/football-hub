@@ -76,6 +76,7 @@ from hub.exhibits.championship_equity import rank_tiers, win_probability
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS
 from hub.ledger import Ledger
+from hub.ledger import recipe as _recipe
 from hub.models.experiment import (
     BOOTSTRAP,  # used by `noise_sensitivity`, and tests reach it as `bt.BOOTSTRAP`
     Actions,
@@ -708,6 +709,10 @@ def noise_sensitivity(boards: dict[int, Board], realised: dict[int, pl.DataFrame
         run = HARNESS.run(paired, ceiling_frame=top, name=f"draft noise x{scale:g}",
                           void=void_condition(rates), seed=seed, bootstrap=bootstrap,
                           boards=boards,
+                          recipe=run_recipe(seasons=list(boards), drafts=n_drafts,
+                                            rounds=rounds, draft_sims=n_draft_sims,
+                                            season_sims=n_season_sims, seed=seed,
+                                            holdout=holdout, ceiling=with_ceiling),
                           ledger=HARNESS.ledger if HARNESS.ledger is not None
                           else Ledger(write=False))
         stamps = (run.stamped.select(STAMPS).row(0, named=True) if run.stamped.height
@@ -974,6 +979,17 @@ ACTIONS = Actions(
 # that separate frame (`top`, below) rather than `paired` itself.
 HARNESS = Harness(name="draft", arm_a="optimizer", arm_b="market", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff")
+
+
+def run_recipe(*, seasons: Sequence[int], drafts: int, rounds: int, draft_sims: int,
+               season_sims: int, seed: int, holdout: bool, ceiling: bool) -> str:
+    """This gate's arm as the ledger's `recipe` (#384): every flag of `backtest` that reaches
+    the paired frame, the draw or the verdict, which neither digest sees. Hold-out rebinds
+    fitted constants and so moves `config_digest` as well; it is named here anyway, because
+    the recipe is the arm and not a second opinion on the digest. Both `Harness.run` call
+    sites below pass it, so a default run and a `--noise-scales` row spell it one way."""
+    return _recipe(seasons=sorted(seasons), drafts=drafts, rounds=rounds, draft_sims=draft_sims,
+                   season_sims=season_sims, seed=seed, holdout=holdout, ceiling=ceiling)
 
 
 # Above this share of either arm's drafted names lost to a join failure, the run is VOID
@@ -1317,7 +1333,10 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
 
     rates = join_failure_rates(paired)
     run = HARNESS.run(paired, ceiling_frame=top, void=void_condition(rates), seed=seed,
-                      boards=boards)
+                      boards=boards,
+                      recipe=run_recipe(seasons=list(boards), drafts=n_drafts, rounds=rounds,
+                                        draft_sims=n_draft_sims, season_sims=n_season_sims,
+                                        seed=seed, holdout=holdout, ceiling=ceiling_flag))
     lines = [*join_report(rates), *run.lines]
     for line in lines:
         print(line)

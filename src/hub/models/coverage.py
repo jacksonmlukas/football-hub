@@ -66,6 +66,7 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.ledger import WIDTH_STATE, Ledger
+from hub.ledger import recipe as _recipe
 from hub.models import predict
 from hub.models.experiment import (
     Actions,
@@ -560,7 +561,10 @@ def shape_law(stats: pl.DataFrame, *, min_weeks: int = MIN_WEEKS, min_prior: int
     scored = shape_scores(g)
     paired = scored.filter(pl.col("p10_raw") > 0.0)
     pooled = {"n": int(scored.height), "mean": float(cast(float, scored["diff"].mean()))}
-    run = SHAPE_HARNESS.run(paired, seed=seed, ledger=ledger)
+    # #384: the arm is the filters and the seed -- what `shape_law` takes besides the frame.
+    run = SHAPE_HARNESS.run(
+        paired, seed=seed, ledger=ledger,
+        recipe=_recipe(min_weeks=min_weeks, min_prior=min_prior, min_mu=min_mu, seed=seed))
     return run, paired, pooled
 
 
