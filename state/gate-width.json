@@ -7,7 +7,7 @@
       "gate": "draft",
       "hi": -5.223678571428573,
       "lo": -16.916142857142862,
-      "recipe": null,
+      "requires_review": false,
       "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 11.692464285714289
@@ -19,7 +19,7 @@
       "gate": "weekly",
       "hi": -0.5406582167832172,
       "lo": -1.1518653846153843,
-      "recipe": null,
+      "requires_review": true,
       "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 0.6112071678321671
@@ -31,7 +31,7 @@
       "gate": "interval_shape",
       "hi": -0.029611641496918795,
       "lo": -0.042331431540016895,
-      "recipe": null,
+      "requires_review": false,
       "timestamp": "2026-09-13 (commit 2f7501d; no time-of-day recorded pre-#362)",
       "verdict": "NOT-RUNNABLE",
       "width": 0.0127197900430981
@@ -43,7 +43,7 @@
       "gate": "draft",
       "hi": -7.665178571428573,
       "lo": -18.761178571428573,
-      "recipe": null,
+      "requires_review": true,
       "timestamp": "2026-09-16 (commit 7e6625f; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 11.096
@@ -55,7 +55,7 @@
       "gate": "weekly",
       "hi": -0.5560262237762241,
       "lo": -1.604653846153846,
-      "recipe": null,
+      "requires_review": false,
       "seasons": [
         {
           "disposition": "loss",

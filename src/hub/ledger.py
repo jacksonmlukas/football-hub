@@ -80,6 +80,11 @@ class WidthEntry:
     # `known=True`, even when `recipe` is `None`: "no arm declared" is a known fact about the
     # run, not a hole in what was read back.
     known: bool = True
+    # The review flag a row written before #385 carried (`review_width` stored it; this module
+    # derives it per run and returns it in `Comparison`). Kept as a pass-through on an entry
+    # read off disk so a rewrite of the file does not erase it (#427); `None` on every entry
+    # this module writes, which then carries no such key.
+    requires_review: bool | None = None
 
     @property
     def key(self) -> tuple[str, str | None, str, str]:
@@ -99,13 +104,22 @@ class WidthEntry:
 
     def _as_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
-            "gate": self.name, "recipe": self.recipe,
+            "gate": self.name,
             "config_digest": self.config_digest, "data_digest": self.data_digest,
             "timestamp": self.timestamp, "width": self.width, "clusters": self.clusters,
             "lo": self.lo, "hi": self.hi, "verdict": self.verdict,
         }
+        # **Unknown stays unknown (#427).** A `known=False` row had no `"recipe"` key on disk,
+        # and `_from_dict` reads the key's *presence* as "an arm was declared, or declared
+        # none". Writing `"recipe": null` for it turned "unknown" into "no arm declared" on
+        # the first rewrite of the file -- a silent change to what the record says about its
+        # own history. So the key is written only for a known entry.
+        if self.known:
+            out["recipe"] = self.recipe
         if self.seasons is not None:
             out["seasons"] = self.seasons
+        if self.requires_review is not None:
+            out["requires_review"] = self.requires_review
         return out
 
     @staticmethod
@@ -133,6 +147,8 @@ class WidthEntry:
             seasons=d.get("seasons"),
             timestamp=d.get("timestamp"),
             known=known,
+            requires_review=(d["requires_review"]
+                             if isinstance(d.get("requires_review"), bool) else None),
         )
 
 
