@@ -903,6 +903,32 @@ week, about 52 a month against the 500 free tier -- against the ~9/month the two
 spent. `CREDIT_FLOOR` (50) still refuses the next pull below it regardless of how the balance
 got there. The maintainer approved the spend.
 
+**Restated 2026-10-06 (#383, option (a) adopted; rule 13: the entry above made a claim the
+code did not honour).** The paragraph above says the cadence was raised "so the archive has
+depth", and that was not true of any capture a scheduled run made: `--snapshot` wrote to
+`data/processed/lines/`, which is gitignored, on an Actions runner that starts empty and is
+discarded, and the only thing either job committed was `state/odds.json`, the balance.
+Nothing in-season persisted -- the starter-change study's archive ends 2026-09-06 (8 polls,
+272 games) and 2026 weeks 1-5 have no frozen lookahead price anywhere. The constraint was
+persistence, never cadence.
+
+What stands now. Each poll -- `refresh`'s two and `poll_odds`'s four -- also writes its
+validated frame to `state/odds/<season>/wk<NN>/snap-<ts>.json` through `hub.atomic`: one file
+per (poll, week), append-only (`store.write_snapshot` refuses a differing rewrite of a path
+and never touches an earlier file), committed by the `git add state` both jobs already ran.
+`hub.store.connect` unions that tree with the local store under the `lines` name, deduped by
+`(game_id, captured_at)`, so `lines`, `lines_as_of`, `staleness`, the noise floor and
+`starter_change`'s archive read the captures from a fresh checkout and `lines_as_of` keeps its
+at-or-before guarantee. Options (b) (local polls) and (c) (drop the four crons) are not taken.
+**Not recoverable:** the in-season weeks before this lands; no snapshot was kept anywhere.
+
+**Credit budget, restated and unchanged:** six polls a week x two markets x one region =
+12 credits a week, about 52 a month against the 500 free tier (the floor of 50 still refuses
+the next pull). Persistence spends no credit. **Repo cost:** a poll is about 16-32 games at
+~255 bytes a row, so one to two files of 4-8 KB a poll, roughly 130 polls over a season of
+about 22 weekly cycles: **on the order of 1 MB and 130-260 files of `state/` per season**
+(measured at 255 bytes a row, uncompressed), and six small commits a week.
+
 ## Draft-night pick feed: what ESPN actually publishes
 
 **Tested 2026-08-24 against a live practice draft**, because the whole live path had never
