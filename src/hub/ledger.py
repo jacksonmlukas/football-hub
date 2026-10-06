@@ -85,6 +85,13 @@ class WidthEntry:
     # read off disk so a rewrite of the file does not erase it (#427); `None` on every entry
     # this module writes, which then carries no such key.
     requires_review: bool | None = None
+    # #381: how many of the run's seasons resolved (a win or a loss) and how many abstained
+    # (CONTEXT.md, **Abstention**) -- the two numbers the verdict is read over, recorded beside
+    # it so a verdict on fewer seasons than were run says so in the record and not only in the
+    # sentence. `None` on an entry written before #381, or by a caller with no seasons frame to
+    # count; then neither key is written, the same additive shape as `seasons`.
+    resolved: int | None = None
+    abstained: int | None = None
 
     @property
     def key(self) -> tuple[str, str | None, str, str]:
@@ -120,6 +127,10 @@ class WidthEntry:
             out["seasons"] = self.seasons
         if self.requires_review is not None:
             out["requires_review"] = self.requires_review
+        if self.resolved is not None:
+            out["resolved"] = self.resolved
+        if self.abstained is not None:
+            out["abstained"] = self.abstained
         return out
 
     @staticmethod
@@ -149,6 +160,8 @@ class WidthEntry:
             known=known,
             requires_review=(d["requires_review"]
                              if isinstance(d.get("requires_review"), bool) else None),
+            resolved=_count(d.get("resolved")),
+            abstained=_count(d.get("abstained")),
         )
 
 
@@ -187,6 +200,11 @@ def _num(v: object, missing: float = float("nan")) -> float:
     """A number read off disk, or `missing` -- never a raise: `null`, a string or an absent
     key in one row must not take a gate run down (`Ledger.record` never raises)."""
     return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else missing
+
+
+def _count(v: object) -> int | None:
+    """A season count read off disk, or `None` -- never a raise, for the reason `_num` gives."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 class Comparison(NamedTuple):

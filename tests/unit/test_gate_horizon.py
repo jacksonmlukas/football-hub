@@ -65,8 +65,8 @@ def test_the_pre_335_reading_never_sees_a_tie_and_the_shipped_one_does(gh):
     only adopt where the shipped rule does and more. #335's prediction, as an inclusion per frame."""
     res = _run(gh, gh.weekly_cell(4, 13, 0.3), 200)
     assert res["tot"].get("ties", 0) > 0
-    assert res["violations"] == 0
-    assert res["sign"].get("ADOPT", 0) >= res["ship"].get("ADOPT", 0)
+    assert res["violations"] == 0          # stated of (A), the rule #335 adopted
+    assert res["sign"].get("ADOPT", 0) >= res["abstain"].get("ADOPT", 0)
 
 
 def test_the_sign_only_reading_is_what_the_floor_override_gives(gh):
@@ -189,7 +189,8 @@ def test_gate_reads_the_same_verdict_as_the_rule_the_harness_says_is_landed(gh):
     outs = [gh._read(gh._frame(rng, proc, ((20, 13),) * 4, 0.9), i) for i in range(60)]
     assert all(o["ship"] in (o["abstain"], o["resolved"]) for o in outs)
     assert any(o["abstain"] != o["resolved"] for o in outs)      # the plant: the rules do differ
-    assert all(o["ship"] == o["abstain"] for o in outs)          # LANDED: (A)
+    assert all(o["ship"] == o["resolved"] for o in outs)         # LANDED: (C), since #381
+    assert any(o["ship"] != o["abstain"] for o in outs)          # and (A) is no longer what ships
 
 
 def test_c_adopts_wherever_a_does_and_never_beyond_the_interval_alone(gh):

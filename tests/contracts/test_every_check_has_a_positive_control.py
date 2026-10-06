@@ -65,8 +65,13 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub.models.experiment.gate": ("tests/unit/test_experiment.py", (
         "test_the_size_check_flags_a_planted_degenerate_rule",
         "test_the_fixed_rule_s_null_size_is_not_degenerate",
-        "test_a_tie_blocks_adopt_even_when_every_other_season_won",
-        "test_a_tie_blocks_remove_even_when_every_other_season_lost",
+        # #381: the first two of these were #335's `test_a_tie_blocks_adopt_...` and
+        # `..._remove_...` under (A); (C) renamed and inverted them, and the other two are the
+        # cases (C) is new in (no resolved season; the interval half's veto).
+        "test_an_abstention_does_not_block_adopt_when_every_resolved_season_won",
+        "test_an_abstention_does_not_block_remove_when_every_resolved_season_lost",
+        "test_a_gate_with_no_resolved_season_can_neither_adopt_nor_remove",
+        "test_the_interval_half_still_vetoes_a_resolved_unanimous_frame_whose_pooled_interval_crosses_zero",
         "test_no_ceiling_measured_is_not_runnable_in_both_directions",
         "test_the_gate_sweep_verdicts_are_unmoved",
         "test_not_runnable_preempts_every_branch_but_void",

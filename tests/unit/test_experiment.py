@@ -1156,42 +1156,120 @@ def _confident_season(season, gain, *, m=20, n_per_cluster=4):
     return pl.DataFrame(rows)
 
 
-def test_a_tie_blocks_adopt_even_when_every_other_season_won():
-    """Three confident wins and one tie: ADOPT needs a win in *every* season, and a tie is not
-    one -- (A), the maintainer's ADOPTED rule, symmetric and conservative."""
+def _noisy_season(season, mean, spread, *, m=20):
+    """`m` clusters whose gains alternate `mean +/- spread` exactly: the season's mean is
+    `mean` to the last bit and its bootstrap SE is about `spread / sqrt(m)` (a deterministic
+    stand-in for `_tied_season`, so a fixture's disposition does not depend on a seed)."""
+    rows = [{"season": season, "unit": k, "diff": mean + spread * (-1.0) ** k}
+            for k in range(m)]
+    return pl.DataFrame(rows)
+
+
+def _gate_frame(seasons):
+    # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
+    # about the every-season half, not stage 2, so a ceiling this large never binds.
+    return experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
+                           ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=2000)
+
+
+def test_an_abstention_does_not_block_adopt_when_every_resolved_season_won():
+    """#381, option (C), ADOPTED 2026-10-06. Three confident wins and one Abstention. Under
+    (A) (#335) ADOPT needed a win in *every* season, so this printed SHOW; (C) reads the
+    resolved seasons, and the verdict says how many there were. Rule 18: this exact frame was
+    run on the (A) code first and printed `SHOW ... won 3, tied 1, lost 0 of 4`."""
     seasons = pl.concat([
         _confident_season(2022, 3.0), _confident_season(2023, 3.0),
         _confident_season(2024, 3.0),
         _tied_season(2025, 0.05, seed=0),
     ])
-    # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
-    # about #335's tie logic, not stage 2, so a ceiling this large never binds.
-    run = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
-                          ceiling=_HUGE_CEILING, actions=_ACTIONS, bootstrap=2000)
+    run = _gate_frame(seasons)
     status, said = run.verdict
     disp = run.seasons.sort("season")
     assert list((disp["gain"] >= 2 * disp["se"]).to_list())[:3] == [True, True, True], (
         "the fixture must actually win its first three seasons, or this proves nothing")
-    assert status == "SHOW", (status, said)
+    assert experiment._seasons_won_tied_lost(run.seasons) == (3, 1, 0), "one Abstention planted"
+    assert status == "ADOPT", (status, said)
+    assert "3 resolved of 4, 1 abstained" in said
     assert "won 3, tied 1, lost 0 of 4" in said
+    assert (run.resolved, run.abstained) == (3, 1)
 
 
-def test_a_tie_blocks_remove_even_when_every_other_season_lost():
-    """The symmetric side: three confident losses and one tie. REMOVE needs a loss in every
-    season, and a tie is not a loss either -- a tie is absence of evidence in that season, on
-    both directions at once."""
+def test_an_abstention_does_not_block_remove_when_every_resolved_season_lost():
+    """The mirror: three confident losses and one Abstention REMOVE, and say so. Under (A) a
+    tie was not a loss either and this was SHOW."""
     seasons = pl.concat([
         _confident_season(2022, -3.0), _confident_season(2023, -3.0),
         _confident_season(2024, -3.0),
         _tied_season(2025, -0.05, seed=1),
     ])
-    # `ceiling=1e6`: #363 (S6) makes `gate` NOT-RUNNABLE with no ceiling; these tests are
-    # about #335's tie logic, not stage 2, so a ceiling this large never binds.
-    status, said = experiment.gate(seasons, cluster=experiment.SEASON_CLUSTER, within=("unit",),
-                                   ceiling=_HUGE_CEILING, actions=_ACTIONS,
-                                   bootstrap=2000).verdict
-    assert status == "SHOW", (status, said)
+    run = _gate_frame(seasons)
+    status, said = run.verdict
+    assert experiment._seasons_won_tied_lost(run.seasons) == (0, 1, 3)
+    assert status == "REMOVE", (status, said)
+    assert "3 resolved of 4, 1 abstained" in said
     assert "won 0, tied 1, lost 3 of 4" in said
+    assert (run.resolved, run.abstained) == (3, 1)
+
+
+def test_a_gate_with_no_resolved_season_can_neither_adopt_nor_remove():
+    """#381: with every season abstaining, "every resolved season wins" is vacuously true, and
+    the pooled interval alone would adopt. It must not: SHOW, "0 resolved of 4, 4 abstained",
+    and not NOT-RUNNABLE (that verdict stays the design-cannot-reach-its-effect one). Planted
+    in both directions, each with an interval that excludes zero so the interval half agrees
+    and only the resolved-count guard stands between the frame and ADOPT / REMOVE."""
+    for sign, expected_interval in ((1.0, "t_lo"), (-1.0, "t_hi")):
+        seasons = pl.concat([_noisy_season(2022 + i, sign * (0.50 + 0.01 * i), 2.0)
+                             for i in range(4)])
+        run = _gate_frame(seasons)
+        status, said = run.verdict
+        assert experiment._seasons_won_tied_lost(run.seasons) == (0, 4, 0), (
+            "the fixture must abstain in all four seasons, or this proves nothing")
+        assert (run.summary["t_lo"] > 0) if expected_interval == "t_lo" else (run.summary["t_hi"] < 0), (
+            "the interval half must agree, or the guard under test is not what is deciding")
+        assert status == "SHOW", (status, said)
+        assert "0 resolved of 4, 4 abstained" in said
+        assert "NOT RUNNABLE" not in said
+        assert (run.resolved, run.abstained) == (0, 4)
+
+
+def test_one_resolved_season_is_enough_and_there_is_no_floor_above_it():
+    """#381: no floor beyond one resolved season. One win and three Abstentions, the pooled
+    interval excluding zero, ADOPTs -- and says "1 resolved of 4, 3 abstained". A floor such as
+    ceil(k/2) would be a second threshold chosen after seeing abstention rates."""
+    seasons = pl.concat([_confident_season(2022, 3.0),
+                         *[_noisy_season(2023 + i, 3.0 + 0.01 * i, 20.0) for i in range(3)]])
+    run = _gate_frame(seasons)
+    status, said = run.verdict
+    assert experiment._seasons_won_tied_lost(run.seasons) == (1, 3, 0)
+    assert run.summary["t_lo"] > 0
+    assert status == "ADOPT", (status, said)
+    assert "1 resolved of 4, 3 abstained" in said
+
+
+def test_the_interval_half_still_vetoes_a_resolved_unanimous_frame_whose_pooled_interval_crosses_zero():
+    """#381: the interval half still pools all k seasons, Abstentions included. Three resolved
+    wins of +0.1 each, and one Abstention at -3.0 (inside its own noise) drags the pooled
+    interval across zero: every resolved season won and the verdict is still SHOW, because the
+    Abstention is evidence about the pooled effect even though it votes for nobody."""
+    seasons = pl.concat([_confident_season(2022, 0.1), _confident_season(2023, 0.1),
+                         _confident_season(2024, 0.1), _noisy_season(2025, -3.0, 9.0)])
+    run = _gate_frame(seasons)
+    status, said = run.verdict
+    assert experiment._seasons_won_tied_lost(run.seasons) == (3, 1, 0)
+    assert run.summary["t_lo"] <= 0 <= run.summary["t_hi"], "the pooled interval must cross zero"
+    assert status == "SHOW", (status, said)
+    assert "3 resolved of 4, 1 abstained" in said
+    assert "the interval contains zero" in said
+
+
+def test_a_resolved_loss_still_blocks_adopt_with_an_abstention_beside_it():
+    """Resolved seasons must agree: two wins, a loss and an Abstention is SHOW, however the
+    interval lands."""
+    seasons = pl.concat([_confident_season(2022, 3.0), _confident_season(2023, 3.0),
+                         _confident_season(2024, -3.0), _tied_season(2025, 0.05, seed=0)])
+    status, said = _gate_frame(seasons).verdict
+    assert status == "SHOW", (status, said)
+    assert "3 resolved of 4, 1 abstained" in said
 
 
 def test_four_confident_wins_still_adopts_with_the_tie_aware_rule():

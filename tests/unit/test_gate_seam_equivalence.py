@@ -390,8 +390,12 @@ def test_the_adapter_reaches_the_expected_verdict(name):
         "battery_adopt": "ADOPT",
         "battery_remove": "REMOVE",
         "battery_show": "SHOW",
-        "battery_tie": "SHOW",
-        "battery_threshold": "SHOW",
+        # #381, (C): three wins and one Abstention are ADOPT on three resolved of four. Both
+        # were SHOW under (A). The golden below was re-captured for #381 and moved in exactly
+        # twelve verdict sentences -- every sentence now carries "N resolved of K, A abstained"
+        # and these two moved status; no summary, season row or report line changed.
+        "battery_tie": "ADOPT",
+        "battery_threshold": "ADOPT",
         "battery_not_runnable": "NOT-RUNNABLE",
         "battery_void": "VOID",
     }[name]

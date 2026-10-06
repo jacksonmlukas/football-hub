@@ -36,7 +36,9 @@ row-level frame gives -- `tests/unit/test_gate_horizon.py` holds that equality.
 `verdict_abstain` and `verdict_resolved` below are the two rules as functions of the one summary
 and seasons frame `gate` produced, so a trial reads both on identical frames and neither is a
 second simulation; the harness's "ship" column is whatever `gate` itself returned, and a unit
-test holds it equal to whichever of the two is landed:
+test holds it equal to whichever of the two is landed. **(C) landed in `gate` the same day
+(#381), so "ship" is (C) from that commit on and the "abstain" column is #388's shipped rule,
+kept so #388's table stays reproducible.** `sign` is the pre-#335 rule, unchanged:
 
     uv run python scripts/gate_horizon.py --rule-c --trials 40000 --workers 6 \
         --out $TMPDIR/381-rule-c.json
@@ -207,9 +209,11 @@ def _read(paired: pl.DataFrame, seed: int, bootstrap: int = BOOTSTRAP) -> dict[s
                actions=_ACTIONS, bootstrap=bootstrap, seed=seed)
     ship = run.verdict[0]
     # The pre-#335 reading: a seasons frame with no `se`/`m` is read by sign alone
-    # (`_seasons_won_tied_lost`'s documented backward compatibility), the rest unchanged.
-    sign = experiment._verdict(run.summary, run.seasons.select("season", "gain", "n"),
-                               _ACTIONS)[0]
+    # (`_seasons_won_tied_lost`'s documented backward compatibility), the rest unchanged --
+    # and read with (A)'s conjunction, whatever `gate` ships, so this column keeps meaning
+    # "the sign test" after #381 and the two readings of the sign stay the same rule.
+    sign = verdict_abstain(run.summary, experiment._season_records(
+        run.seasons.select("season", "gain", "n")))
     recs = experiment._season_records(run.seasons)
     gains = run.seasons["gain"].to_numpy()
     return {"ship": ship, "sign": sign, "abstain": verdict_abstain(run.summary, recs),
@@ -249,12 +253,14 @@ def run_chunk(cell: Cell, proc: Process, n: int, seed_seq: np.random.SeedSequenc
         for key in ("int_adopt", "int_remove", "all_pos", "all_neg"):
             tot[key] += out[key]
         # #335's prediction as a per-trial inclusion, not only a rate: whatever the tie-aware
-        # rule adopts, the sign-alone rule adopts on the same frame (and mirrored for REMOVE).
-        violations += (out["ship"] == "ADOPT" and out["sign"] != "ADOPT") \
-            + (out["ship"] == "REMOVE" and out["sign"] != "REMOVE")
+        # rule (A) adopts, the sign-alone rule adopts on the same frame (and mirrored for
+        # REMOVE). It is stated of (A), not of `ship`: (C) can adopt on a frame whose abstaining
+        # season has the wrong sign, which the sign test reads as a loss.
+        violations += (out["abstain"] == "ADOPT" and out["sign"] != "ADOPT") \
+            + (out["abstain"] == "REMOVE" and out["sign"] != "REMOVE")
         # ...and the discordant frames the tie mechanism is answerable for: the paired count
         # that makes the difference between the two columns a difference rather than a rate.
-        tot["sign_not_ship"] += out["sign"] == "ADOPT" and out["ship"] != "ADOPT"
+        tot["sign_not_ship"] += out["sign"] == "ADOPT" and out["abstain"] != "ADOPT"
     return {"n": n, "ship": dict(ship), "sign": dict(sign), "abstain": dict(abstain),
             "resolved": dict(resolved), "tot": dict(tot), "violations": violations}
 

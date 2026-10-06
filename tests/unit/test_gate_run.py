@@ -72,8 +72,13 @@ def test_the_cluster_unit_has_no_default():
 
 
 def test_the_run_returns_the_five_things_the_entry_points_used_to_assemble():
+    """The five, and since #381 the two counts the verdict sentence and the ledger carry:
+    how many seasons resolved and how many abstained (they sum to the seasons run)."""
     got = _run(_paired())
-    assert set(got._fields) == {"summary", "seasons", "verdict", "lines", "stamped"}
+    assert set(got._fields) == {"summary", "seasons", "verdict", "lines", "stamped",
+                                "resolved", "abstained"}
+    assert got.resolved is not None and got.abstained is not None
+    assert got.resolved + got.abstained == got.seasons.height
     assert isinstance(got.summary, dict) and isinstance(got.seasons, pl.DataFrame)
     assert isinstance(got.verdict, tuple) and len(got.verdict) == 2
     assert isinstance(got.lines, list) and all(isinstance(ln, str) for ln in got.lines)
@@ -236,6 +241,25 @@ def test_the_width_history_is_keyed_by_the_gate_s_name():
     lineup = _run(_paired(), name="lineup", ledger=ledger)
     assert not any("interval width" in ln for ln in draft.lines)
     assert not any("interval width" in ln for ln in lineup.lines)
+
+
+def test_the_ledger_entry_and_the_run_carry_the_abstention_count():
+    """#381 (C): three seasons that win and one whose diffs are all exactly zero (an
+    Abstention: the sign fallback reads exact zero as a tie). The verdict, the run's counts and
+    the recorded entry must all say 3 resolved of 4, 1 abstained -- the same numbers in three
+    places, so a verdict on fewer seasons than were run cannot lose that fact on its way to
+    the record. Rule 18: with the entry's two fields dropped this fails on the ledger line."""
+    rows = [{"season": 2022 + s, "draft": k, "diff": 0.0 if s == 3 else 3.0 + 0.01 * (k % 3)}
+            for s in range(4) for k in range(6)]
+    ledger = Ledger(path=None)
+    got = _run(pl.DataFrame(rows), ledger=ledger, ceiling=Ceiling("x", np.array([1e6])))
+    assert got.verdict[0] == "ADOPT", got.verdict
+    assert "3 resolved of 4, 1 abstained" in got.verdict[1]
+    assert (got.resolved, got.abstained) == (3, 1)
+    recorded = ledger._read()
+    assert recorded is not None
+    assert (recorded[-1].resolved, recorded[-1].abstained) == (3, 1)
+    assert recorded[-1].verdict == "ADOPT"
 
 
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
