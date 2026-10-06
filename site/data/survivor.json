@@ -1,14 +1,14 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-10-03T17:53:08+00:00",
+  "generated_at": "2026-10-06T17:57:27+00:00",
   "shape": "rows",
   "n": 1,
   "rows": [
     {
       "week": 5,
       "team": "DAL",
-      "win_prob": 0.7720528190539049
+      "win_prob": 0.7349633745617888
     }
   ],
   "unconfirmed": [
@@ -19,7 +19,7 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.7720528190539049,
+  "survival": 0.7349633745617888,
   "unpriced_weeks": [
     6,
     7,
