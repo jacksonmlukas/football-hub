@@ -1,0 +1,87 @@
+{
+ "captured_at": "2026-09-04T15:51:36.595520",
+ "rows": [
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 5.5,
+   "game_id": "2026_16_ARI_NO"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -1.5,
+   "game_id": "2026_16_BUF_DEN"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 3.5,
+   "game_id": "2026_16_CAR_PIT"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -1.5,
+   "game_id": "2026_16_CIN_IND"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 9.75,
+   "game_id": "2026_16_CLE_BAL"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 1.5,
+   "game_id": "2026_16_GB_CHI"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 2.5,
+   "game_id": "2026_16_HOU_PHI"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 3.0,
+   "game_id": "2026_16_JAX_DAL"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -7.0,
+   "game_id": "2026_16_LAC_MIA"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -0.0,
+   "game_id": "2026_16_LA_SEA"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -6.5,
+   "game_id": "2026_16_NE_NYJ"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 4.5,
+   "game_id": "2026_16_NYG_DET"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 2.75,
+   "game_id": "2026_16_SF_KC"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": -1.5,
+   "game_id": "2026_16_TB_ATL"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 1.5,
+   "game_id": "2026_16_TEN_LV"
+  },
+  {
+   "captured_at": "2026-09-04T15:51:36.595520",
+   "close_spread": 2.5,
+   "game_id": "2026_16_WAS_MIN"
+  }
+ ],
+ "season": 2026,
+ "week": 16
+}

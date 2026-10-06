@@ -1,0 +1,67 @@
+{
+ "captured_at": "2026-08-27T21:25:31.184065",
+ "rows": [
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 7.0,
+   "game_id": "2026_04_ARI_NYG"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 2.5,
+   "game_id": "2026_04_DAL_HOU"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 2.5,
+   "game_id": "2026_04_DEN_SF"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": -1.5,
+   "game_id": "2026_04_GB_TB"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 1.5,
+   "game_id": "2026_04_IND_WAS"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 2.5,
+   "game_id": "2026_04_JAX_CIN"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": -5.5,
+   "game_id": "2026_04_KC_LV"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 3.0,
+   "game_id": "2026_04_LAC_SEA"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 7.5,
+   "game_id": "2026_04_MIA_MIN"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 3.0,
+   "game_id": "2026_04_NE_BUF"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 8.5,
+   "game_id": "2026_04_NYJ_CHI"
+  },
+  {
+   "captured_at": "2026-08-27T21:25:31.184065",
+   "close_spread": 8.5,
+   "game_id": "2026_04_TEN_BAL"
+  }
+ ],
+ "season": 2026,
+ "week": 4
+}
