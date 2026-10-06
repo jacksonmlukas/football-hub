@@ -393,10 +393,30 @@ def test_the_mean_weights_each_cluster_equally_not_each_row():
     assert g.mean == pytest.approx(2.0)
 
 
-def test_the_units_are_read_in_one_order(monkeypatch):
-    """`_cluster_units` sorts by label, so the same rows in any order draw the same resample:
-    the permuted frame returns the identical `se`. A planted unsorted read is what the
-    docstring says moved a tie's SE before #311."""
+def test_the_units_are_sorted_by_label_whatever_order_the_grouping_returns(monkeypatch):
+    """Rule 18, planted. `_cluster_units` sorts by label so one order feeds every bootstrap. A
+    `group_by` hands its groups back in no promised order, so the test does not hope polars
+    happens to disagree: it makes `group_by` return its groups *reversed*, which is the unsorted
+    read at its worst. With the sort the units still come back in label order; delete the sort
+    and they come back reversed, and this goes red."""
+    original = pl.DataFrame.group_by
+
+    class _Reversed:
+        def __init__(self, grouped):
+            self._grouped = grouped
+
+        def agg(self, *args, **kwargs):
+            return self._grouped.agg(*args, **kwargs).reverse()
+
+    monkeypatch.setattr(pl.DataFrame, "group_by",
+                        lambda self, *a, **k: _Reversed(original(self, *a, **k)))
+    units = experiment._cluster_units(np.array([1.0, 2.0, 3.0]), np.array(["c", "b", "a"]))
+    assert units.tolist() == [3.0, 2.0, 1.0], "units must be in label order a, b, c"
+
+
+def test_a_permutation_of_the_rows_does_not_move_the_standard_error():
+    """The property the sort buys, on the real grouping: the same rows in another order give the
+    same mean, se and t (to float rounding of the group means)."""
     rng = np.random.default_rng(3)
     base, arm = rng.normal(0, 1, 60), rng.normal(0, 1, 60)
     cluster = np.repeat(np.arange(6), 10)

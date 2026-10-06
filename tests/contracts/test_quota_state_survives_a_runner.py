@@ -87,10 +87,13 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # 4,096-byte cap that a counter honours is a cap it crosses on schedule -- it crossed it on
 # 2026-10-06, when #343's routed harnesses wrote their first four entries (the file held 2,997
 # bytes). It is still *our own* small bookkeeping and still no payload: an entry is a name, two
-# digests, an interval and a per-season record. 64 KiB is a few hundred runs, the size at which
-# someone should decide what to do with the history; a counter's cap stays as it was, and this
+# digests, an interval and a per-season record. **Sized from the measured entry**: 590 bytes on
+# average and 870 at most today (the longest carries five per-season records), so a budget of
+# 800 bytes an entry puts 256 KiB at about 320 runs -- "a few hundred", the size at which someone
+# should decide what to do with the history. (An earlier 64 KiB here claimed the same figure and
+# held about 80; the cap and its reasoning now agree.) A counter's cap stays as it was, and this
 # is the only file with its own.
-LEDGER_CAPS = {"state/gate-width.json": 65536}
+LEDGER_CAPS = {"state/gate-width.json": 262144}
 
 
 def test_the_state_directory_carries_no_third_party_payload():
@@ -106,7 +109,8 @@ def test_the_state_directory_carries_no_third_party_payload():
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
         cap = LEDGER_CAPS.get(f, 4096)
-        assert len(json.dumps(body)) < cap, f"{f} is too large ({cap} bytes) to be a counter"
+        what = "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter"
+        assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
 
 
 def test_the_slate_commits_the_state_it_spent():

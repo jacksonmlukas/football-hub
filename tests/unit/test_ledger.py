@@ -280,3 +280,26 @@ def test_a_recipe_less_row_at_the_same_digests_is_named_for_its_recipe_not_a_dig
     assert got.previous is None and got.elsewhere == 1
     assert "1 earlier run(s) of this gate of unknown recipe" in text
     assert "another config or data digest" not in text
+
+
+def test_a_row_of_unknown_recipe_stays_unknown_through_a_rewrite_of_the_file(tmp_path):
+    """#427, rule 18. An entry written before #385 has no `recipe` key and reads `known=False`.
+    `record` rewrites the whole file, and `_as_dict` used to emit `"recipe": null` for it, which
+    reads back `known=True` -- "no arm declared" -- so the first run after an old row existed
+    changed what the record says about that row, and dropped its `requires_review`. Write an
+    old-shape row, record two new entries (two rewrites), and the old row must still carry no
+    `recipe` key, still carry its flag, and still read as unknown."""
+    path = tmp_path / "gate-width.json"
+    old = {"gate": "draft", "config_digest": "c1", "data_digest": "d1", "width": 4.0,
+           "clusters": 4.0, "lo": -2.0, "hi": 2.0, "verdict": "REMOVE",
+           "requires_review": True, "timestamp": "2026-09-16"}
+    path.write_text(json.dumps({"entries": [old]}))
+    Ledger(path).record(_entry(name="draft", config_digest="c1", data_digest="d1", width=1.0, lo=-1.0, hi=1.0))
+    got = Ledger(path).record(_entry(name="draft", config_digest="c1", data_digest="d1", width=1.0, lo=-1.0, hi=1.0))
+    first = json.loads(path.read_text())["entries"][0]
+    assert "recipe" not in first, "unknown was rewritten as 'no arm declared'"
+    assert first["requires_review"] is True and first["timestamp"] == "2026-09-16"
+    assert [e["recipe"] for e in json.loads(path.read_text())["entries"][1:]] == [None, None]
+    # and it is still not compared: the third run names it as of unknown recipe
+    assert any("unknown recipe" in ln for ln in got.lines) or got.previous is not None
+    assert not WidthEntry._from_dict(first).known

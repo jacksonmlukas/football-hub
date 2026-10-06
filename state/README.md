@@ -31,6 +31,19 @@ What this repo has spent against two metered third-party accounts:
   back, and left out of every narrowing check until this repo's gates re-baseline under the
   new key.
 
+  **Restated 2026-10-06 (#427, rule 13).** The paragraph above was true of what the reader did
+  and false of what the writer did: `WidthEntry._as_dict` always wrote `"recipe"`, so the first
+  rewrite of the file (the #343 re-runs) turned the five pre-#385 rows into `"recipe": null`
+  -- *known, no arm declared* -- and dropped their `requires_review`. Nothing compared wrongly,
+  since every gate has passed a real recipe since #384, but the record had changed what it said
+  about its own history. The writer now emits `"recipe"` only for a known entry, and carries
+  `requires_review` through on a row that has it (the field is not written for new entries; it
+  is derived per run and returned in `Comparison`). The five historical rows (draft
+  2026-09-12, weekly 2026-09-12, interval_shape 2026-09-13, draft 2026-09-16, weekly
+  2026-09-21) are restored byte-for-byte to their form at `29a4abe`, the commit before the
+  rewrite: no `"recipe"` key, their `requires_review` back. The prior (wrong) shape is the
+  `"recipe": null` rows of commit `2de7c11`.
+
   **The recipe, since #384.** Every gate run now carries its arm as `recipe`: `k=v` pairs,
   sorted, comma-joined (`hub.ledger.recipe`, the one place the string is spelled), naming each
   flag of the run that reaches the paired frame, the draw or the verdict and that the two
