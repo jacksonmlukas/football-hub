@@ -2083,14 +2083,21 @@ def test_a_degenerate_call_leaves_the_last_good_one_published(site, tmp_path):
     before = (site / "roster.json").read_text()
     bad = _called(tmp_path, withheld={n for n, _ in _SQUAD_ROWS[1:]}, name="bad.parquet")
     got = publish.roster(out=site, path=bad)
-    assert isinstance(got, publish.Kept) and "keeping" in got.why
+    # `_keeping`'s own sentence, with the count it read back (issue #425): the keep goes through
+    # the one place that knows how to say it, not a second spelling of "a file exists".
+    assert isinstance(got, publish.Kept) and "10 row(s) last published" in got.why
     assert (site / "roster.json").read_text() == before
 
 
 def test_a_degenerate_call_with_nothing_published_still_leaves_the_page_a_file(site, tmp_path):
     src = _called(tmp_path, withheld={n for n, _ in _SQUAD_ROWS[1:]})
     assert isinstance(publish.roster(out=site, path=src), publish.Kept)
-    assert json.loads((site / "roster.json").read_text())["degraded"]
+    written = json.loads((site / "roster.json").read_text())
+    assert written["n"] == len(_SQUAD_ROWS), "the flagged file is the artifact `_publish` writes"
+    assert "degraded" not in written, "nothing on the page reads a `degraded` key (issue #425)"
+    # And the second run keeps it through `_keeping`, so the file is not re-stamped.
+    again = publish.roster(out=site, path=src)
+    assert isinstance(again, publish.Kept) and "10 row(s) last published" in again.why
 
 
 def test_a_minority_withheld_that_leaves_no_lineup_is_flagged_and_a_thin_roster_is_not(

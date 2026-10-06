@@ -269,6 +269,32 @@ def test_a_suspension_is_still_caught_mid_season():
     assert R.lock(rows).withheld == ["Josh Jacobs"]
 
 
+def test_a_defence_and_one_player_do_not_reproduce_the_original_bug():
+    """Issue #425. A two-player roster tied 17 against 13 and the larger-count tie-break made the
+    defence the standard. A defence's total is not on the games-left basis, so it does not vote."""
+    got = R.availability(E.roster_rows(_Team([], [
+        _p("Browns D/ST", "D/ST", 4.2, 4.2 * 17, slot="D/ST", injury="NORMAL"),
+        _p("Chase", "WR", 10.0, 130.0)])))
+    assert got["missing_games"].to_list() == [0, 0]
+    assert got["available"].all()
+
+
+def test_a_defence_and_two_players_with_distinct_counts_still_leave_the_defence_out():
+    """Three players, three counts: the vote is the two players, and a tie there goes to the
+    larger -- the short one is short, and the defence is neither."""
+    got = R.availability(E.roster_rows(_Team([], [
+        _p("Browns D/ST", "D/ST", 4.2, 4.2 * 17, slot="D/ST", injury="NORMAL"),
+        _p("Chase", "WR", 10.0, 130.0), _p("Jacobs", "RB", 10.0, 120.0)])))
+    by = dict(zip(got["player"].to_list(), got["missing_games"].to_list(), strict=True))
+    assert by == {"Browns D/ST": 0, "Chase": 0, "Jacobs": 1}
+
+
+def test_a_roster_of_only_a_defence_reads_everyone_available():
+    got = R.availability(E.roster_rows(_Team([], [
+        _p("Browns D/ST", "D/ST", 4.2, 4.2 * 17, slot="D/ST", injury="NORMAL")])))
+    assert got["available"].all()
+
+
 # --- the market half, refreshed against live ESPN ---
 
 def _with_board(players, board):
