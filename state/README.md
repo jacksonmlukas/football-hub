@@ -6,6 +6,10 @@ What this repo has spent against two metered third-party accounts:
   `hub.fetch.odds` refuses the next pull below `CREDIT_FLOOR` on this number, unless the
   reading is from an earlier month than the pull -- the quota resets monthly, so that one
   is unknown and one pull may re-read it (#264).
+- `odds/<season>/wk<NN>/snap-<ts>.json` — **the odds lines archive** (#383): one file per poll
+  per week, append-only, written by `hub.store.write_snapshot` from `hub.fetch.odds` and
+  committed by the `slate` workflow. `hub.store.connect` unions it under `lines`, so a fresh
+  checkout reads every capture a scheduled run made. Never edit or delete one.
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
   interval width a backtest gate has produced. `hub.ledger.Ledger.record` (`experiment.

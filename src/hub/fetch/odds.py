@@ -1149,6 +1149,9 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
         # afternoon's and leave the as-of join nothing to resolve.
         store.write(part, "lines", "nfl", season, wk, base=base,
                     name=f"snap-{when:%Y%m%dT%H%M%S}")
+        # And to the tree git carries (#383). The line above lands in the gitignored store,
+        # which an Actions runner discards; this is the copy a fresh checkout can read.
+        store.write_snapshot(part, season, wk, when, base=base)
     return df.drop("week")
 
 
