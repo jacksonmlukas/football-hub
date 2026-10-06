@@ -276,10 +276,11 @@ def test_a_child_that_errored_is_told_apart_from_one_that_failed(tmp_path):
 # **The second entry, and what it still leaves out.** `fetch/nflverse.py` is watched for
 # `ContractViolation` and `WideFrameRefused`. Each is raised in this repo for one reason --
 # a frame reached a boundary that nothing can vouch for, or a frame was asked for in a shape
-# this module will not return -- and `grep -rn "except ContractViolation" src tests scripts`,
-# repeated for `WideFrameRefused`, finds no catcher either time, so for neither is there a
-# caller to whom one is ordinary control flow. That is the property that makes the judgement
-# safe to make once here, the same one `contracts.py` has.
+# this module will not return. That is *not* "nothing catches them": `ContractViolation` has
+# seven `except` clauses (publish, panel, cached twice, season/pool, survivor,
+# `scripts/capture_panel_archive.py`) and blanket `except Exception` handlers besides. What
+# makes the judgement safe to make once here is what those catchers do -- see the entry's
+# `why` -- and that no caller takes a refusal as an expected answer to a question it asked.
 #
 # The module raises three types and every one of the eight is a refusal: `WideFrameRefused`
 # six times, `UnattributedPoints` once, and this `ContractViolation`. `WideFrameRefused` was
@@ -350,12 +351,21 @@ WATCHED = (
              "appended to `problems` becomes a `ContractViolation` at the foot of "
              "`Contract.validate`, and the one raise outside it -- `conform` meeting a "
              "consumer that named a column the contract does not declare -- is the same kind "
-             "of statement, reached before any frame is read. So there is no ordinary control "
-             "flow here for a scan to mistake for a guard, which is what makes the judgement "
-             "safe to make once, in this entry, rather than per statement by whoever is "
-             "reading. `Normalisation` is the module's one non-refusing shape and it collects "
-             "and raises nothing, so it is invisible to this scan by construction rather than "
-             "by exemption."),
+             "of statement, reached before any frame is read. Callers do catch it: publish, "
+             "`models/panel`, `fetch/cached` (twice), `season/pool`, `season/survivor` and "
+             "`scripts/capture_panel_archive.py` each have an `except ContractViolation`, and "
+             "the board's stage loop, `cached.run` and the CLIs' `unavailable` catch it "
+             "inside a blanket `except Exception`. What they do with it is the same in all of "
+             "them: print the violation's own words and serve something older, nulls, a "
+             "skipped feature or a non-zero exit -- the CLAUDE.md degradation rule, which "
+             "exists *because* a source can drift. None asks a question of the frame whose "
+             "answer is a refusal (no probe-then-fall-back, no `except ...: pass`), so "
+             "deleting a refusal changes what is served rather than being a no-op, which is "
+             "what the excision harness can see. That, not 'nothing catches it', is what "
+             "makes the judgement safe to make once in this entry rather than per statement. "
+             "`Normalisation` is the module's one non-refusing shape and it collects and "
+             "raises nothing, so it is invisible to this scan by construction rather than by "
+             "exemption."),
     ),
     Watched(
         path=SRC / "fetch" / "nflverse.py",
@@ -365,12 +375,60 @@ WATCHED = (
              "that gets past it is a row in a published board. A `ContractViolation` raised "
              "here says the frame cannot be vouched for and is not being served; a "
              "`WideFrameRefused` says it was asked for in a shape this module will not "
-             "return. Nothing in `src`, `tests` or `scripts` catches either, so there is no "
-             "caller for whom one is ordinary control flow, which is what makes the "
-             "judgement safe to make once in this entry. `collects` is empty because this "
-             "module has no accumulator -- it refuses by raising, at the statement that "
-             "found the problem. Still narrower than the module's full vocabulary: "
-             "`UnattributedPoints` is unwatched, and the note above says why."),
+             "return. Both are caught, and in the same way: `ContractViolation` by "
+             "`models/panel.injury_columns`, which degrades to null injury columns and says "
+             "so on stderr (nulls, not 'Healthy'), and by the CLIs' `unavailable` and the "
+             "board's stage loop inside a blanket `except Exception`; `WideFrameRefused` has "
+             "no `except` of its own and reaches only those blanket handlers. Every handler "
+             "reports the refusal in its own words and degrades or exits; none treats it as "
+             "an expected answer, so the judgement is safe to make once in this entry. "
+             "`collects` is empty because this module has no accumulator -- it refuses by "
+             "raising, at the statement that found the problem. Still narrower than the "
+             "module's full vocabulary: `UnattributedPoints` is unwatched, and the note "
+             "above says why."),
+    ),
+    Watched(
+        path=SRC / "draft" / "board.py",
+        collects=(),
+        raises=("ContractViolation",),
+        why=("`_select_consensus` and `consensus` refuse a rankings frame that cannot be "
+             "read as one comparable board, and `Board.__new__` refuses a frame paired with "
+             "another build's report. Callers: `consensus` is reached from `build` (the "
+             "spine, outside its stage loop, so a refusal ends the build) and from the "
+             "advisory `durability` stage, where the stage loop's blanket handler absorbs "
+             "it, prints `unavailable (ContractViolation)` and builds without that stage; "
+             "`build` is called by `serve`, whose `except Exception` prints `BUILD FAILED` "
+             "and serves the last-good board, and by `backtest.diagnose_*`, which return "
+             "`unavailable(...)`. `board_as_of` reaches the same refusals from "
+             "`walk_forward_inputs` in `backtest.main` and `lineup_gate.main`, from "
+             "`impute_cv.main` and from `weekly_gate.main` (via `assemble_universe`) -- "
+             "every one turns it into `unavailable` and a non-zero exit. Every caller "
+             "reports the refusal and degrades or stops; none uses it to choose between "
+             "two successful outcomes. "
+             "`Board(...)` is built where the pair is made (`build`, `Board.served`, "
+             "`backtest`'s foresight copy) and nothing catches its refusal at all."),
+    ),
+    Watched(
+        path=SRC / "fetch" / "pool.py",
+        collects=(),
+        raises=("ContractViolation",),
+        why=("The pool host's payload and the cached state are validated here, and a "
+             "refusal is the whole point: a payload read as a smaller or emptier field "
+             "would price the pick against people who are not there. Callers: "
+             "`parse_payload` is reached from `refresh` (whose docstring says it raises "
+             "rather than degrades) and from `_ingest`; `cached.run` catches the refresh "
+             "failure in a blanket `except Exception` and serves the last-known state with "
+             "the refusal's words (`_describe`), and `_ingest` hands it to `unavailable`. "
+             "`read_state` is caught as `except ContractViolation` in `publish` (plans "
+             "without a state), `season/survivor.prior_rows` (skips the state, on stderr), "
+             "`season/pool._field` (falls back to the configured rules and says so) "
+             "and `cached.serve_last_good` / `cached.run` (reports it unavailable beside the "
+             "refresh failure). Each is the CLAUDE.md degradation path: the refusal is "
+             "printed in the contract's words and an older or configured value is served. "
+             "None calls `read_state` or `parse_payload` to learn whether a cache is "
+             "usable and then branches on the exception as an expected answer, so "
+             "removing a refusal here changes what is served, which is what excision "
+             "sees."),
     ),
 )
 
@@ -387,16 +445,10 @@ WATCHED = (
 REFUSAL_TYPES: frozenset[str] = frozenset({"ContractViolation", "WideFrameRefused"})
 REFUSAL_COLLECTORS: frozenset[str] = frozenset({"problems"})
 
-NOT_WATCHED: dict[str, str] = {
-    "draft/board.py": (
-        "Raises `ContractViolation` (four sites) and has not had the once-per-module judgement "
-        "made. Unwatched by omission until now; naming it here is what #394 adds, not a "
-        "verdict that it is safe."),
-    "fetch/pool.py": (
-        "Raises `ContractViolation` (twelve sites) validating the pool payload and has not had "
-        "the once-per-module judgement made. Unwatched by omission until now; naming it here "
-        "is what #394 adds, not a verdict that it is safe."),
-}
+# Empty since #409, which judged the two modules that were here and moved both to WATCHED. The
+# mapping stays so the first module that refuses without being judged has somewhere to go
+# that is not "delete the check": a reason, in writing, per module.
+NOT_WATCHED: dict[str, str] = {}
 
 
 def _refusing_modules(root: Path) -> set[str]:

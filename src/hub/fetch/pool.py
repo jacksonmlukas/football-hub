@@ -268,13 +268,19 @@ def _need(m: Any, key: str, where: str, kinds: tuple[type, ...]) -> Any:
     become a partial state one step later, and the criterion is that none of them does. `bool`
     is excluded from a numeric field explicitly, because Python says it is an `int`.
     """
+    # GUARD an-absent-or-null-field-is-refused [unit/test_fetch_pool.py]: a field that is absent or
+    # null is refused by name, not read as a smaller pool a step later
     if not isinstance(m, Mapping) or key not in m or m[key] is None:
         raise ContractViolation(f"pool payload: {where} has no {key!r}." + _SHAPE_NOTE)
+    # /GUARD
     v = m[key]
+    # GUARD a-field-of-the-wrong-kind-is-refused [unit/test_fetch_pool.py]: a field of the wrong
+    # kind, a bool for a number included, is refused by name
     if not isinstance(v, kinds) or (isinstance(v, bool) and bool not in kinds):
         want = "/".join(k.__name__ for k in kinds)
         raise ContractViolation(
             f"pool payload: {where}.{key} is {type(v).__name__}, expected {want}." + _SHAPE_NOTE)
+    # /GUARD
     return v
 
 
@@ -289,19 +295,25 @@ def assign_indices(idents: Sequence[str], *, ours: str,
     free one. Ours is `OUR_INDEX`, and a map that says otherwise -- somebody else at 0, or
     our id elsewhere -- was built under another `POOL_ENTRY_ID` and is refused rather than
     renumbered around. Newcomers are numbered in id order so two reads agree."""
+    # GUARD our-id-absent-from-the-payload-is-refused [unit/test_fetch_pool.py]: a payload that
+    # does not list our own entry is refused before any index is assigned
     if ours not in idents:
         raise ContractViolation(
             f"pool payload: the entry named by {ENTRY_ENV} is not among the "
             f"{len(idents)} entries listed, so nothing can be index {OUR_INDEX}. Check the "
             f"id in .env against the host; nothing has been written.")
+    # /GUARD
     out = dict(index_map or {})
     ours_key = entry_key(ours)
     holder = next((k for k, v in out.items() if v == OUR_INDEX), None)
+    # GUARD a-map-built-for-another-entry-is-refused [unit/test_fetch_pool.py]: an index map that
+    # puts somebody else at our index is refused, not renumbered around
     if (holder is not None and holder != ours_key) or out.get(ours_key, OUR_INDEX) != OUR_INDEX:
         raise ContractViolation(
             f"pool payload: the entry map under {INDEX_FILE} does not have {ENTRY_ENV}'s "
             f"entry at index {OUR_INDEX}; it was built for another entry id. Move the map "
             f"aside rather than renumbering the field around it.")
+    # /GUARD
     out.setdefault(ours_key, OUR_INDEX)
     free = max(out.values()) + 1
     for ident in sorted(set(idents)):
@@ -332,9 +344,12 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
     """
     pool = _need(payload, "pool", "the payload", (Mapping,))
     got_season = _need(pool, "season", "pool", (int,))
+    # GUARD another-seasons-payload-is-refused [unit/test_fetch_pool.py]: a payload for another
+    # season is refused, not written as this season's state
     if season is not None and got_season != season:
         raise ContractViolation(
             f"pool payload: the payload is season {got_season}, asked for {season}.")
+    # /GUARD
     week = _need(pool, "current_week", "pool", (int,))
     field_size = _need(pool, "field_size", "pool", (int,))
     pot = float(_need(pool, "pot", "pool", (int, float)))
@@ -342,16 +357,22 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
     statuses: dict[int, str] = {}
     for i, w in enumerate(_need(payload, "weeks", "the payload", (list,))):
         wk = _need(w, "week", f"weeks[{i}]", (int,))
+        # GUARD a-week-described-twice-is-refused [unit/test_fetch_pool.py]: a week the payload
+        # describes twice has two statuses, and is refused rather than last-wins
         if wk in statuses:
             raise ContractViolation(f"pool payload: week {wk} is described twice.")
+        # /GUARD
         statuses[wk] = _need(w, "status", f"weeks[{i}]", (str,)).strip().lower()
 
     raw = _need(payload, "entries", "the payload", (list,))
+    # GUARD a-truncated-payload-is-refused [unit/test_fetch_pool.py]: a field_size that disagrees
+    # with the entries listed is a truncated payload, not a smaller field
     if field_size != len(raw):
         raise ContractViolation(
             f"pool payload: field_size is {field_size} and {len(raw)} entries are listed. "
             f"A field smaller than its size is a truncated or paginated payload, and reading "
             f"it as the field would price the pick against people who are not there.")
+    # /GUARD
     if not raw:
         raise EmptyPool("the pool host answered with no entries in the pool")
 
@@ -366,14 +387,20 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
         by_week: dict[int, set[str]] = {}
         for j, p in enumerate(_need(e, "picks", where, (list,))):
             wk = _need(p, "week", f"{where}.picks[{j}]", (int,))
+            # GUARD a-pick-in-an-undescribed-week-is-refused [unit/test_fetch_pool.py]: a pick in a
+            # week the payload does not describe cannot be told final from open, and is refused
             if wk not in statuses:
                 raise ContractViolation(
                     f"pool payload: {where}.picks[{j}] names week {wk}, which the payload "
                     f"does not describe, so it cannot be told final from open.")
+            # /GUARD
             team = _need(p, "team", f"{where}.picks[{j}]", (str,)).strip().upper()
+            # GUARD an-empty-team-is-refused [unit/test_fetch_pool.py]: a pick with an empty team
+            # is refused, not counted as a spent nothing
             if not team:
                 raise ContractViolation(
                     f"pool payload: {where}.picks[{j}].team is empty in week {wk}.")
+            # /GUARD
             # GUARD in-progress-week-contributes-nothing [unit/test_fetch_pool.py]: a pick
             # in a week that is not final is not spent, ours included -- the line is the
             # week's status, not its number
@@ -385,8 +412,11 @@ def parse_payload(payload: Any, *, ours: str, season: int | None = None,
         keyed.append((ident, alive, used, by_week))
 
     idents = [k[0] for k in keyed]
+    # GUARD a-duplicate-entry-id-is-refused [unit/test_fetch_pool.py]: an entry id listed twice
+    # would share one Ledger between two entries, and is refused
     if len(set(idents)) != len(idents):
         raise ContractViolation("pool payload: an entry id is listed twice.")
+    # /GUARD
     # The map decides the number, then the id is dropped: from here an entry is its index
     # and nothing else. Index order, so ours is first and the store reads back the same.
     numbered = assign_indices(idents, ours=ours, index_map=index_map)
@@ -466,10 +496,13 @@ def write_index_map(index_map: Mapping[str, int], base: Path | None = None) -> P
     moved a row would hand a rival ours. A row that disagrees is refused, not overwritten."""
     stored = read_index_map(base)
     moved = {k for k, v in index_map.items() if k in stored and stored[k] != v}
+    # GUARD an-index-is-never-reassigned [unit/test_fetch_pool.py]: a write that would move a
+    # stored entry to another index is refused; the map is append-only
     if moved:
         raise ContractViolation(
             f"{INDEX_FILE}: {len(moved)} entries are already at another index; the map is "
             f"append-only and an index is never reassigned.")
+    # /GUARD
     merged = {**stored, **{k: int(v) for k, v in index_map.items()}}
     path = index_map_path(base)
     atomic.write_text(path, json.dumps(dict(sorted(merged.items(), key=lambda kv: kv[1])),
@@ -604,9 +637,14 @@ def read_state(base: Path | None = None) -> PoolState | None:
         # used to reach the operator as a traceback out of `--status` and `--refresh` alike.
         # It is the same fact the contract states about a drifted cache, and it is refused
         # in the contract's words: unavailable, beside the failure it would have covered.
+        # GUARD a-wrong-kinded-state-file-is-refused [unit/test_fetch_pool.py]: polars' own
+        # error is not a `ContractViolation`, so without the translation the callers that
+        # catch the refusal (and `--status`) meet a traceback instead
         raise ContractViolation(
             f"{POOL_STATE.name}: {STATE_FILE} does not hold the declared shape "
             f"({type(exc).__name__}: {exc})") from exc
+        # /GUARD
+        raise  # pragma: no cover - what the guard above replaces; the excision leaves it
     df = POOL_STATE.validate(frame)
     return _from_frame(df)
 

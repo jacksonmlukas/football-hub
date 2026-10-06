@@ -140,10 +140,13 @@ CONSENSUS_PAGE = "redraft-overall"
 
 def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
     """Reduce the multi-page rankings frame to this league's single comparable board."""
+    # GUARD no-page-type-column-is-refused [unit/test_consensus_page.py]: a frame with no
+    # `page_type` is refused here, not filtered on a column that is not there
     if "page_type" not in r.columns:
         raise ContractViolation(
             "ff_rankings: no `page_type` column; cannot tell which ranking page each row "
             "came from, and blending pages silently produces a mongrel ECR scale")
+    # /GUARD
     # FantasyPros calls the consensus rank's spread `sd`. It is renamed on the way in
     # because `sd` is also what `hub.models.predict.moments` calls a player's *weekly points*
     # spread, and both land on frames derived from this board -- one measured in picks, one
@@ -158,10 +161,13 @@ def _select_consensus(r: pl.DataFrame) -> pl.DataFrame:
             .filter(pl.col("pos").is_in(DRAFTED_POSITIONS))
             .unique(subset=["player"], keep="first")
             .sort("ecr"))
+    # GUARD a-renamed-consensus-page-is-refused [unit/test_consensus_page.py]: a page the
+    # source renamed leaves no rows, and an empty board is refused rather than served
     if out.is_empty():
         raise ContractViolation(
             f"ff_rankings: page `{CONSENSUS_PAGE}` returned no {'/'.join(DRAFTED_POSITIONS)} "
             f"rows; FantasyPros likely renamed the page")
+    # /GUARD
     return out
 
 
@@ -291,10 +297,13 @@ def consensus(as_of: str | None = None) -> pl.DataFrame:
         print(f"    consensus as of {as_of}: {snap.height} ranked in this preseason, "
               f"{stale} dropped whose last scrape predates {opens}")
     snap = _merge_renamed(snap, as_of)
+    # GUARD a-season-the-archive-does-not-cover-is-refused [unit/test_consensus_page.py]: a
+    # season before the archive starts is refused, not replayed on nothing
     if snap.is_empty():
         raise ContractViolation(
             f"ff_rankings: no `{CONSENSUS_PAGE}` rows scraped between {opens} and {as_of}; "
             f"the archive starts 2020-10-16, so a season before 2021 cannot be replayed")
+    # /GUARD
     return _select_consensus(snap)
 
 
@@ -1171,12 +1180,15 @@ class Board(_Pair):
         disowned = [s.name for s in report.stages
                     if s.sentinel is not None and s.sentinel in frame.columns
                     and not getattr(report, s.name)]
+        # GUARD a-frame-under-another-boards-report-is-refused [unit/test_board_build.py]: a
+        # frame carrying a stage's column under a report that says it did not run is refused
         if disowned:
             raise ContractViolation(
                 f"the frame carries {', '.join(disowned)} and the report says that stage "
                 f"did not run: a stage that did not run leaves no column, so this is a "
                 f"frame under another Board's report. Pair a frame with the report of the "
                 f"build that made it, or `Board.served` it and take the derived one.")
+        # /GUARD
         return super().__new__(cls, frame, report)
 
     @classmethod
