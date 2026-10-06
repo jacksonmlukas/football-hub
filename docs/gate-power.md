@@ -4495,3 +4495,82 @@ it.
 - **The generating process is row-iid with no roster component and one common σ_row**, as
   pre-registered; both are estimated from one weekly run and one draft frame whose SEs bracket but
   do not equal #376's.
+
+---
+
+# Pre-registered 2026-10-06: (C), the verdict over resolved seasons, before it lands (#381)
+
+**Written and committed before any number in this section's tables exists.** Rule 16: a rule's
+null size and power are computed before it is adopted into `gate`. The maintainer ADOPTED (C) on
+#381 on 2026-10-06, with this computation first and a stop condition (below). This commit adds
+the harness extension (`scripts/gate_horizon.py --rule-c`, tests in
+`tests/unit/test_gate_horizon.py`) and **does not touch `experiment.gate`**; the results go under
+*Results (C)*, and the design above that heading is not edited after it.
+
+## The rule being measured
+
+A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md; the code's
+field is still `ties`). A season with a win or a loss is **resolved**.
+
+- **ADOPT** — at least one resolved season, *every resolved season a win*, and the t interval
+  over all k seasons' pooled gains excludes zero from above.
+- **REMOVE** — the mirror: at least one resolved season, every resolved season a loss, the t
+  interval excludes zero from below.
+- With **no resolved season** the Gate can neither ADOPT nor REMOVE: SHOW, with "0 resolved of
+  k, k abstained". It is not NOT-RUNNABLE.
+- **No floor beyond one resolved season.** The interval half still pools all k seasons,
+  Abstentions included.
+- The verdict sentence and the ledger record carry the abstention count.
+
+**What is measured.** `verdict_abstain` (A, as shipped) and `verdict_resolved` (C) in the harness
+are the two rules as functions of the one summary and seasons frame that the shipped
+`experiment.gate` returns, so each trial reads both on identical frames (a paired comparison)
+and nothing about `summarise`, `per_season`, `_disposition` or the t interval is reimplemented.
+The only reimplemented part is the four-line conjunction, and a unit test holds the harness's
+"ship" column (what `gate` itself returned) equal to the landed rule's function on every trial.
+The ceiling is held non-binding, as in #388; VOID and NOT-RUNNABLE do not arise.
+
+## Baseline, grid, trials
+
+**Baseline: #388's estimated process**, which #418 found reproduces the recorded season SEs and
+the observed tie rate (weekly τ = 0.4083, σ_row² = 62.564; draft τ = 5.6912, σ_row² = 161.280).
+Cells: k = 4..8 at 260 weekly rows (20×13) at δ = 0, 0.3, 0.5, and at 20 draft rooms at δ = 0,
+2.0; and at k = 4 the other row counts (weekly 220 and 280; draft 40 and 80 rooms), plus the
+three planted-δ controls. **40,000 trials a cell, worst SE 0.0025** (the target; the null cells
+are far below it). Seeds `SeedSequence([388, cell_index])` as #388's harness derives them, so the
+(A) column is the same draws as a #388-style run of the same grid, not the same draws as #388's
+81-cell table (the cell indices differ).
+
+## The pre-registered stop condition (the maintainer's, 2026-10-06)
+
+**If (C)'s null ADOPT at k = 4 exceeds 0.05 on either path, (C) does not land and returns to the
+maintainer; `experiment.gate` is not changed.** The expectation, stated before the run: (C)
+ADOPTs only where the interval half alone does (it is that half with a weaker condition on the
+seasons than (A)'s), whose null at k = 4 #388 measured at 0.034 (weekly) and 0.034 (draft), so
+the null is expected under 0.035 on both. A null above 0.05 would be a harness fault before it
+was a finding.
+
+## Controls (rule 18), each of which must pass or the table is not published
+
+1. **The (A) column reproduces #388's shipped column.** At weekly k = 4, 260 rows, δ = 0.3 and
+   0.5: (A) within 3 SEs of **0.0007** and **0.0043**; draft k = 4, 20 rooms, δ = 2.0: within 3 SEs
+   of **0.0076**; null (A) within 3 SEs of **0.0000** (weekly) and **0.0014** (draft), where a SE
+   is the larger of the two runs' (a rate near 0 has a plug-in SE near 0, so the comparison is
+   also stated in counts). A harness whose (A) is not #388's (A) is not driving the same rule.
+2. **Inclusions, per frame:** zero frames on which (A) adopts or removes and (C) does not; zero
+   on which (C) adopts or removes and the interval half alone does not; zero on which `gate`'s own
+   verdict is neither rule's.
+3. **A planted δ far above range** (weekly δ = 20 at k = 4 and 8, draft δ = 60 at k = 8): (C)
+   ADOPT rate ≥ 0.99, so (C) can adopt.
+4. **The paired difference is real where it must be:** at weekly k = 4, δ = 0.5, (C) ADOPT
+   exceeds (A) by more than 4 SEs of the paired difference (`√d/N`, `d` the discordant frames);
+   a control that cannot tell (A) from (C) measures neither.
+
+## What this cannot do
+
+It does not say whether any arm beats any incumbent (δ is planted), it estimates a between-season
+variance from four seasons (#388's sensitivity table is that admission, and (C) is bounded above
+by the interval-alone column, which that table already covers), and it **adopts nothing**:
+landing (C) is the maintainer's decision, already made, conditional on the stop condition above.
+
+## Results (C)
