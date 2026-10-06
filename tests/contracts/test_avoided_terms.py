@@ -263,6 +263,8 @@ CHECKED: dict[str, Rule] = {
 }
 
 UNCHECKED: dict[str, str] = {
+    "tie": "a tied game (`DROP_TIES`, `n_tied`) and the Gate's `ties` counter are real and "
+           "correctly named; the entry forbids the word only for a season's disposition",
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "
                       "correct for a Snapshot; a scan cannot tell the two senses apart",
     "panel archive": "`tests/golden/fixtures/panel_archive/` holds the recorded set and "

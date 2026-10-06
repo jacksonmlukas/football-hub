@@ -168,6 +168,14 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > rebuild gain vanishes). On the filtered panel the figure clears; on the unfiltered one it
 > does not.
 >
+> **Decided 2026-10-06 (the maintainer): Gate A's panel is the `--fit` rows.** Gate A asks whether
+> the *published* projection beats its baseline, and `--fit`'s rows (`FANTASY_WEEKS`,
+> `games_before ≥ MIN_GAMES_BEFORE`) are the population the projection has been published on since
+> before this reading; the early-season and thin-history rows it drops are rows the product does
+> not show. The choice rests on that prior definition, not on which panel clears. The unfiltered
+> result above stays recorded as a named sensitivity: on every row the Panel builds, the rebuild
+> does not clear the corrected bar, and 2024 abstains.
+>
 > **Also restated, in the same terms.** The `+0.074` that
 > [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) and `CONTEXT.md`
 > cite is the third row: +0.0749, t = +6.18 on 3 df. Under `--expected`

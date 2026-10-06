@@ -254,6 +254,22 @@ A third case exists and is not a third test: a signal passes a screen and its de
 be gated at any n this project will see. That is a **provisional rule**, above.
 _Avoid_: validate, backtest — both hide which question is being asked.
 
+**Disposition**:
+What one season says inside a **Gate**: a *win* (the challenger's gain clears that season's own
+within-season noise in its favour), a *loss* (it clears it against), or an **Abstention**. A Gate
+reads a verdict off its seasons' dispositions together with the pooled interval; every season
+has exactly one.
+
+**Abstention**:
+A season whose paired gain does not clear that season's own within-season noise, so it votes
+neither for the challenger nor against it. It is a fact about the season's evidence, not about
+the effect: a small gain in a quiet season and a large gain in a noisy one can both abstain. An
+Abstention is never counted as a win, and a verdict that rests on fewer seasons than were run
+says how many abstained. The word *tie* already names a game that finished level and a
+**Co-leader** the simulation cannot separate; a third meaning is how "the season tied" gets read
+as a drawn game.
+_Avoid_: tie — for a season's disposition
+
 **Exhibit**:
 Code that exists only so a measurement the product no longer reads can be re-run. Two ADRs
 meet here: a gate that removed a model from the product
