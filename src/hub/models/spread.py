@@ -31,8 +31,15 @@ So the candidates are ordered by how much they assume:
 
 **The gate, fixed before any of this was run:** a candidate is adopted only if it beats
 `positional` on held-out mean absolute error of predicted `sd`, in **every** held-out
-season, and the paired difference clears 2 standard errors. Beating it on average while
+season, and the paired difference clears the pooled interval. Beating it on average while
 losing a season is not enough -- that is how a fit gets adopted on one lucky year.
+
+**Since #343 the rule is `experiment.run_gate`'s and nobody's here.** This module used to
+rebuild it by hand (`g.wins == seasons and g.t >= MIN_SE`) -- no stage 2, no ceiling, no
+stamps -- which is the copy ADR-0019 was written to end. Each candidate against `positional`
+is now one `Harness.run`: the season-clustered t interval, the tie-aware every-season half,
+NOT-RUNNABLE when the gate's own MDE exceeds its declared ceiling or it has none, the width
+review, and the four stamps.
 
 Both arms are always given the *same* `mu`, so the comparison isolates the spread question
 from projection error and cannot favour either arm.
@@ -51,7 +58,8 @@ from hub import atomic
 from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
-from hub.models.experiment import MIN_SE, expanding_seasons, paired_gain
+from hub.ledger import Ledger, recipe
+from hub.models.experiment import Actions, GateRun, Harness, expanding_seasons
 from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
 
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
@@ -65,10 +73,40 @@ MIN_PPG = not_an_input(
 
 CANDIDATES = ("positional", "own_k", "usage")
 
-# `MIN_SE` -- standard errors the paired difference must clear before a candidate replaces
-# the shipped model -- is imported rather than declared. It was declared here as 2.0 and again
-# in `injury` as `TYPE_MIN_SE = 2.0`, two names for one bar, each commented "the repo's usual
-# bar". The gain has to be real, not just consistently signed.
+# The bar a candidate must clear is `experiment.gate`'s, not a constant here (#343). It was
+# `MIN_SE`, 2.0 standard errors over the row-pooled paired difference, which `docs/method.md`
+# rule 3 names as the repo's own worst error; the gain has to be real, not just consistently
+# signed, and "real" is now the season-clustered t interval and a tie-aware every season.
+
+# #343, the Gate's declaration for this comparison (`Harness`, #387). One harness, run once per
+# candidate: `own_k` and `usage` each against `positional`, three arms of the same incumbent.
+# The within-season unit is the player, `docs/method.md` rule 3's own, and the one #335 wired
+# here ahead of this -- `walk_forward` carries `player_id` for exactly that.
+WITHIN: tuple[str, ...] = ("player_id",)
+
+# The declared ceiling arm, by name, on the ceiling line (S6, #363): what is left to find is
+# the distance from the shipped model to one that knew every player's true volatility, which
+# the realised sd of ~14 games still misses by its own sampling error. `docs/player-spread.md`
+# computed it rule-8-first: irreducible sampling noise 1.0113 MAE against the shipped
+# model's 1.0965, so a headroom of **+0.0852 MAE** "for every future model combined". Wired
+# here as the published number, not re-measured (`docs/gate-power.md`, #343's pre-registration:
+# no re-measurement is proposed). It is a headroom, so it rides every row as `ceiling_diff` --
+# `positional` minus the oracle, the sign `diff` carries -- and `gate` takes its mean.
+CEILING_ARM = "a model that knows each player's true volatility (the realised sd's sampling floor)"
+CEILING_GAIN = not_an_input(
+    0.0852,
+    "the published headroom of docs/player-spread.md (1.0965 - 1.0113), a bound a gate reads "
+    "to decide whether it can run; no prediction reads it")
+
+ACTIONS = Actions(
+    adopt="The candidate replaces the positional constant as the estimator of a player's "
+          "weekly spread.",
+    remove="The candidate is worse than the positional constant: it stays out.",
+    show="The positional constant stays; the comparison could not remove it or replace it.")
+
+HARNESS = Harness(name="player_spread", arm_a="candidate", arm_b="positional", within=WITHIN,
+                  ceiling_arm=CEILING_ARM, actions=ACTIONS,
+                  unit="MAE points of predicted weekly sd", places=4)
 
 # Prior-season role features for the `usage` arm. `drift` is the within-season slope of
 # snap share, which is the term docs/weekly-spread.md accuses of masquerading as spread.
@@ -358,43 +396,75 @@ def summarise(errs: pl.DataFrame) -> pl.DataFrame:
     ).sort("season")
 
 
-def verdict(errs: pl.DataFrame) -> tuple[str, str]:
-    """The pre-registered rule, both halves of it.
+def candidate_frame(errs: pl.DataFrame, candidate: str) -> pl.DataFrame:
+    """One candidate's paired rows for the Gate: `diff` is `positional` minus the candidate
+    (positive when the candidate predicts the spread better), `ceiling_diff` the declared
+    headroom on every row, and `season`/`player_id` the cluster and the within-season unit."""
+    return errs.select(
+        "season", "player_id",
+        (pl.col("err_positional") - pl.col(f"err_{candidate}")).alias("diff"),
+        pl.lit(CEILING_GAIN).alias("ceiling_diff"))
 
-    A candidate is adopted only if it beats `positional` in **every** held-out season *and*
-    the paired difference clears `MIN_SE` standard errors. The first half stops a fit being
-    adopted on one lucky year; the second stops one being adopted on a gain too small to
-    distinguish from noise, which is exactly what the first version of this function -- which
-    checked only the seasons -- would have done.
+
+def _challengers() -> tuple[str, ...]:
+    return tuple(c for c in CANDIDATES if c != "positional")
+
+
+def gate_runs(errs: pl.DataFrame, *, publish: bool = False, seasons: Sequence[int] = (),
+              seed: int = 0, ledger: Ledger | None = None) -> dict[str, GateRun]:
+    """Each candidate against `positional`, through the one Gate (#343).
+
+    `publish=False` is `Harness.decide`, the pure half: no render, no stamp, no width write --
+    what `verdict` reads when it is handed a frame in a test. `publish=True` is `Harness.run`,
+    which prints nothing itself but returns the report lines (stage 2, the width review and
+    the four stamps) and writes the Ledger; `main` prints them. The candidates are separate
+    arms at one digest pair, so each carries its own recipe (#384).
+    """
+    out: dict[str, GateRun] = {}
+    for c in _challengers():
+        harness = HARNESS._replace(arm_a=c)
+        paired = candidate_frame(errs, c)
+        if publish:
+            out[c] = harness.run(paired, seed=seed, ledger=ledger,
+                                 recipe=recipe(candidate=c, seasons=list(seasons)))
+        else:
+            out[c] = harness.decide(paired, seed=seed)
+    return out
+
+
+def verdict(errs: pl.DataFrame, *, runs: dict[str, GateRun] | None = None) -> tuple[str, str]:
+    """Which candidate, if any, replaces `positional` -- the Gate's answer, read per candidate.
+
+    **Not a rule of this module's own since #343.** It was `g.wins == seasons and g.t >=
+    MIN_SE and g.mean > best`: every-season and 2 se over the row-pooled difference, written
+    out beside `experiment.gate` and without its stage 2. A candidate is adopted now exactly
+    when `experiment.gate` says ADOPT for it, and the best mean among those wins; every other
+    outcome keeps the incumbent, and each candidate's own verdict -- including NOT-RUNNABLE,
+    which is not a loss and does not read as one -- is printed with its sentence.
+
+    `runs` is what `main` hands in so the gate is run once, published, and read here; absent,
+    it is `gate_runs`' pure half on `errs`.
     """
     if errs.is_empty() or "err_positional" not in errs.columns:
         return "positional", "nothing measured -- no held-out season"
-    per = summarise(errs)
-    base = errs["err_positional"].to_numpy().astype(float)
-    seasons = per.height
+    got = runs if runs is not None else gate_runs(errs)
     lines, winner, best = [], "positional", 0.0
-    for c in CANDIDATES:
-        if c == "positional":
-            continue
-        # `within="player_id"` (#335): the every-season half now asks whether a season's gain
-        # clears its own within-season noise, and `player_id` -- rule 3's repeated-measure
-        # unit -- rides along on `walk_forward`'s output rows for exactly this. A tie already
-        # fails `g.wins == seasons` on its own, since `wins + ties + losses == seasons`.
-        g = paired_gain(base, errs[f"err_{c}"].to_numpy(),
-                        season=errs["season"].to_numpy(), within=errs["player_id"].to_numpy())
-        lines.append(f"  {c}: mean gain {g.mean:+.4f} MAE at {g.t:.1f} se, "
-                     f"wins {g.wins}, ties {g.ties}, losses {g.losses} of {seasons} seasons")
-        if g.wins == seasons and g.t >= MIN_SE and g.mean > best:
-            winner, best = c, g.mean
+    for c, run in got.items():
+        label, sentence = run.verdict
+        mean = float(run.summary["mean"])
+        lines.append(f"  {c}: {label}: mean gain {mean:+.4f} MAE -- {sentence}")
+        if label == "ADOPT" and mean > best:
+            winner, best = c, mean
     body = "\n".join(lines)
     if winner == "positional":
-        return winner, ("KEEP 'positional': no candidate cleared both halves of the gate "
-                        f"({MIN_SE:.0f} se, and every held-out season).\n{body}")
+        return winner, ("KEEP 'positional': no candidate was adopted by the Gate "
+                        f"(ADR-0019: the season-clustered interval, every season won, and a "
+                        f"design that can run).\n{body}")
     return winner, (f"ADOPT '{winner}': beats the shipped positional constant by "
-                    f"{best:.4f} MAE in every held-out season.\n{body}")
+                    f"{best:.4f} MAE, through the Gate.\n{body}")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> int:
     p = argparse.ArgumentParser(prog="hub.models.spread", description=__doc__)
     p.add_argument("--fit", action="store_true")
     p.add_argument("--seasons", default="2022,2023,2024,2025")
@@ -433,7 +503,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     per = summarise(errs)
     print("\nHeld-out MAE of predicted weekly sd, fitting only on earlier seasons:")
     print(per.select("season", "n", *[f"mae_{c}" for c in CANDIDATES]))
-    print(f"\n{verdict(errs)[1]}")
+    # The two Gate runs print as every gate does: the block, stage 2, the per-season table,
+    # the width review and the four stamps, then this module's verdict over both.
+    runs = gate_runs(errs, publish=True, seasons=seasons, ledger=ledger)
+    for c, run in runs.items():
+        print(f"\n  === {c} against positional ===")
+        print("\n".join(run.lines))
+    print(f"\n{verdict(errs, runs=runs)[1]}")
 
     if a.out:
         atomic.write_parquet(per, Path(a.out))

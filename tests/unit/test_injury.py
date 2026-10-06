@@ -11,6 +11,7 @@ import polars as pl
 import pytest
 
 from hub.fetch.replay import serve
+from hub.ledger import Ledger
 from hub.models import injury
 
 
@@ -212,7 +213,8 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
               team=pl.lit("AAA"), game_type=pl.lit("REG"), full_name=pl.col("gsis_id")),
           player_stats=_stats(rows_st))
     out = tmp_path / "t.parquet"
-    assert injury.main(["--fit", "--seasons", "2023,2024", "--out", str(out)]) == 0
+    assert injury.main(["--fit", "--seasons", "2023,2024", "--out", str(out)],
+                       ledger=Ledger(path=None)) == 0
     text = capsys.readouterr().out
     assert "designated player-weeks" in text
     assert out.exists()
@@ -302,43 +304,116 @@ def test_shrinkage_is_chosen_on_training_rows_only():
 
 # --- the gate -------------------------------------------------------------
 
-def _errs(gain, noise, seasons=(2024, 2025), n=400, seed=0):
-    """Antithetic noise, so each season's mean difference is exactly `gain`."""
+SEASONS = (2021, 2022, 2023, 2024, 2025)
+
+
+def _errs(gain, noise, seasons=SEASONS, n=400, seed=0, headroom=0.3):
+    """Antithetic noise, so each season's mean difference is exactly `gain[i]`. `err_oracle`
+    is the declared ceiling arm's error: `headroom` better than `retention`, every row; pass
+    `headroom=None` for a frame that never measured a ceiling."""
     rng = np.random.default_rng(seed)
     rows = []
     for si, season in enumerate(seasons):
         e = rng.normal(0, noise, n // 2)
         for d in np.concatenate([e, -e]):
             rows.append((season, 5.0, 5.0 - gain[si] + float(d)))
-    return pl.DataFrame({"season": [r[0] for r in rows], "k": [50.0] * len(rows),
-                         "err_retention": [r[1] for r in rows],
-                         "err_type": [r[2] for r in rows]})
+    out = {"season": [r[0] for r in rows], "k": [50.0] * len(rows),
+           "err_retention": [r[1] for r in rows], "err_type": [r[2] for r in rows]}
+    if headroom is not None:
+        out["err_oracle"] = [r[1] - headroom for r in rows]
+    return pl.DataFrame(out)
+
+
+_CLEAN = [0.2, 0.21, 0.19, 0.2, 0.2]
 
 
 def test_the_incumbent_is_retention_not_out_zero():
     """The thing to beat is what already won, not what it beat."""
-    _, text = injury.type_verdict(_errs([0.0, 0.0], noise=1.0))
+    _, text = injury.type_verdict(_errs([0.0] * 5, noise=1.0))
     assert "retention" in text and "out_zero" not in text
 
 
-def test_a_type_effect_that_wins_everywhere_and_clears_two_se_is_adopted():
-    winner, text = injury.type_verdict(_errs([0.5, 0.5], noise=1.0))
+def test_a_type_effect_that_wins_everywhere_and_clears_the_interval_is_adopted():
+    winner, text = injury.type_verdict(_errs(_CLEAN, noise=0.4))
     assert winner == "type" and text.startswith("ADOPT")
 
 
 def test_losing_one_season_is_not_enough():
-    winner, text = injury.type_verdict(_errs([2.0, -0.5], noise=1.0))
+    winner, text = injury.type_verdict(_errs([0.2, 0.2, 0.2, 0.2, -0.2], noise=0.4))
     assert winner == "retention" and text.startswith("KEEP")
 
 
-def test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted():
-    winner, _ = injury.type_verdict(_errs([0.2, 0.2], noise=3.0))
-    assert winner == "retention"
+def test_a_gain_the_seasons_cannot_agree_on_is_not_adopted():
+    """Positive in every season and still not distinguishable from nothing: the season is the
+    cluster, five of them, and they scatter wider than their mean. The retired rule read this
+    as 2 se over ~2,000 pooled rows."""
+    winner, text = injury.type_verdict(_errs([0.02, 0.2, 0.01, 0.3, 0.02], noise=0.4))
+    assert winner == "retention" and "interval contains zero" in text
+
+
+def test_no_ceiling_measured_is_not_runnable_even_when_the_effect_is_clean():
+    """S6 reaches this comparison for the first time (#343): the retired rule adopted on this
+    frame. The same rows with `err_oracle` do adopt (above), so what moved the verdict is the
+    ceiling and nothing else."""
+    winner, text = injury.type_verdict(_errs(_CLEAN, noise=0.4, headroom=None))
+    assert winner == "retention" and "NOT-RUNNABLE" in text
+    assert "not measured a ceiling" in text
+    assert "ceiling_diff" not in injury.type_frame(_errs(_CLEAN, noise=0.4, headroom=None)).columns
+
+
+def test_a_ceiling_below_the_design_s_resolution_is_not_runnable():
+    """Stage 2: the same clean gain against a headroom of 0.001 -- smaller than the smallest
+    effect five seasons at this noise could resolve."""
+    winner, text = injury.type_verdict(_errs(_CLEAN, noise=0.4, headroom=0.001))
+    assert winner == "retention" and "NOT-RUNNABLE" in text and "ceiling of +0.001" in text
+
+
+def test_the_type_arm_is_removed_when_worse_in_every_season():
+    run = injury.type_run(_errs([-0.2, -0.21, -0.19, -0.2, -0.2], noise=0.4))
+    assert run.verdict[0] == "REMOVE"
+    assert injury.type_verdict(pl.DataFrame({}), run=run)[0] == "retention"
+
+
+def test_the_ceiling_is_retention_minus_the_in_sample_oracle_per_row():
+    frame = injury.type_frame(_errs(_CLEAN, noise=0.4))
+    assert set(frame["ceiling_diff"].round(9).to_list()) == {0.3}
+    assert {"season", "diff"} <= set(frame.columns)
 
 
 def test_no_held_out_season_reports_nothing_measured():
     winner, text = injury.type_verdict(pl.DataFrame())
     assert winner == "retention" and "nothing measured" in text
+
+
+def test_the_published_run_prints_stage_2_and_the_stamps_and_writes_one_entry():
+    ledger = Ledger(path=None)
+    run = injury.type_run(_errs(_CLEAN, noise=0.4), publish=True, seasons=SEASONS, ledger=ledger)
+    text = "\n".join(run.lines)
+    assert "MDE at 80% power" in text and "ceiling (" in text
+    assert "data:" in text and "board:" in text and "commit:" in text
+    assert [(e.name, e.recipe) for e in ledger._entries] == [
+        ("injury_type", "seasons=2021+2022+2023+2024+2025")]
+
+
+def test_the_oracle_is_fitted_in_sample_on_the_held_out_season_itself():
+    """The declared ceiling arm: its per-type multiplier comes from the season it is scored on,
+    so on a fixture where type matters it is at least as good as the walk-forward arm."""
+    rows_st, rows_inj = [], []
+    for season in (2023, 2024):
+        for t, mult in (("Hamstring", 0.5), ("Ankle", 1.0)):
+            for i in range(30):
+                pid = f"{t}{season}{i}"
+                for w in range(1, 9):
+                    rows_st.append((season, w, pid, "WR", 10.0))
+                rows_st.append((season, 9, pid, "WR", 10.0 * 0.6 * mult))
+                rows_inj.append((season, 9, pid, "WR", "Questionable", "Limited", t))
+    obs = injury.observations(_inj_typed(rows_inj), _stats(rows_st))
+    errs = injury.walk_forward_type(obs, min_cell=1)
+    assert "err_oracle" in errs.columns
+    oracle, typed, retention = (float(errs[c].to_numpy().mean())
+                                for c in ("err_oracle", "err_type", "err_retention"))
+    assert oracle <= typed + 1e-9
+    assert oracle < retention
 
 
 def test_the_type_walk_forward_fits_only_on_earlier_seasons():

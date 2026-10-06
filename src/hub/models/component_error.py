@@ -22,6 +22,13 @@ trigger. Two of them are load-bearing:
     points are linear, so MAE is the loss that matters and the correction is not taken. The
     null is recorded here rather than rediscovered.
 
+**Since #343 the decision is the Gate's.** `verdict` used to read the per-season aggregates by
+hand -- "MAE improves in every held-out season" over three numbers, no interval, no stage 2,
+no stamps -- which is a bare every-season check beside `experiment.gate`, the copy ADR-0019
+exists to end. It is one `Harness.run` over the paired rows now, and what the page above
+calls a null is whatever the shared rule says it is: see `docs/component-projection.md`'s
+restatement box.
+
 The comparison is prior-season **expected** components against next-season **realised** ones.
 Expected rather than realised on the projection side because that is what the Board already
 carries, and because ff_opportunity's expected touchdowns are an expectation already -- the
@@ -40,9 +47,10 @@ import numpy as np
 import polars as pl
 
 from hub.cli import unavailable
+from hub.ledger import Ledger, recipe
 from hub.models import components
 from hub.models.components import SCORING
-from hub.models.experiment import expanding_seasons
+from hub.models.experiment import Actions, GateRun, Harness, expanding_seasons
 
 # The components ff_opportunity prices and this league scores. `interceptions` is available
 # upstream but is a quarterback-only term whose error is a rounding difference beside the rest;
@@ -130,24 +138,129 @@ def calibrated(train: pl.DataFrame, test: pl.DataFrame) -> dict[str, float]:
     return out
 
 
-def verdict(rounds: Sequence[dict[str, float]]) -> tuple[str, str]:
-    """Whether the per-component calibration is worth taking. Pre-stated: it must improve the
-    loss the product is linear in, in every held-out season."""
-    if not rounds:
-        return "NULL", "nothing measured -- no held-out season"
-    mae_gain = [r["raw_mae"] - r["cal_mae"] for r in rounds]
-    rmse_gain = [r["raw_rmse"] - r["cal_rmse"] for r in rounds]
-    if all(g > 0 for g in mae_gain):
-        return "ADOPT", (f"calibration improves MAE in all {len(rounds)} held-out seasons "
-                         f"(mean {np.mean(mae_gain):+.3f} points a game)")
-    won = sum(g > 0 for g in mae_gain)
-    return "NULL", (
-        f"NOT TAKEN: calibration improves MAE in {won} of {len(mae_gain)} held-out seasons "
-        f"(mean {np.mean(mae_gain):+.3f} points a game -- a wash), while improving RMSE in "
-        f"{sum(g > 0 for g in rmse_gain)} of {len(rmse_gain)} (mean {np.mean(rmse_gain):+.3f}). "
-        f"Least squares minimises RMSE by definition, so the split is the expected shape rather "
-        f"than a surprise; fantasy points are linear, so MAE is the loss that decides. The "
-        f"over-dispersion is real and this correction for it does not pay for itself.")
+# #343, this comparison's declaration. The unit that is paired is the player-season (one row
+# of `pairs`, the points error summed over the seven components -- what the aggregate
+# `calibrated` averaged per component), the cluster is the season, and the within-season
+# repeated-measure unit is the player (`docs/method.md` rule 3).
+WITHIN: tuple[str, ...] = ("player_id",)
+
+# The declared ceiling arm (S6, #363), by name where it prints: each component's calibration
+# line fitted *in sample on the held-out season's own pairs* and scored on them -- the
+# `coverage` and `injury` ceilings' construction, flattered by construction, which bounds what
+# any calibration of this functional form could earn on these rows.
+CEILING_ARM = "each component's calibration fitted in sample on the held-out season's own pairs"
+
+ACTIONS = Actions(
+    adopt="The per-component calibration is taken: it improves the loss the product is "
+          "linear in.",
+    remove="The calibration worsens the loss the product is linear in: it stays out.",
+    show="The calibration is not taken; the Gate could not establish that it pays.")
+
+HARNESS = Harness(name="component_calibration", arm_a="calibrated", arm_b="raw projection",
+                  within=WITHIN, ceiling_arm=CEILING_ARM, actions=ACTIONS,
+                  unit="points per game of MAE", places=3)
+
+
+def _points_error(frame: pl.DataFrame, fits: dict[str, tuple[float, float]]) -> np.ndarray:
+    """Per-row error in points, summed over the components in `fits`: the projection passed
+    through each component's own `(slope, intercept)`. The raw projection is the identity line
+    `(1.0, 0.0)`. A component with no fit, or a non-finite value, contributes nothing to that
+    row -- `calibrated`'s own mask, so raw and calibrated are always summed over the same set."""
+    total = np.zeros(frame.height)
+    for k in COMPONENTS:
+        if f"p_{k}" not in frame.columns or f"a_{k}" not in frame.columns or k not in fits:
+            continue
+        p = frame[f"p_{k}"].to_numpy().astype(float)
+        a = frame[f"a_{k}"].to_numpy().astype(float)
+        c = fits[k][0] * p + fits[k][1]
+        err = np.abs(a - c) * abs(SCORING[k])
+        total += np.where(np.isfinite(p) & np.isfinite(a), err, 0.0)
+    return total
+
+
+def _fits(frame: pl.DataFrame) -> dict[str, tuple[float, float]]:
+    """Each component's `(slope, intercept)` of realised on projected over `frame`, as
+    `calibrated` fits them: finite rows only, and none for a component with no spread."""
+    out: dict[str, tuple[float, float]] = {}
+    for k in COMPONENTS:
+        if f"p_{k}" not in frame.columns or f"a_{k}" not in frame.columns:
+            continue
+        p, a = frame[f"p_{k}"].to_numpy(), frame[f"a_{k}"].to_numpy()
+        m = np.isfinite(p) & np.isfinite(a)
+        if m.sum() < 2 or p[m].std() == 0:
+            continue
+        slope, intercept = np.polyfit(p[m], a[m], 1)
+        out[k] = (float(slope), float(intercept))
+    return out
+
+
+def calibration_frame(paired: pl.DataFrame) -> pl.DataFrame:
+    """The paired rows the Gate reads: one per held-out player-season.
+
+    For each held-out season (`expanding_seasons`: `past` strictly earlier), the calibration is
+    fitted on `past` alone and applied to `now`. `diff` is the raw projection's error minus the
+    calibrated one's, in points (positive when the calibration helps, the sign `gate` adopts
+    on); `ceiling_diff` is the raw error minus the in-sample calibration's -- the same lines
+    fitted on `now` itself -- the declared ceiling arm. `player_id` is the within-season unit.
+    """
+    frames = []
+    for target, past, now in expanding_seasons(paired):
+        fit_past, fit_now = _fits(past), _fits(now)
+        identity = dict.fromkeys(COMPONENTS, (1.0, 0.0))
+        frames.append(pl.DataFrame({
+            "season": [target] * now.height,
+            "player_id": now["player_id"] if "player_id" in now.columns
+            else [f"row{i}" for i in range(now.height)],
+            "diff": (_points_error(now, {k: identity[k] for k in fit_past})
+                     - _points_error(now, fit_past)),
+            "ceiling_diff": (_points_error(now, {k: identity[k] for k in fit_now})
+                             - _points_error(now, fit_now)),
+        }))
+    return pl.concat(frames) if frames else pl.DataFrame()
+
+
+def gate_run(frame: pl.DataFrame, *, publish: bool = False, seasons: Sequence[int] = (),
+             seed: int = 0, ledger: Ledger | None = None) -> GateRun:
+    """The calibration against the raw projection, through the one Gate (#343).
+
+    `Harness.decide` is the pure half; `publish` is `Harness.run` -- stage 2, the width review
+    and the four stamps in `.lines`, and a Ledger entry.
+    """
+    harness = HARNESS
+    if publish:
+        return harness.run(frame, seed=seed, ledger=ledger,
+                           recipe=recipe(seasons=list(seasons)))
+    return harness.decide(frame, seed=seed)
+
+
+def verdict(frame: pl.DataFrame, rounds: Sequence[dict[str, float]] = (), *,
+            run: GateRun | None = None) -> tuple[str, str]:
+    """Whether the per-component calibration is worth taking: the Gate's answer.
+
+    **Not a rule of this module's own since #343.** It was "MAE improves in every held-out
+    season" over the per-season aggregates -- the bare every-season check, no interval, no
+    stage 2, no stamps -- and `docs/component-projection.md`'s calibration null rested on it.
+    The label is `experiment.gate`'s own (`ADOPT`, `REMOVE`, `SHOW`, `NOT-RUNNABLE`): a
+    `NOT-RUNNABLE` says the design cannot tell a real gain from a perfect one over this many
+    seasons, which is not the claim "the correction does not pay" this used to print.
+
+    `rounds` is optional context: the RMSE the calibration buys, which is the half of the
+    finding the points-error Gate does not read -- least squares minimises it by definition,
+    so a calibration improving RMSE while MAE does not is the expected shape.
+
+    `run` is what `main` hands in so the gate is run once, published, and read here.
+    """
+    got = run if run is not None else gate_run(frame)
+    label, sentence = got.verdict
+    note = sentence
+    if rounds and label != "ADOPT":
+        rmse_gain = [r["raw_rmse"] - r["cal_rmse"] for r in rounds]
+        note += (f" The same calibration improves RMSE in {sum(g > 0 for g in rmse_gain)} of "
+                 f"{len(rmse_gain)} held-out seasons (mean {np.mean(rmse_gain):+.3f}); least "
+                 f"squares minimises RMSE by definition, so the split is the expected shape "
+                 f"rather than a surprise, and fantasy points are linear, so MAE is the loss "
+                 f"that decides.")
+    return label, note
 
 
 def attribution(paired: pl.DataFrame, by: str | None = None) -> pl.DataFrame:
@@ -214,8 +327,10 @@ def pairs(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
     return pl.concat(out) if out else pl.DataFrame()
 
 
-def report(card: pl.DataFrame, rounds: Sequence[dict[str, float]]) -> list[str]:
-    """Lines, not prints -- the reason `hub.draft.report` exists."""
+def report(card: pl.DataFrame, rounds: Sequence[dict[str, float]],
+           decision: str | None = None) -> list[str]:
+    """Lines, not prints -- the reason `hub.draft.report` exists. `decision` is the verdict's
+    sentence when a Gate run produced one (#343); the descriptive tables stand without it."""
     lines = [f"\n  {'component':17} {'n':>5} {'corr':>6} {'slope':>7} {'bias':>9} {'MAE':>8}"
              f" {'pts/gm':>8}"]
     for r in card.iter_rows(named=True):
@@ -234,11 +349,13 @@ def report(card: pl.DataFrame, rounds: Sequence[dict[str, float]]) -> list[str]:
         for r in rounds:
             lines.append(f"  {int(r['season']):>9} {r['raw_mae']:>9.3f} {r['cal_mae']:>9.3f} "
                          f"{r['raw_rmse']:>10.3f} {r['cal_rmse']:>10.3f}")
-    lines += ["", f"  {verdict(rounds)[1]}"]
+    if decision is not None:
+        lines += ["", f"  {decision}"]
     return lines
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - network
+def main(argv: Sequence[str] | None = None, *,
+         ledger: Ledger | None = None) -> int:  # pragma: no cover - network
     ap = argparse.ArgumentParser(
         prog="hub.models.component_error",
         description="Where the component projection's error lives, priced in fantasy points.")
@@ -270,7 +387,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         rounds.append(r)
     print("\n  prior-season expected components vs next-season realised, per game")
     print(f"  {d.height:,} player-seasons over {len(got)} pairs, >= {MIN_GAMES} games both sides")
-    print("\n".join(report(card, rounds)))
+    frame = calibration_frame(d)
+    run = gate_run(frame, publish=True, seasons=got, ledger=ledger)
+    label, note = verdict(frame, rounds, run=run)
+    print("\n".join(report(card, rounds, note if label == "NOT-RUNNABLE" else f"{label}: {note}")))
+    print("\n  the Gate, through `experiment.run_gate` (#343):")
+    print("\n".join(run.lines))
 
     # The gap, split into the components that produce it. Against what happened, not against
     # another projection: decomposing a disagreement needs parts on both sides, and ESPN

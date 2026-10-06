@@ -39,6 +39,10 @@ DECLARED_UNITS: dict[str, tuple[str, ...]] = {
     "hub.models.margin.WIDTH_HARNESS": ("season",),    # one row/season: a real no-op
     "hub.season.weekly_gate.HARNESS": ("roster",),
     "hub.season.lineup_gate.HARNESS": ("roster",),
+    # #343: the three comparisons that reached the Gate by hand before this.
+    "hub.models.spread.HARNESS": ("player_id",),
+    "hub.models.component_error.HARNESS": ("player_id",),
+    "hub.models.injury.HARNESS": ("season",),          # declared no-op, pending #360
 }
 
 

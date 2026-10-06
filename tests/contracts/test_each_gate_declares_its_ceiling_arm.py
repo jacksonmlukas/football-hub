@@ -17,7 +17,7 @@ off each -- a fifth registry, alongside the three other hand-kept tuples #387's 
 found drifting (coverage was in none of them, margin in none). Every gate now declares one or
 more `Harness` (`hub.models.experiment.Harness`; `hub.models.margin` declares two, for its two
 verdicts), whose `ceiling_arm` field *is* the declared arm, so this iterates
-`tests/gate_harnesses.py`'s discovery -- seven harnesses over six modules -- rather than
+`tests/gate_harnesses.py`'s discovery -- ten harnesses over nine modules -- rather than
 re-listing which module has one.
 """
 import pathlib
@@ -26,12 +26,15 @@ import pytest
 from gate_harnesses import GATE_MODULES, all_harnesses, assert_declares_ceiling_arm
 
 
-def test_seven_harnesses_over_the_six_gate_modules():
-    """The discovery itself, and the count #387's ticket fixes: seven declarations (margin has
-    two, for its two verdicts; every other gate module has one)."""
+def test_ten_harnesses_over_the_nine_gate_modules():
+    """The discovery itself. #387 fixed it at seven declarations over six modules (margin has
+    two, for its two verdicts; every other gate module has one); #343 routed the spread
+    candidates, the injury type verdict and the component calibration through the Gate, which
+    is three more modules and three more declarations -- and ADR-0019's claim that every gate
+    reads the one rule is what makes the count ten rather than seven."""
     found = all_harnesses()
-    assert len(found) == 7, f"expected seven harnesses, found {len(found)}: {sorted(found)}"
-    assert len(GATE_MODULES) == 6, f"expected six gate modules, found {sorted(GATE_MODULES)}"
+    assert len(found) == 10, f"expected ten harnesses, found {len(found)}: {sorted(found)}"
+    assert len(GATE_MODULES) == 9, f"expected nine gate modules, found {sorted(GATE_MODULES)}"
 
 
 @pytest.mark.parametrize("key", sorted(all_harnesses()))

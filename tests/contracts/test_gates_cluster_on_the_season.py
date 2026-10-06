@@ -61,9 +61,17 @@ def test_every_gate_module_resamples_the_season():
         tree = ast.parse(src)
         attr_calls = {node.func.attr for node in ast.walk(tree)
                       if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+        # Only the names this module took from `hub.models.experiment`: a module of its own
+        # `summarise` (`hub.models.spread` has a per-season MAE table by that name, #343) is
+        # not the function this contract is about, and was read as it before the three
+        # hand-built harnesses became gates.
+        from_experiment = {a.asname or a.name for node in ast.walk(tree)
+                           if isinstance(node, ast.ImportFrom)
+                           and node.module == "hub.models.experiment" for a in node.names}
         name_calls = [node for node in ast.walk(tree)
                       if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                      and node.func.id in ("run_gate", "gate", "summarise")]
+                      and node.func.id in ("run_gate", "gate", "summarise")
+                      and node.func.id in from_experiment]
         if {"run", "decide"} & attr_calls and not name_calls:
             continue  # reads SEASON_CLUSTER through Harness.run/Harness.decide; nothing to check
         assert name_calls, (

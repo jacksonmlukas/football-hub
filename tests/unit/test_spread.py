@@ -14,6 +14,7 @@ import pytest
 from hub.contracts import ContractViolation
 from hub.fetch import nflverse as nv
 from hub.fetch.replay import serve
+from hub.ledger import Ledger
 from hub.models import spread
 from hub.models.predict import WEEKLY_K
 
@@ -321,13 +322,17 @@ def test_held_out_nulls_are_filled_from_the_training_mean_not_their_own():
 
 # --- the gate -------------------------------------------------------------
 
-def _errs(gain, noise, seasons=(2024, 2025), n=400, seed=0):
-    """Per-observation errors where `own_k` beats `positional` by exactly `gain` per season.
+SEASONS = (2021, 2022, 2023, 2024, 2025)
+
+
+def _errs(gain, noise, seasons=SEASONS, n=400, seed=0):
+    """Per-observation errors where `own_k` beats `positional` by exactly `gain[i]` in season i.
 
     The noise is antithetic -- every draw appears as +e and -e -- so each season's mean
-    difference is exactly `gain` while its spread is `noise`. That separates the two halves
-    of the gate cleanly: `gain` decides which seasons win, `noise` decides whether the win
-    is distinguishable from nothing.
+    difference is exactly `gain[i]` while its spread is `noise`. That separates the halves of
+    the gate cleanly: `gain` decides which seasons win and how far apart they sit, `noise`
+    decides whether a season's win is distinguishable from its own noise. `usage` is a flat
+    0.1 worse than `positional`, every row.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -342,37 +347,101 @@ def _errs(gain, noise, seasons=(2024, 2025), n=400, seed=0):
          "err_usage": [r[3] for r in rows], "player_id": [r[4] for r in rows]})
 
 
-def test_a_candidate_that_wins_every_season_and_clears_two_se_is_adopted():
-    winner, text = spread.verdict(_errs([0.5, 0.5], noise=1.0))
+# Five seasons that agree closely, a gain far outside each season's own noise and a pooled
+# interval that excludes zero, all under the declared headroom: the one case ADOPT can be.
+_CLEAN = [0.05, 0.052, 0.048, 0.05, 0.051]
+
+
+def test_a_candidate_that_wins_every_season_and_clears_the_interval_is_adopted():
+    winner, text = spread.verdict(_errs(_CLEAN, noise=0.2))
     assert winner == "own_k" and text.startswith("ADOPT")
+    assert "own_k: ADOPT" in text
 
 
 def test_winning_on_average_but_losing_a_season_is_not_enough():
     """That is how a fit gets adopted on one lucky year."""
-    winner, text = spread.verdict(_errs([2.0, -0.5], noise=1.0))
+    winner, text = spread.verdict(_errs([0.05, 0.05, 0.05, 0.05, -0.05], noise=0.2))
     assert winner == "positional" and text.startswith("KEEP")
+    assert "own_k: ADOPT" not in text
 
 
 def test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted():
-    """The half of the gate the first version of `verdict` was missing: it checked only
-    that every season won, so a consistently-signed but meaningless gain passed."""
-    errs = _errs([0.2, 0.2], noise=3.0)   # 1.9 se pooled, positive every season
+    """The half of the gate the first version of `verdict` was missing: it checked only that
+    every season won, so a consistently-signed but meaningless gain passed. Here every season's
+    gain is positive and none clears its own within-season noise -- a tie, which is not a win."""
+    errs = _errs([0.02] * 5, noise=3.0)
     per = spread.summarise(errs)
     assert bool((per["mae_own_k"].to_numpy() < per["mae_positional"].to_numpy()).all()), \
-        "the setup must win every season, or it is not testing the se half"
+        "the setup must win every season, or it is not testing the tie half"
     winner, text = spread.verdict(errs)
-    assert winner == "positional" and "se" in text
+    assert winner == "positional" and "tied 5" in text
 
 
-def test_the_gate_reports_both_halves_for_every_candidate():
-    _, text = spread.verdict(_errs([0.5, 0.5], noise=1.0))
-    assert "own_k" in text and "usage" in text
-    assert "se" in text and "seasons" in text
+def test_the_pooled_interval_is_the_season_clustered_t_interval(monkeypatch):
+    """Every season wins by a wide margin over its own noise, but the seasons disagree about
+    how much: pooled over five seasons the t interval contains zero. The hand-built rule this
+    replaced read 2 se over ~2,000 pooled rows and adopted it. The ceiling is raised so that
+    NOT-RUNNABLE does not pre-empt the branch under test."""
+    monkeypatch.setattr(spread, "CEILING_GAIN", 5.0)
+    errs = _errs([0.02, 0.4, 0.03, 0.5, 0.02], noise=0.1)
+    runs = spread.gate_runs(errs)
+    assert runs["own_k"].verdict[0] == "SHOW"
+    assert "interval contains zero" in runs["own_k"].verdict[1]
+    assert runs["own_k"].summary["clusters"] == 5, "the season is the cluster, not the row"
+    assert spread.verdict(errs, runs=runs)[0] == "positional"
+
+
+def test_a_design_that_cannot_find_its_ceiling_is_not_runnable_rather_than_kept():
+    """Stage 2 is read for the first time here. Seasons that disagree this much cannot resolve
+    an effect of the published headroom's size, so the verdict says so and does not publish the
+    null the retired rule printed."""
+    _, text = spread.verdict(_errs([0.05, 0.4, 0.03, 0.5, 0.02], noise=0.1))
+    assert "NOT-RUNNABLE" in text and "against a ceiling of +0.085" in text
+
+
+def test_a_gate_with_no_headroom_declared_is_not_runnable_even_when_the_candidate_is_clean(
+        monkeypatch):
+    """The plant: the same frame that ADOPTs above, with the headroom set to zero. Any MDE
+    exceeds a ceiling of zero, so the one thing that changed is the declared ceiling and the
+    verdict must move with it -- which shows the ceiling is what the rule reads."""
+    monkeypatch.setattr(spread, "CEILING_GAIN", 0.0)
+    runs = spread.gate_runs(_errs(_CLEAN, noise=0.2))
+    assert runs["own_k"].verdict[0] == "NOT-RUNNABLE"
+    assert spread.verdict(_errs(_CLEAN, noise=0.2), runs=runs)[0] == "positional"
+
+
+def test_the_ceiling_is_the_published_headroom_and_rides_every_row():
+    frame = spread.candidate_frame(_errs(_CLEAN, noise=0.2), "own_k")
+    assert set(frame["ceiling_diff"].to_list()) == {spread.CEILING_GAIN} == {0.0852}
+    assert {"season", "player_id", "diff"} <= set(frame.columns)
+
+
+def test_a_candidate_worse_in_every_season_is_removed_by_the_gate_and_never_adopted():
+    runs = spread.gate_runs(_errs(_CLEAN, noise=0.2))
+    assert runs["usage"].verdict[0] == "REMOVE"
+    assert "usage: REMOVE" in spread.verdict(_errs(_CLEAN, noise=0.2))[1]
+
+
+def test_the_gate_reports_both_candidates_with_their_own_verdicts():
+    _, text = spread.verdict(_errs(_CLEAN, noise=0.2))
+    assert "own_k" in text and "usage" in text and "mean gain" in text
 
 
 def test_no_held_out_season_reports_nothing_measured():
     winner, text = spread.verdict(pl.DataFrame(schema={"season": pl.Int32}))
     assert winner == "positional" and "nothing measured" in text
+
+
+def test_the_published_run_prints_stage_2_and_the_stamps_and_writes_one_entry_per_candidate():
+    ledger = Ledger(path=None)
+    runs = spread.gate_runs(_errs(_CLEAN, noise=0.2), publish=True, seasons=SEASONS,
+                            ledger=ledger)
+    text = "\n".join(runs["own_k"].lines)
+    assert "MDE at 80% power" in text and "ceiling (" in text
+    assert "data:" in text and "board:" in text and "commit:" in text
+    assert [(e.name, e.recipe) for e in ledger._entries] == [
+        ("player_spread", "candidate=own_k,seasons=2021+2022+2023+2024+2025"),
+        ("player_spread", "candidate=usage,seasons=2021+2022+2023+2024+2025")]
 
 
 def test_the_walk_forward_fits_only_on_earlier_seasons():
@@ -414,7 +483,9 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
               [(s, w, "P1", "WR", 0.5) for s in (2023, 2024, 2025) for w in range(1, 13)]),
           ff_playerids=_XW)
     out = tmp_path / "s.parquet"
-    assert spread.main(["--fit", "--seasons", "2023,2024,2025", "--out", str(out)]) == 0
+    assert spread.main(["--fit", "--seasons", "2023,2024,2025", "--out", str(out)],
+                       ledger=Ledger(path=None)) == 0
     text = capsys.readouterr().out
     assert "consecutive-season pairs" in text
+    assert "own_k against positional" in text and "commit:" in text
     assert out.exists()
