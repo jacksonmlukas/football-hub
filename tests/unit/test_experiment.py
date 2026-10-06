@@ -396,9 +396,11 @@ def test_the_mean_weights_each_cluster_equally_not_each_row():
 def test_the_units_are_sorted_by_label_whatever_order_the_grouping_returns(monkeypatch):
     """Rule 18, planted. `_cluster_units` sorts by label so one order feeds every bootstrap. A
     `group_by` hands its groups back in no promised order, so the test does not hope polars
-    happens to disagree: it makes `group_by` return its groups *reversed*, which is the unsorted
-    read at its worst. With the sort the units still come back in label order; delete the sort
-    and they come back reversed, and this goes red."""
+    happens to disagree: it makes `group_by` return its groups in *descending* label order, a
+    fixed unsorted read. (Reversing whatever polars returned was not enough: polars hands these
+    three labels back already descending about one run in five, and the reverse of that is label
+    order, so the deleted sort passed. #426 review, 2026-10-06.) With the sort the units come back
+    in label order; delete the sort and they come back descending, every run, and this goes red."""
     original = pl.DataFrame.group_by
 
     class _Reversed:
@@ -406,7 +408,8 @@ def test_the_units_are_sorted_by_label_whatever_order_the_grouping_returns(monke
             self._grouped = grouped
 
         def agg(self, *args, **kwargs):
-            return self._grouped.agg(*args, **kwargs).reverse()
+            out = self._grouped.agg(*args, **kwargs)
+            return out.sort(out.columns[0], descending=True)
 
     monkeypatch.setattr(pl.DataFrame, "group_by",
                         lambda self, *a, **k: _Reversed(original(self, *a, **k)))
