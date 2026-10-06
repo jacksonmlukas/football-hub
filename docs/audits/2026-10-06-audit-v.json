@@ -1,0 +1,227 @@
+{
+  "schema": {
+    "name": "football-hub-audit",
+    "version": "6.0",
+    "supersedes": "football-hub-audit v5.0 (2026-09-20 method audit); audit IV (v4.0, 2026-09-16) is the plan this one re-plans",
+    "generated": "2026-10-06",
+    "generated_by": "Audit V (#325), Claude Opus 5.5, a fresh session with no build context: it read the tree, the published artifacts and the tracker, and has no memory of writing any of it. Read-only on src/ and tests/. The only writes to the repository are this file and its index entry in docs/audits/README.md. Tracker writes are listed under `tracker_writes`.",
+    "subject_repo": "~/code/football-hub",
+    "head_commit": "3992074",
+    "head_commit_note": "slate: week 5 refresh (2026-10-06T17:57Z, workflow_dispatch). The worktree was 0 commits behind main when the run started (`git rev-list --count HEAD..main` = 0).",
+    "relation_to_rule_1": "Per #325's body, docs/method.md rule 1 does not bind an audit. That is by kind, not by oversight: an audit adopts and rejects nothing. Every ticket filed here carries its own pre-registration or drafted decision.",
+    "findings_series": "V"
+  },
+  "precondition": {
+    "as_restated": "#325, ADOPTED 2026-10-06: Audit V runs only when `python -m hub.audit_ready --season 2026 --week 4` (#417) exits 0 against the published site/data.",
+    "command": "uv run python -m hub.audit_ready --season 2026 --week 4",
+    "output": "audit_ready: READY for 2026 week 4: every predicted game is scored",
+    "exit_code": 0,
+    "run_at": "2026-10-06, on head 3992074, before any other read",
+    "corroboration": "track_record.json season 2026: n_scored 64, which equals 16 predicted games in each of weeks 1-4. The 10-03 refusal's figure was 49."
+  },
+  "artifacts_read": {
+    "method": "Every artifact was read through short scripts that print summaries: shapes, per-field sets, and per-commit diffs via `git show <commit>:<path>`. Nothing under data/ was printed. One CLI was run against the primary checkout's store, and it prints a summary (`hub.models.starter_change --events --study`).",
+    "slate_commits": {
+      "4e5cfd9": "2026-09-19 week 2 (Sat)",
+      "7eff105": "2026-09-23 week 3 (Wed)",
+      "32b0c82": "2026-09-26 week 3 (Sat)",
+      "9e93bd2": "2026-09-30 week 4 (Wed)",
+      "909ad76": "2026-10-03 week 4 (Sat)",
+      "3992074": "2026-10-06 week 5 (Tue, dispatch) -- the run that scored week 4"
+    },
+    "files": [
+      "site/data/preds_2026_wk03.json and preds_2026_wk04.json (predictions and prices: model, price_source, priced_at, fit_through_week, at every slate commit above)",
+      "site/data/preds_2026_wk05.json",
+      "site/data/track_record.json (per-season n_scored, log loss, Brier, bins, scored_game_ids, embedded interval_coverage)",
+      "site/data/roster.json (the lineup call: rows, withheld, start/sit, gain)",
+      "site/data/survivor.json",
+      "site/data/manifest.json",
+      "site/data/cfbd.json, site/data/bigten.json",
+      "state/interval_coverage.json (gate output: the coverage gate's measurement)",
+      "state/gate-width.json (gate output: the #362 ledger, five entries, last on 2026-09-21)",
+      "state/odds.json"
+    ],
+    "runs": [
+      "slate.yml: 24 runs listed. Every `refresh` job since 2026-09-19 succeeded. The other runs are odds-only `poll_odds` jobs. The 2026-10-05 failure is a `poll_odds` job that was cancelled with no steps.",
+      "bigten.yml: 25 of 25 runs failed, 2026-09-12 to 2026-10-04. Log of run 37184922700 read for the cause."
+    ],
+    "weekly_report": "Not read. The weekly report is the pool's (`hub.season.pool`). It needs `data/processed/pool_state.json`, which has never been written in this checkout (#379), and our 2026 entry was eliminated in week 1. It has no 2026 subject.",
+    "not_read": [
+      "The ESPN roster payload behind V1. A summary read of data/processed/roster.parquet was refused by the session's permission system, and was not retried by other means. V1's mechanism is therefore inferred from code and the published artifact, and is labelled as inferred.",
+      "Local data/ stores beyond the study CLI. They are stale on this machine: nfeloqb cache 2026-09-13, schedules 2026-09-07, lines archive last poll 2026-09-06. Nothing in-season was read from them."
+    ]
+  },
+  "measurements_by_auditor": [
+    {
+      "id": "M-V1",
+      "title": "The lineup call across six slate runs",
+      "verified": "direct (published artifact)",
+      "table": [
+        {"commit": "4e5cfd9", "date": "09-19", "withheld": 1, "gain": 7.94, "start": 3, "sit": 3},
+        {"commit": "7eff105", "date": "09-23", "withheld": 4, "gain": 19.37, "start": 3, "sit": 3},
+        {"commit": "32b0c82", "date": "09-26", "withheld": 15, "gain": null, "start": 0, "sit": 0},
+        {"commit": "9e93bd2", "date": "09-30", "withheld": 15, "gain": null, "start": 0, "sit": 0},
+        {"commit": "909ad76", "date": "10-03", "withheld": 14, "gain": null, "start": 0, "sit": 0},
+        {"commit": "3992074", "date": "10-06", "withheld": 14, "gain": null, "start": 0, "sit": 0}
+      ],
+      "pattern": "From 32b0c82 on, every ACTIVE projected player has available=false and missing_games equal to the weeks played (2 on 09-26, 4 on 10-06). The one exception is the IR player (missing 0, can_start false). manifest.json marks roster ok on every run."
+    },
+    {
+      "id": "M-V2",
+      "title": "The line-move study on the primary checkout's store, 2026-10-06",
+      "verified": "direct (CLI, exit 0)",
+      "command": "uv run python -m hub.models.starter_change --events --study --season 2026 --store <primary>/data/processed --cache <primary>/data/raw/nfeloqb",
+      "output_excerpt": [
+        "2026: 0 changes on 0 event games, gap sd nan value units (n=0); 13 offseason change(s) not events",
+        "archive: 272 games, 8 polls, 2026-08-25 to 2026-09-06, 1 of 5 season(s) asked for have polls (2026)",
+        "2022-2026: 212 event games; 212 censored (no snapshot before the change could be known: 212 never polled at all, 0 polled only after the change), 0 with a frozen and a pre-game one",
+        "coefficient: not established -- no uncensored event game with a frozen and a pre-game price in the 2022-2026 archive",
+        "NOT-RUNNABLE"
+      ],
+      "inputs": "nfeloqb is pinned to source commit 2c95e5fc (PINNED_SHA256 set 2026-09-13, #271), and the local cache file is dated 2026-09-13. Whether any 2026 in-season starter change has happened is NOT established by this audit, because neither input can show one."
+    },
+    {
+      "id": "M-V3",
+      "title": "The game-level record, 2026 weeks 1-4",
+      "verified": "direct (published artifact)",
+      "values": {"n_scored": 64, "log_loss": 0.6494, "brier": 0.229, "model": "market_baseline", "price_source": "live on every row", "n_preregistered": 0, "is_backtest": true},
+      "trajectory": "Log loss over the 2026 rows scored so far: 0.603 (n=17) -> 0.633 (32) -> 0.647 (33) -> 0.652 (48) -> 0.657 (49) -> 0.649 (64). These are market prices and carry no claim of edge.",
+      "freeze_at_kickoff": "Visible in priced_at. preds_2026_wk03 at 32b0c82 carries both 2026-09-23 and 2026-09-26 prices, and the games already under way kept the earlier one."
+    },
+    {
+      "id": "M-V4",
+      "title": "The coverage measurement is a constant",
+      "verified": "direct (git diff 909ad76..3992074, state/interval_coverage.json)",
+      "values": {"n": 16061, "gate_n": 10536, "gate_cov80": 0.7737281700835231, "verdict": "COVERS", "seasons": "2021-2025 (coverage.SEASONS)"},
+      "diff": "generated_at and four sd_ratio values, changed in the 16th significant digit. Identical gate figures on every run from 2026-09-13 to 2026-10-06."
+    },
+    {
+      "id": "M-V5",
+      "title": "Big Ten capture",
+      "verified": "direct (gh run list, run log 37184922700)",
+      "values": {"runs": 25, "failed": 25, "first": "2026-09-12", "last": "2026-10-04", "deadlines_missed": "20 at the last run", "cause_1": "CFB_WEEK_ONE empty in the job env", "cause_2": "`git add archive ...` -> fatal: pathspec 'archive' did not match any files (exit 128)"},
+      "published": "site/data/bigten.json generated_at 2026-09-11, still reading 'before the first deadline (2026-09-17)'."
+    }
+  ],
+  "phase_1_state": {
+    "question": "#325: did the quarterback disposition land before the poller's first in-season starter change, as the plan required?",
+    "answer": "Yes. Milestone 'Phase 1' closed 2026-09-17, with every ticket landed (#300-#304, #324, #328-#331) before week 2. The disposition is tied to the line-move coefficient with verdict() tested before the first row.",
+    "but": "The instrument has no 2026 input (V2, #420): its events come from a file pinned on 2026-09-13, and its frozen prices from an archive whose last poll was 2026-09-06 (#383). The study's NOT-RUNNABLE at this trigger is the state #325 said to expect. It is not a finding about Phase 1 either way. The finding is that, as built, it can never become runnable in 2026, and that its run line reports '2026: 0 changes' as if that were a fact about the season."
+  },
+  "new_findings": [
+    {
+      "id": "V1",
+      "ticket": 419,
+      "severity": "high",
+      "blocking": false,
+      "verified": "direct for the symptom; mechanism inferred from code (payload not read)",
+      "title": "The lineup call has been blank since 2026-09-26: availability reads every healthy player as missing the weeks already played",
+      "evidence": [
+        "M-V1.",
+        "roster.availability treats the roster's largest total/avg ratio as a full slate. All four availability tests build the preseason shape only (every ratio a full season).",
+        "The page renders 'Withheld as unavailable: <14 names> ... short of a full slate' and 'No lineup could be filled'. The manifest says ok."
+      ],
+      "why_it_matters": "It is the one in-season decision the page makes for the operator, and it has been absent for weeks 3 (Saturday), 4 and 5 with no stale flag."
+    },
+    {
+      "id": "V2",
+      "ticket": 420,
+      "severity": "high (for Phase 1)",
+      "blocking": false,
+      "verified": "direct (M-V2; nfeloqb.PINNED_SHA256; docs/qb-adjustment.md documents the pin's effect on the live path only)",
+      "title": "Phase 1's line-move study cannot see a 2026 event, and prints 0 as a fact"
+    },
+    {
+      "id": "V3",
+      "ticket": 421,
+      "severity": "decision",
+      "blocking": false,
+      "verified": "n/a (drafted decision, PROPOSED, ready-for-human)",
+      "title": "Where the line-move study's in-season starter changes come from: (A) advance the pin, (B) play-by-play, (C) wait for 2027. Recommendation (B). blocked_by #383.",
+      "note": "One option considered and dropped before filing: reconstructing frozen prices from the git history of published preds. A week's preds file is first committed on the Wednesday after the previous week's games, which is too late for a price that must predate the change."
+    },
+    {
+      "id": "V4",
+      "ticket": 422,
+      "severity": "medium",
+      "blocking": false,
+      "verified": "direct (publish.track_record writes n_preregistered=0 as a literal; M-V3)",
+      "title": "The track record calls 64 slate-committed 2026 predictions a backtest",
+      "consequence": "#354's 'retire loudly' flip has no producer."
+    },
+    {
+      "id": "V5",
+      "ticket": 423,
+      "severity": "medium",
+      "blocking": false,
+      "verified": "direct (M-V4; coverage.SEASONS; slate.yml step order)",
+      "title": "The published coverage verdict is a fixed 2021-2025 backtest re-measured twice a week, and 2026's played weeks never enter",
+      "also": "The track record embeds the previous run's measurement, and float noise puts a change to state/ into every slate commit."
+    },
+    {
+      "id": "V6",
+      "ticket": 424,
+      "severity": "medium",
+      "blocking": false,
+      "verified": "direct (M-V5)",
+      "title": "The Big Ten capture has failed 25 of 25 runs and missed 20+ deadlines: CFB_WEEK_ONE was never set, and the miss record dies at git add",
+      "also": "cfbd.json has read fetched:false on every slate since 2026-09-09. The operator step (setting the repository variable) is the maintainer's."
+    }
+  ],
+  "blocking": {
+    "tagged": [],
+    "reasoning": "#326's hold rule exists to stop a modelling change landing on an unsound basis. S1 was blocking because the gate that decides modelling changes was wrong. None of V1-V6 changes how a Phase 2 or Phase 3 change would be decided. They are repairs to what the page publishes now, and none of them is behind the freeze. Holding #326 for them would delay nothing they need. #326 is not commented on and not closed: lifting it is the maintainer's act."
+  },
+  "overlap_with_tracker": {
+    "note": "Seen in the artifacts and already on the tracker. Not re-filed.",
+    "items": [
+      {"saw": "survivor.json publishes a week-5 pick, survival 0.73 and spent [BAL, JAX, KC, SF] for an entry eliminated in week 1, labelled unread-state", "already": "#379 (dormant), #380 (closed: the eliminated-entry branch exists but needs pool state), #404"},
+      {"saw": "No in-season odds capture has persisted", "already": "#383 (now carrying the cost; commented 2026-10-06)"},
+      {"saw": "draft_board is still published as ok in October", "already": "#348"},
+      {"saw": "The gate's power at k=4 is contested (0.0007 vs 0.19 weekly)", "already": "#388, #418"},
+      {"saw": "Week 4 is scored but the instrument check has not run", "already": "#389 (blocked_by #383)"},
+      {"saw": "A game window ran with no watchdog check", "already": "#416"}
+    ]
+  },
+  "what_is_strong": [
+    "The precondition is a check, not a sentence. hub.audit_ready answered the exact question this audit is gated on, reads only site/data, and its 64-of-64 answer agrees with track_record's own per-season count. Its refusal branch was not exercised by this audit.",
+    "Freeze-at-kickoff on published prices works in production: the games already played in week 3 kept their 09-23 price on the 09-26 run.",
+    "The slate's refresh job has not failed since 2026-09-16: every refresh since (five scheduled, one dispatch) published a slate commit. The 10-06 run's steps were read: contract subset before the commit, coverage gate after it, all green.",
+    "survivor.json labels its plan unread-state, so it does not claim to be the pool's record (#380).",
+    "The lock() refusal itself is correct: with the pool emptied, it names the withheld players and publishes no comparison rather than a wrong one. V1 is upstream of it."
+  ],
+  "replan": {
+    "principle": "Re-planned on what the artifacts show. The 2026 page's only in-season decision (the lineup call) is broken, the money layer has no 2026 subject, and Phase 2's subject reaches no published artifact. So the repairs go first, Phase 3 shrinks, and Phase 2 is ordered behind the gate-rule decision its verdicts depend on.",
+    "milestones": {
+      "Audit V — in-season repairs (new, #7)": "V1-V6 (#419-#424). Not behind #326, because none of them is a modelling change. Ordered ahead of Phase 2.",
+      "Phase 2 (#2)": "Gains #316, #336, #337, #338 from the unplaced bucket. Order: #343 -> #311 (its re-runs feed #381's release condition, so it is not behind #381); #418 -> #381 (edge added); the five arms weekly_gate reads (#305, #306, #308, #314, #316) blocked_by #381 (edges added); then bugs #307, #312, #313, #315; then structural arms #306 -> #337/#338, #309 -> #310, #314; then consensus-priced features #308, #305, #316; #346 after #343. Stays undated.",
+      "Phase 3 (#3)": "Re-scoped. #317, #318, #319 moved out to the dormant milestone. Remaining order: #320 -> #321 -> #323; #249 now also blocked_by #383; #327 -> #322 last (their consumer is the 2027 draft).",
+      "Dormant — the 2027 pool (#379) (new, #8)": "#317, #318, #319, #332, #334, all already blocked_by #379.",
+      "Audit IV — unplaced (#4)": "Emptied and closed."
+    },
+    "edges_added": [
+      "#421 blocked_by #383",
+      "#249 blocked_by #383",
+      "#381 blocked_by #418",
+      "#305, #306, #308, #314, #316 blocked_by #381"
+    ],
+    "what_would_reverse_it": "If #418 reconciles the k=4 power to something a Phase 2 arm could clear, the five #381 edges are order rather than necessity, and the maintainer may drop them when lifting #326."
+  },
+  "tracker_writes": [
+    "Issues filed: #419 (V1), #420 (V2), #421 (V3), #422 (V4), #423 (V5), #424 (V6)",
+    "Milestones created: #7 'Audit V — in-season repairs', #8 'Dormant — the 2027 pool (#379)'",
+    "Milestones edited (appended, prior text kept): #2 Phase 2, #3 Phase 3, #4 Audit IV — unplaced (then closed)",
+    "Issues moved: #317 #318 #319 #332 #334 -> #8; #316 #336 #337 #338 -> #2",
+    "Edges: see replan.edges_added",
+    "Comments: #383 (the cost of the open decision), #354 (V4 is its producer), #325 (this run)",
+    "Not touched: #326 (not commented on, not closed)"
+  ],
+  "artifact_source": {
+    "audit_v": "this file",
+    "method_audit_2026_09_20": "https://claude.ai/code/artifact/ce5bffc0-020c-4285-af70-7438d3dcd12e",
+    "audit_iv": "https://claude.ai/artifact/P6ZkPrmBNb7JqPm9xHa1C2",
+    "audit_iii": "https://claude.ai/code/artifact/812c68a2-de63-451c-8942-685edfeadd54",
+    "audit_ii": "https://claude.ai/code/artifact/b331060c-621f-464f-b64c-6128e3e4f10c",
+    "audit_i": "https://claude.ai/code/artifact/778ddcad-61b1-4d75-9033-a918d4bec473"
+  }
+}
