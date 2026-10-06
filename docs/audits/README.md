@@ -78,7 +78,14 @@ Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as 
   and power 0.032 at delta = 2.0 pts/team-game for the draft gate; 0.019 and 0.19 at
   delta = 0.3 pts/team-week for the weekly gate. Power fell rather than rose, and the mechanism is
   that one tie abstains from both halves -- a single unresolvable season forces SHOW whatever the
-  effect elsewhere. The draft gate's ADOPT branch is a named rule-16 exemption. `docs/gate-power.md`
+  effect elsewhere. **Restated 2026-10-06 (#418, rule 13):** those four figures are reproduced to
+  the digit by the script today, and are the combined rule's power under a stand-in within-season
+  spread (cluster SD set equal to the between-season `s`; a season SE of 0.060 on the weekly path
+  against the recorded 0.41-0.55). At the gates' own recorded precision the same harness gives
+  null 0.0001 / power 0.0008 (weekly, delta = 0.3) and null 0.0014 / power 0.0075 (draft,
+  delta = 2.0). The mechanism and the exemption stand, more strongly; see `docs/gate-power.md`
+  (*What contradicts a published figure*) for the attribution. The draft gate's ADOPT branch is
+  a named rule-16 exemption. `docs/gate-power.md`
   and ADR-0019 carry both the numbers and the mechanism.
 - **Championship equity, restated 2026-09-21 (rule 13):** the audit reasons throughout from
   ADR-0009's REMOVE as this repo's headline removal. Under the rule S1 and #335 produced, the
