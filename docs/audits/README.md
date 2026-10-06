@@ -100,3 +100,20 @@ Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as 
   pre-registered and adoptable as unwired exhibits, and their stage 2 is blocked on
   snapshot-archive depth rather than on the freeze -- which makes #383 upstream of either rating
   gate ever being decidable.
+
+## 2026-10-06 Audit V
+
+`2026-10-06-audit-v.json` is **Audit V (#325)**: the post-freeze read of the week-3/4 artifacts.
+It ran after `uv run python -m hub.audit_ready --season 2026 --week 4` printed *"READY for 2026
+week 4: every predicted game is scored"* and exited 0, on head `3992074`. Findings V1–V6 are
+#419–#424, all in the milestone "Audit V — in-season repairs". None is tagged `blocking`.
+The re-plan lives in the tracker, not here: Phase 2 gains the four unplaced Phase-2-shaped
+tickets and an edge order through #418 → #381. Phase 3 hands its survivor steps to "Dormant —
+the 2027 pool (#379)". "Audit IV — unplaced" is emptied and closed. Known limits of the read,
+stated in the file rather than discovered later:
+
+- V1's mechanism is inferred from code. A summary read of the ESPN-derived roster parquet was
+  refused by the session's permission system. The symptom is read directly off the published
+  `roster.json` at six slate commits.
+- Whether any 2026 in-season starter change has happened is not established. V2 is that the
+  study's inputs cannot show one either way.
