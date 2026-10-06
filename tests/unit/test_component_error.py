@@ -280,3 +280,21 @@ def test_grouping_splits_the_account_without_breaking_it():
 def test_an_empty_frame_decomposes_into_nothing():
     got = CE.attribution(pl.DataFrame({"season": []}))
     assert got.height == 0
+
+
+def test_the_report_prints_the_held_out_table_and_the_gate_sentence_when_given_them():
+    rounds = [{"season": 2024.0, "raw_mae": 3.5, "cal_mae": 3.4, "raw_rmse": 6.6, "cal_rmse": 6.5}]
+    text = "\n".join(CE.report(CE.scorecard(_paired()), rounds, "ADOPT: taken"))
+    assert "held out" in text and "2024" in text and "ADOPT: taken" in text
+
+
+def test_a_component_with_no_spread_or_no_column_is_left_out_of_both_arms():
+    """`_fits` skips a constant projection and `_points_error` skips what has no fit or no
+    column, so the raw and calibrated errors are always summed over the same components."""
+    frame = _paired(n=50).drop("p_receptions", "a_receptions").with_columns(
+        pl.lit(1.0).alias("p_rushing_tds"))
+    fits = CE._fits(frame)
+    assert "receptions" not in fits and "rushing_tds" not in fits
+    assert "receiving_yards" in fits
+    err = CE._points_error(frame, dict.fromkeys(CE.COMPONENTS, (1.0, 0.0)))
+    assert err.shape == (50,) and (err >= 0).all()
