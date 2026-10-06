@@ -53,6 +53,18 @@ INJURED_RESERVE = "IR"
 NOT_STARTING = frozenset({BENCH, INJURED_RESERVE})
 
 
+def _standard(games: pl.Series) -> float | None:
+    """The games-count most rated players share: the mode of the rounded ratios, the larger
+    one on a tie. None when ESPN priced nobody."""
+    seen = games.drop_nulls().drop_nans().round(0)
+    if seen.is_empty():
+        return None
+    counts = seen.value_counts()               # columns: the values, then "count"
+    value, count = counts.columns[0], counts.columns[1]
+    top = counts.sort([count, value], descending=True).row(0)
+    return float(cast(float, top[0]))
+
+
 def availability(espn: pl.DataFrame) -> pl.DataFrame:
     """How many games ESPN expects each player to play, and whether that is all of them.
 
@@ -62,9 +74,15 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     his `projected_total_points` divided by his `projected_avg_points` is 11.0 where every
     other player on the roster is 17.0.
 
-    So availability is read off the ratio rather than the designation. `full` is the largest
-    implied count on the roster rather than a hard-coded 17, because the number of games in a
-    season is ESPN's to change and not ours to restate.
+    So availability is read off the ratio rather than the designation. `full` is the count
+    most of the roster shares rather than a hard-coded 17, because the number of games in a
+    season is ESPN's to change and not ours to restate -- and **the most common one, not the
+    largest**, because ESPN's total covers the games still to play for a player and the whole
+    season for a team defence. From the first week played, one D/ST on the roster was the
+    largest ratio and everyone else read as missing the weeks already played: 14 of 17
+    withheld from 2026-09-26, no lineup, and a manifest that said `ok` (issue #419). A tie goes
+    to the larger count, which is the old behaviour and keeps a two-player roster reading its
+    short player as short.
 
     This is a **season-level** signal and says nothing about *which* games are missed. It is
     therefore only safe in one direction: a player short of a full slate is not
@@ -77,11 +95,11 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     games = pl.when(pl.col("espn_avg") > 0).then(
         pl.col("espn_total") / pl.col("espn_avg")).otherwise(None)
     out = espn.with_columns(games.alias("espn_games"))
-    full = out["espn_games"].max()
+    full = _standard(out["espn_games"])
     if full is None:                      # ESPN published no projections at all
         return out.with_columns(pl.lit(0, dtype=pl.Int64).alias("missing_games"),
                                 pl.lit(True).alias("available"))
-    missing = (pl.lit(float(cast(float, full))) - pl.col("espn_games")).round(0)
+    missing = (pl.lit(full) - pl.col("espn_games")).round(0)
     return out.with_columns(
         missing.fill_null(0.0).cast(pl.Int64).alias("missing_games")
     ).with_columns((pl.col("missing_games") < 1).alias("available"))
@@ -237,6 +255,35 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
                 sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
 
 
+def degenerate(df: pl.DataFrame, lk: Lock) -> str | None:
+    """Why this lineup call should not be published as a healthy one, or None.
+
+    `lock` refuses honestly -- it withholds, and names nobody when it cannot fill a lineup -- but
+    a refusal nobody hears is the same as no refusal. From 2026-09-26 it withheld 14 of 17
+    players for four slate runs and the manifest said `ok` throughout (issue #419).
+
+    Degenerate is: players the league would let start, projected, of whom either no lineup could
+    be filled, or more than half were withheld as unavailable. Injured reserve is not counted --
+    those players were never candidates -- and a roster with no candidates at all has nothing to
+    call, which is a different problem from a call that failed.
+    """
+    cols = df.columns
+    cands = df.filter(pl.col("projected") & (pl.col("can_start") if "can_start" in cols
+                                             else pl.lit(True)))
+    n = cands.height
+    if n == 0:
+        return None
+    held = len(set(lk.withheld) & set(cands["player"]))
+    # Something has to have been withheld: a roster too thin to fill a lineup with nobody held
+    # back is a small roster, not a fault in how availability read it.
+    if lk.gain is None and held:
+        return (f"no lineup could be filled: {held} of {n} projected players withheld as "
+                f"unavailable")
+    if held * 2 > n:
+        return f"{held} of {n} projected players withheld as unavailable"
+    return None
+
+
 def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cover - network
     """The current roster, projected. Reads ESPN and the board; neither is cached here."""
     from hub.draft.board import readable
@@ -317,6 +364,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
             print(f"    START  {p}")
         for p in lk.bench:
             print(f"    SIT    {p}")
+    if bad := degenerate(df, lk):
+        print(f"\n  WARNING: not a lineup call -- {bad}", file=sys.stderr)
     if lk.withheld:
         # Per player, because the two reasons are different and the note below is only true
         # of one of them. Printing it over an IR-ed player would explain the wrong thing.
