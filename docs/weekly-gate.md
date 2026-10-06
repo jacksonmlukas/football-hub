@@ -82,7 +82,7 @@ drafting and returns −0.304 on three consecutive runs. Sorted in the gate rath
 ## What this leaves
 
 The Weekly projection beats the flat projection on accuracy — **+0.074 MAE at 5.9 se, 4/4
-seasons** — and loses the lineup decision on frozen rosters, and loses it much harder when
+seasons** *(Restated 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled; on the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4 -- [weekly-projection.md](weekly-projection.md).)* — and loses the lineup decision on frozen rosters, and loses it much harder when
 asked to evaluate unfamiliar players. The pre-registered verdict on the pre-registered gate
 stands: **SHOW, NEVER RANK ON**.
 

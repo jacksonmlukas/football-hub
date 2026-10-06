@@ -540,7 +540,7 @@ board sorted the same command returns **−0.304**, CI [−1.043, +0.415], 2 of 
 unchanged. [weekly-gate.md](weekly-gate.md) is the record.)*
 
 A projection that beats the flat one this repo ships by +0.074 MAE at 5.9 se, losing the lineup
-decision to a free public ranking. A lineup is a max over a roster, so most projection error
+decision to a free public ranking. *(Restated 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled; on the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4 -- [weekly-projection.md](weekly-projection.md).)* A lineup is a max over a roster, so most projection error
 never reaches the decision -- which is what [ADR-0015](adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)
 predicted when it made this the primary gate, and what
 [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) records.

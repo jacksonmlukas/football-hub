@@ -442,7 +442,7 @@ Written before measuring. Scored 2026-08-28, after.
 
 | # | prediction | outcome |
 |---|---|---|
-| 1 | the model beats the **flat** incumbent by a wide margin; nearly free | **right, eventually.** +0.074 MAE at 5.9 se, 4/4 seasons — but only after two bugs. The first run said −0.0025 at 1/4 |
+| 1 | the model beats the **flat** incumbent by a wide margin; nearly free | **right, eventually.** +0.074 MAE at 5.9 se, 4/4 seasons — but only after two bugs. The first run said −0.0025 at 1/4 *(Restated 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled; on the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4 -- [weekly-projection.md](weekly-projection.md).)* |
 | 2 | it does **not** beat weekly consensus on market-derived features alone | **right in substance.** The implied total and own spread each cleared alone and both died in the joint screen, being one signal in two hats |
 | 3 | if anything survives it is the snap trend and the injury designation | **right, and understated.** Both survive, and so do the prior TD rate and defence-vs-position |
 | 4 | week-over-week TD rate comes back null | **wrong, informatively.** −0.040 at 5.5 se in every season — `component-projection.md`'s "regress touchdowns" arriving at weekly grain by an independent route |

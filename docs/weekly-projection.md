@@ -124,6 +124,71 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > here: its gate scored the fitted arm at −0.304 and is re-run once after this lands, by the
 > maintainer, to record what the arm now scores — the number is not on this page.
 
+> **Restated 2026-10-06 — #311: the standard error is over the season, not the row
+> ([method.md](method.md) rule 13; every figure above stands as published, prior values kept).**
+> `paired_gain` computed `se` and `t` over ~12,000 correlated player-weeks. It now computes them
+> over cluster-mean units — here the four held-out seasons — with a bootstrap standard error,
+> the construction `summarise` uses for every gate that goes through `run_gate`. So the `t`
+> below is a *t on 3 degrees of freedom*, `mean` is the mean of the four season gains
+> (equal-season weighted), and the every-season half counts wins, ties and losses under #335's
+> within-season rule (`within` = week). Re-run today with `uv run python -m hub.models.weekly
+> --fit`, the same panel as the table (11,667 held-out player-weeks, 2022–25). The week and
+> both-together arms were removed in #248, so they were rebuilt from the module as it stood the
+> commit before, on today's panel; the rebuild arm is the same arm in both modules (checked: it
+> reproduces to the digit).
+>
+> | contrast | published, row-pooled | the same rows today, row-pooled | **now, season as the unit** |
+> |---|---|---|---|
+> | the week — weekly vs `f = 1` | +0.0103 MAE, +2.8 se, 4/4 | +0.0103, +2.8 se | **+0.0103, se 0.0019, t = +5.52 (p 0.012), won 4 of 4** |
+> | the rebuild — `f = 1` vs flat | +0.0634, +5.3 se, 4/4 | +0.0646, +5.4 se | **+0.0646, se 0.0129, t = +5.00 (p 0.015), won 4 of 4** |
+> | both together — weekly vs flat | +0.0737, +5.9 se, 4/4 | +0.0749, +6.0 se | **+0.0749, se 0.0121, t = +6.18 (p 0.009), won 4 of 4** |
+>
+> (The rebuild's season gains are +0.0941, +0.0498, +0.0297, +0.0850; the published and
+> same-rows-today columns differ by data that moved since 2026-08-27, not by the code.)
+>
+> **No verdict changes, and this page's own sentence stands: all three clear both halves.** Each
+> t exceeds 3.18, the 95% critical value on 3 df, and no season ties inside its own
+> within-week noise. What changes is what the number is: "+5.3 se" was never a t on three
+> degrees of freedom, and reading it as a significance level was on the wrong basis, even
+> though the right basis lands on the same side. **The rebuild's t is +5.0 where the page said
+> +5.3, and it is p = 0.015 rather than "more than five sigma".** Two cautions travel with it.
+> *The bootstrap is the more generous of the two readings at four seasons:* the closed-form
+> `sd(means)/sqrt(4)` gives t = +4.29 (p 0.023) on the same gains, because a percentile
+> bootstrap of four units under-covers (`experiment.SMALL_CLUSTERS`); both clear p < 0.05.
+> *And the panel matters more than the statistic.* The 2026-09-19 comment on #311 read the
+> rebuild on the **unfiltered** Panel (every player-week it builds: 4,928 / 5,034 / 4,343 /
+> 5,147 held-out rows) rather than on the rows `--fit` keeps (`FANTASY_WEEKS`, `games_before ≥
+> MIN_GAMES_BEFORE`: 2,836 / 2,920 / 2,921 / 2,990), and there the season gains are +0.0944 /
+> +0.0528 / **+0.0000** / +0.1020: mean +0.0623, closed-form t = +2.66 on 3 df (p 0.076),
+> bootstrap t = +3.10 (p 0.053), and **2024 a tie** (won 3, tied 1) — the case where the
+> corrected bar does *not* clear. This page's published figure is the filtered panel's, and that
+> is the panel the table above restates; the unfiltered figure is recorded here, not
+> substituted, and **which panel is Gate A's is a question for the maintainer** (the arms
+> differ on the early-season and thin-history rows `--fit` excludes, which is where 2024's
+> rebuild gain vanishes). On the filtered panel the figure clears; on the unfiltered one it
+> does not.
+>
+> **Also restated, in the same terms.** The `+0.074` that
+> [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) and `CONTEXT.md`
+> cite is the third row: +0.0749, t = +6.18 on 3 df. Under `--expected`
+> ([expected-and-routes.md](expected-and-routes.md), same filtered panel) the week is +0.0129
+> (t = +6.16, p 0.009), the rebuild +0.0589 (**t = +2.73, p 0.072**, won 4 of 4) and both
+> together +0.0718 (t = +3.51, p 0.039): the expected-priors rebuild no longer clears p < 0.05,
+> which that page reports as a null anyway. **Not restated, and why:** the first-version figures
+> in *Three specification errors* (−0.009 at 1/4 seasons, +0.0067 at 1.5 se) are measurements
+> of projections with defects that no longer exist and cannot be re-run; they stay on their
+> original, row-pooled basis and are flagged as such. The screen's partial-r tables, the
+> touchdown, turnover and efficiency figures, the CRPS table and *Gate B*'s −0.684 → −0.304 are
+> not `paired_gain` statistics (the lineup gate reads `run_gate`, which has clustered on the
+> season since #45) and do not move.
+>
+> **#302's quarterback log-loss diagnostic, named as #311 requires.** Re-run today
+> (`uv run python -m hub.models.starter_change --gate`): **NOT-RUNNABLE, no figure to restate**
+> — the snapshot archive holds polls for 1 of the 5 seasons asked for (2026), so 0 event games
+> are scored over 0 event-seasons against a minimum of 3 (the pilot's 29 event-seasons needed at
+> 80% power is unchanged). It reads `run_gate` → `summarise(cluster=SEASON_CLUSTER)` and never
+> `paired_gain`, so #311 cannot move it; under #300 it licenses nothing either way.
+
 ## Three specification errors, and what each was worth
 
 Recorded because each one inverted or hid the result, and because the first two were found by

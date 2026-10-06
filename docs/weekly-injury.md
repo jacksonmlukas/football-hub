@@ -81,6 +81,23 @@ That second candidate was declared before being run, and it clears:
 Better in **all three** held-out seasons. Paired across 3,687 held-out player-weeks it beats
 `out_zero` by **0.170 MAE at 3.8 se**.
 
+> **Restated 2026-10-06 — #311: the standard error is over the season, not the row
+> ([method.md](method.md) rule 13; the figure above stands as published).** 3.8 se is a t over
+> 3,687 correlated player-weeks. On the three held-out seasons as the unit (`paired_gain`'s
+> cluster, rebuilt from `walk_forward`'s own fits, the same rows): **+0.1700 MAE (equal-season
+> weighted; row-weighted +0.1691), t = +4.19 on 2 df, p = 0.053**, se 0.0406; the seasons are
+> +0.2325, +0.0727, +0.2047. **Better in all three seasons stands** on the sign
+> (3 of 3 with the declared no-op within-season unit; won 2, tied 1 once the player is the
+> repeated-measure unit, 2024's +0.0727 sitting inside its own within-season noise). **What
+> changes is the pooled half:** 4.19 sits just under the 4.30 a 95% t interval needs on 2 df,
+> so the interval contains zero by a hair. `retention` was *adopted* on `injury.verdict`'s
+> argmin, which read no standard error at all — that decision is #360's and is not moved by this
+> restatement — but the page's "at 3.8 se" no longer describes the evidence: it is a
+> three-season result at p = 0.053, and under the corrected bar
+> ([ADR-0019](adr/0019-a-gate-requires-every-season.md), the S1 t interval) it would not clear
+> the pooled half. Named, not resolved: the figure moves, the module's decision stays frozen
+> behind #360.
+
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
 The table above prices a designation by `report_status` × `practice_status` and ignores

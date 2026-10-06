@@ -333,47 +333,114 @@ def test_the_split_is_written_once():
 
 def test_gain_is_positive_when_the_arm_has_the_smaller_error():
     """Sign convention: the difference is base minus arm, so positive favours the arm."""
-    g = experiment.paired_gain([3.0, 3.0, 3.0], [1.0, 1.0, 1.0],
+    g = experiment.paired_gain([3.0, 3.0, 3.0], [1.0, 1.0, 1.0], cluster=[0, 0, 0],
                                season=[0, 0, 0], within=[0, 1, 2])
     assert g.mean == 2.0
     assert g.wins == 1
 
 
-def test_the_standard_error_is_of_the_difference():
-    """Hand-computed: d = [1, 2, 3], sd(ddof=1) = 1, se = 1/sqrt(3). `season`/`within` do not
-    enter `se`/`t` -- those are pooled over every row, unaffected by the every-season half."""
+def test_cluster_has_no_default():
+    """The whole of #311: a caller that does not say what one independent observation is gets a
+    `TypeError`, not the row. `summarise`'s `cluster` and `run_gate`'s are held the same way."""
+    import inspect
+
+    assert inspect.signature(experiment.paired_gain).parameters["cluster"].default is (
+        inspect.Parameter.empty)
+    with pytest.raises(TypeError, match="cluster"):
+        experiment.paired_gain([2.0, 4.0], [1.0, 2.0], season=[0, 0],  # type: ignore[call-arg]
+                               within=[0, 1])
+
+
+def test_the_standard_error_is_the_bootstraps_over_cluster_means():
+    """Hand-computable: three seasons of one row each, gains 1, 2, 3. The units are the three
+    cluster means, `mean` is their mean, and `se` is the percentile bootstrap's standard
+    deviation of the mean of three draws with replacement -- `sqrt(var_pop / 3)` in the
+    limit, 0.4714, and not the closed-form 0.5774 of `sd(ddof=1) / sqrt(3)`."""
     import math
-    g = experiment.paired_gain([2.0, 4.0, 6.0], [1.0, 2.0, 3.0],
-                               season=[0, 0, 0], within=[0, 1, 2])
+    g = experiment.paired_gain([2.0, 4.0, 6.0], [1.0, 2.0, 3.0], cluster=[0, 1, 2],
+                               season=[0, 1, 2], within=[0, 0, 0], bootstrap=200_000)
     assert g.mean == 2.0
-    assert math.isclose(g.se, 1.0 / math.sqrt(3))
-    assert math.isclose(g.t, 2.0 / (1.0 / math.sqrt(3)))
+    assert math.isclose(g.se, math.sqrt((2.0 / 3.0) / 3.0), rel_tol=0.01)
+    assert math.isclose(g.t, g.mean / g.se)
+
+
+def test_the_row_is_not_the_unit():
+    """The incident (`docs/method.md` rule 3, #311): 400 rows in each of four seasons, every row's
+    difference noise around a season effect that the seasons do not agree on. Over rows the
+    standard error is tiny and the t large; over the season there are four units, and the
+    scatter between them is what the t has to clear."""
+    rng = np.random.default_rng(0)
+    n = 400
+    season = np.repeat([0, 1, 2, 3], n)
+    effect = np.array([0.2, 0.5, -0.1, 0.4])[season]
+    base = np.zeros(4 * n)
+    arm = -(effect + rng.normal(0.0, 1.0, 4 * n))
+    by_row = experiment.paired_gain(base, arm, cluster=np.arange(4 * n), season=season,
+                                    within=np.arange(4 * n))
+    by_season = experiment.paired_gain(base, arm, cluster=season, season=season,
+                                       within=np.arange(4 * n))
+    assert by_row.t > 3.0 * by_season.t, (by_row.t, by_season.t)
+    assert by_season.mean == pytest.approx(float(np.mean(
+        [-arm[season == k].mean() for k in range(4)])))
+
+
+def test_the_mean_weights_each_cluster_equally_not_each_row():
+    """An unbalanced panel: one season of 1 row at gain 3, one of 9 rows at gain 1. The row mean
+    is 1.2; the mean of the cluster means is 2.0, which is what #311 changes every quoted
+    'mean gain' to."""
+    g = experiment.paired_gain([3.0] + [1.0] * 9, [0.0] * 10, cluster=[0] + [1] * 9,
+                               season=[0] + [1] * 9, within=list(range(10)))
+    assert g.mean == pytest.approx(2.0)
+
+
+def test_the_units_are_read_in_one_order(monkeypatch):
+    """`_cluster_units` sorts by label, so the same rows in any order draw the same resample:
+    the permuted frame returns the identical `se`. A planted unsorted read is what the
+    docstring says moved a tie's SE before #311."""
+    rng = np.random.default_rng(3)
+    base, arm = rng.normal(0, 1, 60), rng.normal(0, 1, 60)
+    cluster = np.repeat(np.arange(6), 10)
+    perm = rng.permutation(60)
+    a = experiment.paired_gain(base, arm, cluster=cluster, season=cluster, within=cluster,
+                               bootstrap=500)
+    b = experiment.paired_gain(base[perm], arm[perm], cluster=cluster[perm], season=cluster[perm],
+                               within=cluster[perm], bootstrap=500)
+    assert (a.mean, a.se, a.t) == pytest.approx((b.mean, b.se, b.t))
 
 
 def test_a_constant_difference_is_not_significant_by_division_by_zero():
-    """Zero variance means zero standard error, and a t of 0 rather than an infinity."""
-    g = experiment.paired_gain([2.0, 2.0], [1.0, 1.0], season=[0, 0], within=[0, 1])
+    """Zero spread between units means zero standard error, and a t of 0 rather than an
+    infinity."""
+    g = experiment.paired_gain([2.0, 2.0], [1.0, 1.0], cluster=[0, 1], season=[0, 0],
+                               within=[0, 1])
     assert g.se == 0.0 and g.t == 0.0
 
 
-def test_one_observation_cannot_clear_a_significance_bar():
-    g = experiment.paired_gain([5.0], [1.0], season=[0], within=[0])
+def test_one_cluster_cannot_clear_a_significance_bar():
+    """Fewer than two units have no spread to read a significance from, however many rows
+    they hold."""
+    g = experiment.paired_gain([5.0], [1.0], cluster=[0], season=[0], within=[0])
     assert g.se == 0.0 and g.t == 0.0
+    h = experiment.paired_gain([5.0, 4.0, 6.0], [1.0, 1.0, 1.0], cluster=[0, 0, 0],
+                               season=[0, 0, 0], within=[0, 1, 2])
+    assert h.se == 0.0 and h.t == 0.0 and h.mean == 4.0
 
 
 def test_seasons_won_counts_seasons_not_observations():
     """The every-season half of the gate. Two of three seasons won is not all three. Below
     `TIE_MIN_CLUSTERS` every season falls back to the sign of its own mean gain."""
+    season = [0, 0, 0, 1, 1, 1, 2, 2, 2]
     g = experiment.paired_gain(
         [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0],
         [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 3.0],
-        season=[0, 0, 0, 1, 1, 1, 2, 2, 2], within=[0, 1, 2, 0, 1, 2, 0, 1, 2])
+        cluster=season, season=season, within=[0, 1, 2, 0, 1, 2, 0, 1, 2])
     assert (g.wins, g.seasons) == (2, 3)
     assert (g.ties, g.losses) == (0, 1)
 
 
 def test_a_tie_is_not_a_win():
-    g = experiment.paired_gain([1.0, 1.0], [1.0, 1.0], season=[0, 0], within=[0, 1])
+    g = experiment.paired_gain([1.0, 1.0], [1.0, 1.0], cluster=[0, 0], season=[0, 0],
+                               within=[0, 1])
     assert g.wins == 0
     assert g.ties == 1
 
@@ -389,8 +456,8 @@ def test_paired_gain_reads_a_season_s_own_within_cluster_se_above_the_floor():
     within = np.repeat(np.arange(20), 5)
     diff = 0.02 + rng.normal(0.0, 1.0, 100)
     base, arm = np.zeros(100), -diff
-    g = experiment.paired_gain(base, arm, season=[0] * 100, within=within.tolist(),
-                               bootstrap=500, seed=0)
+    g = experiment.paired_gain(base, arm, cluster=[0] * 100, season=[0] * 100,
+                               within=within.tolist(), bootstrap=500, seed=0)
     assert g.seasons == 1
     assert (g.wins, g.ties, g.losses) == (0, 1, 0), (
         "a season this noisy should tie, not win, once enough clusters exist to say so")

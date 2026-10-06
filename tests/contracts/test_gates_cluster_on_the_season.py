@@ -128,3 +128,88 @@ def test_season_cluster_is_declared_once():
                 if value == tuple(SEASON_CLUSTER):
                     offenders.append(f"{path.relative_to(root)}:{t.id}")
     assert not offenders, f"a second season cluster: {offenders}"
+
+
+# --- paired_gain, the other function (#311) ----------------------------------------------
+#
+# `run_gate` takes `cluster` with no default and the AST walk above reads it off every call.
+# `paired_gain` is the function the gates that bypass `run_gate` read their significance half
+# from, and until #311 it computed its standard error over the row with no cluster argument at
+# all -- the one function in the repo making the claim "each row is independent", which is the
+# claim this file exists to keep any harness from making. #343 routed `spread` and `injury`
+# through `Harness.run` (which reads `SEASON_CLUSTER` itself), so `hub.models.weekly`'s
+# diagnostic contrast is the one call site left today; this holds every call site there is
+# or will be, not the one that happens to exist.
+
+
+def paired_gain_violations(source: str, where: str) -> list[str]:
+    """Every `paired_gain(...)` call in `source` that does not name the season as its cluster.
+
+    The argument is a row-parallel array, not a column name, so the call has to *read the season
+    column*: `cluster=errs["season"].to_numpy()` is held, `cluster=errs["week"]`, no `cluster`
+    at all, and a bare name this test cannot resolve are each a violation -- the last on the
+    same principle the `run_gate` walk applies to its own unresolvable argument.
+    """
+    import ast
+
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (func.id if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute) else None)
+        if name != "paired_gain":
+            continue
+        cluster = next((kw.value for kw in node.keywords if kw.arg == "cluster"), None)
+        if cluster is None:
+            out.append(f"{where}:{node.lineno} calls paired_gain with no cluster")
+            continue
+        reads = {c.value for c in ast.walk(cluster) if isinstance(c, ast.Constant)}
+        names = {n.id for n in ast.walk(cluster) if isinstance(n, ast.Name)}
+        if "season" not in reads and "SEASON_CLUSTER" not in names:
+            out.append(f"{where}:{node.lineno} passes a cluster that does not read the season: "
+                       f"{ast.unparse(cluster)}")
+    return out
+
+
+def test_cluster_has_no_default_on_every_function_that_decides():
+    """A signature check, not a convention: omit it and Python says so."""
+    import inspect
+
+    from hub.models import experiment
+
+    for fn in (experiment.paired_gain, experiment.run_gate, experiment.gate):
+        param = inspect.signature(fn).parameters["cluster"]
+        assert param.default is inspect.Parameter.empty, (
+            f"{fn.__name__}'s cluster has a default ({param.default!r}); what one independent "
+            f"observation is has no safe one")
+
+
+def test_every_paired_gain_call_in_the_source_passes_the_season():
+    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
+    calls, bad = 0, []
+    for path in sorted(root.rglob("*.py")):
+        if path == root / "models" / "experiment.py":
+            continue
+        src = path.read_text()
+        calls += src.count("paired_gain(")
+        bad += paired_gain_violations(src, str(path.relative_to(root)))
+    assert calls, "no paired_gain call found -- the walk is vacuous, or the function is gone"
+    assert not bad, f"paired_gain without the season as its cluster: {bad}"
+
+
+def test_the_paired_gain_walk_sees_the_plants():
+    """Rule 18: the check can fail. Three planted calls -- no cluster, the week, the row -- are
+    each reported, and the two forms the repo uses are not."""
+    held = ('g = paired_gain(a, b, cluster=errs["season"].to_numpy(), '
+            'season=errs["season"], within=errs["week"])\n'
+            'h = experiment.paired_gain(a, b, cluster=SEASON_CLUSTER, season=s, within=w)\n')
+    assert paired_gain_violations(held, "ok.py") == []
+    assert len(paired_gain_violations(
+        "paired_gain(a, b, season=s, within=w)\n", "none.py")) == 1
+    assert len(paired_gain_violations(
+        'paired_gain(a, b, cluster=errs["week"].to_numpy(), season=s, within=w)\n',
+        "week.py")) == 1
+    assert len(paired_gain_violations(
+        "paired_gain(a, b, cluster=np.arange(len(a)), season=s, within=w)\n", "row.py")) == 1

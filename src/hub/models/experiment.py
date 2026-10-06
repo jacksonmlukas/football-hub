@@ -557,21 +557,33 @@ def _bootstrap_se(units: npt.NDArray[np.float64], *, bootstrap: int, seed: int) 
     return float(draws.std(ddof=1)) if len(draws) > 1 else float("nan")
 
 
+def _cluster_units(diff: npt.NDArray[np.float64], within: npt.NDArray) -> npt.NDArray[np.float64]:
+    """One mean of `diff` per label in `within`, **sorted by label**.
+
+    The sort is the same fix `summarise` and `per_season` already carry (issue #45's second
+    bug): a `group_by` without `maintain_order` hands the groups back in an order that can vary
+    run to run, and a bootstrap indexes into that order positionally, so the same seed over a
+    permutation of the units draws a different resample. `_cluster_se` read the units unsorted
+    until #311, which moved a tie disposition's SE at the noise floor and nothing else; every
+    caller of this function now reads one order.
+    """
+    keys = pl.DataFrame({"within": within, "diff": diff})
+    return (keys.group_by("within").agg(pl.col("diff").mean().alias("_u"))
+                .sort("within")["_u"].to_numpy().astype(float))
+
+
 def _cluster_se(diff: npt.NDArray[np.float64], within: npt.NDArray, *,
                 bootstrap: int, seed: int) -> tuple[float, int]:
     """Bootstrap SE of `diff`'s mean, clustered on `within`, over these rows alone.
 
-    Used by `paired_gain`, whose `within` is a row-parallel array of labels rather than a
-    DataFrame's column names (`per_season` groups its own frame directly and calls
-    `_bootstrap_se` on the result) -- one computation for "how much does this season's own
-    repeated-measure unit say the mean could have moved", read the two ways each caller's
-    data already arrives in. Returns `(se, m)`: `m` is the cluster count the SE was computed
-    over, and is always returned even when `se` comes back NaN, because `TIE_MIN_CLUSTERS`
-    reads `m` on its own.
+    Used by `paired_gain`, whose `within` and `cluster` are row-parallel arrays of labels rather
+    than a DataFrame's column names (`per_season` groups its own frame directly and calls
+    `_bootstrap_se` on the result) -- one computation for "how much does this repeated-measure
+    unit say the mean could have moved", read the two ways each caller's data already arrives
+    in. Returns `(se, m)`: `m` is the cluster count the SE was computed over, and is always
+    returned even when `se` comes back NaN, because `TIE_MIN_CLUSTERS` reads `m` on its own.
     """
-    keys = pl.DataFrame({"within": within, "diff": diff})
-    units = (keys.group_by("within").agg(pl.col("diff").mean().alias("_u"))
-                 ["_u"].to_numpy().astype(float))
+    units = _cluster_units(diff, within)
     return _bootstrap_se(units, bootstrap=bootstrap, seed=seed), len(units)
 
 
@@ -599,7 +611,7 @@ def _disposition(gain: float, se: float, m: int) -> str:
 
 
 def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
-                season: npt.ArrayLike, within: npt.ArrayLike,
+                cluster: npt.ArrayLike, season: npt.ArrayLike, within: npt.ArrayLike,
                 bootstrap: int = BOOTSTRAP, seed: int = 0) -> Gain:
     """Mean paired gain of `arm` over `base`, its standard error, t, and the every-season half.
 
@@ -611,19 +623,41 @@ def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
     which is why the standard error is of the difference rather than of either arm, and why
     the two arms' seasonal composition cannot contaminate the comparison.
 
-    **`season` and `within`, since #335, row-parallel to `base_err`/`arm_err` and required --
-    no default, for the reason `summarise`'s `cluster` and `per_season`'s `within` have none:
-    guessing the repeated-measure unit is the mistake, not a convenience a caller can skip.**
-    `season` is which held-out season a row belongs to; `within` is that gate's own
-    repeated-measure unit inside a season (`docs/method.md` rule 3), the same one its
-    `run_gate` call declares. A season's disposition is `_disposition` on its own mean gain
-    and its own within-season bootstrap SE (`_cluster_se`) -- exactly what `per_season`
-    computes for the gates that go through `gate`, so a verdict that bypasses `gate` (this
-    module's three callers) reads the seasons the same way one that does not would.
+    **`cluster`, since #311, row-parallel to `base_err`/`arm_err` and required -- no default,
+    for the reason `summarise`'s `cluster` and `run_gate`'s have none: what one independent
+    observation is has no safe default, and this function's own pooled `se` was the one that
+    guessed the row.** Its `mean`, `se` and `t` are computed over **cluster-mean units**: the
+    rows are grouped by `cluster`, each group's `diff` is averaged to one number, and `mean` is
+    the mean of those -- *equal-cluster weighted*, so on an unbalanced panel a season with more
+    player-weeks no longer pulls the pooled mean toward its own gain -- while `se` is the
+    percentile bootstrap's standard deviation over those units (`_bootstrap_se`), exactly what
+    `summarise` computes for the gates that go through `run_gate`, and `t = mean / se`. Option
+    (a) of `docs/gate-power.md`'s #311 pre-registration, ADOPTED on #311: one mechanism for every
+    clustered SE in this module, not a closed-form `sd(means) / sqrt(k)` beside it. A caller
+    passes the season (`SEASON_CLUSTER`, the same claim every gate makes about the data);
+    `tests/contracts/test_gates_cluster_on_the_season.py` reads the argument off every call.
+
+    **Degenerate clusterings keep the old convention rather than inventing a statistic.** Fewer
+    than two clusters, or a bootstrap SE that is zero or not finite, returns `se = 0.0` and
+    `t = 0.0` -- "no spread to read a significance from", never an infinity -- exactly what a
+    constant difference or one observation returned when the SE was the row-pooled one.
+
+    **`season` and `within`, since #335, row-parallel and required -- no default, for the same
+    reason.** `season` is which held-out season a row belongs to; `within` is that gate's own
+    repeated-measure unit inside a season (`docs/method.md` rule 3). A season's disposition is
+    `_disposition` on its own mean gain and its own within-season bootstrap SE (`_cluster_se`)
+    -- exactly what `per_season` computes for the gates that go through `gate`. The three
+    labels are independent: `cluster` is the unit of the pooled `se`/`t`, `within` the unit of
+    the every-season tie test, `season` what the every-season half counts.
     """
     d = np.asarray(base_err, dtype=float) - np.asarray(arm_err, dtype=float)
-    se = float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1 else 0.0
-    t = float(d.mean() / se) if se > 0 else 0.0
+    units = _cluster_units(d, np.asarray(cluster))
+    mean = float(units.mean()) if len(units) else 0.0
+    se = _bootstrap_se(units, bootstrap=bootstrap, seed=seed)
+    if not (math.isfinite(se) and se > 0.0):
+        se, t = 0.0, 0.0
+    else:
+        t = mean / se
     season_arr = np.asarray(season)
     within_arr = np.asarray(within)
     wins = ties = losses = 0
@@ -636,8 +670,8 @@ def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
         wins += disp == "win"
         ties += disp == "tie"
         losses += disp == "loss"
-    return Gain(float(d.mean()) if len(d) else 0.0, se, t, wins, wins + ties + losses,
-               ties, losses)
+    return Gain(mean, se, t, wins, wins + ties + losses, ties, losses)
+
 
 def _stats(season: int) -> pl.DataFrame:                        # pragma: no cover - network
     from hub.fetch import nflverse

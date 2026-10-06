@@ -35,6 +35,19 @@ Zero is in the grid on purpose, so declining to shrink is a candidate the fit ca
 picked it, four times out of four, and on accuracy the shrunk arm is **−0.0042 MAE at −0.8 se,
 2/4 seasons** — a null, very slightly the wrong way.
 
+> **Restated 2026-10-06 — #311: the standard error is over the season, not the row
+> ([method.md](method.md) rule 13; the figure above stands as published).** The accuracy
+> contrast was a `paired_gain` statistic over the row. The shrunk arm no longer exists in
+> `hub.models.weekly` (#248), so it was rebuilt from the module as it stood the commit before, on
+> today's `--fit` panel: the `mae`-fitted shrinkage against the unshrunk weekly arm, fitted on
+> strictly earlier seasons. It approximates the published run rather than reproducing it
+> (`volume_k` 0.0 in all four seasons, as published; `eff_k` 128 / 32 / 8 / 8 against 128 / 16 /
+> 8 / 8; data has moved since 2026-08-28): **−0.0058 MAE at −1.0 se row-pooled; on the season
+> as the unit −0.0061, se 0.0066, t = −0.92 on 3 df (p 0.43), won 2, lost 2 of 4 seasons** (per
+> season −0.0262, −0.0102, +0.0047, +0.0074). A null either way and very slightly the wrong way,
+> as published; the verdict does not move. The weekly-gate figures on this page (−0.304,
+> −3.790 and the rest) read `run_gate` and are not `paired_gain` statistics.
+
 **The objective was blind to the defect.** The projection is *already unbiased at every sample
 size* — −0.36 points at one game played, −0.09 at nine or more. Mean absolute error has nothing
 to reward, because the winner's curse does not live in the mean. It lives at the **maximum over
