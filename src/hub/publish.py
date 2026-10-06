@@ -591,10 +591,16 @@ def _by_season(df: pl.DataFrame) -> list[tuple[int | None, pl.DataFrame]]:
 
 
 def _curve(season: int | None, df: pl.DataFrame, n_bins: int) -> dict[str, Any]:
-    """One season's calibration: what it scored, and how well."""
+    """One season's calibration: what it scored, and how well.
+
+    `scored_game_ids` is the per-game half of `n_scored` (#417): the join `_finished` makes
+    is otherwise discarded, and without it nothing reading the published record can say
+    *which* games were scored, only how many. Additive -- no number beside it moves.
+    """
     probs = df["home_win_prob"].to_list()
     won = df["home_won"].to_list()
     return {"season": season, "n_scored": df.height,
+            "scored_game_ids": sorted(set(df["game_id"].to_list())),
             "log_loss": log_loss(probs, won), "brier": brier(probs, won),
             "bins": reliability(df, n_bins)}
 

@@ -36,6 +36,7 @@ from __future__ import annotations
 FLOOR: dict[str, int] = {
     "src/hub/__init__.py": 0,
     "src/hub/atomic.py": 0,
+    "src/hub/audit_ready.py": 0,
     "src/hub/cli.py": 0,
     "src/hub/config.py": 0,
     "src/hub/contracts.py": 0,
