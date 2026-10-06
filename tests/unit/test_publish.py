@@ -2023,3 +2023,84 @@ def test_the_track_record_names_the_games_it_scored(site, base):
     assert isinstance(got, dict)
     (season,) = got["seasons"]
     assert season["n_scored"] == 1 and season["scored_game_ids"] == ["g1"]
+
+
+# --- a lineup call the roster cannot stand behind is not a healthy one (issue #419) ---------
+#
+# `lock` refuses to name a lineup when withholding leaves too few players, and that refusal was
+# published as an ordinary `ok` artifact for four slate runs: 14 of 17 withheld, `gain` null, the
+# manifest silent. CLAUDE.md's rule is to serve last-good and say so.
+
+_SQUAD_ROWS = [("Love", "QB"), ("A", "RB"), ("B", "RB"), ("C", "RB"), ("D", "WR"),
+               ("E", "WR"), ("F", "WR"), ("G", "WR"), ("H", "TE"), ("I", "TE")]
+
+
+def _called(tmp_path, *, withheld, name="roster.parquet"):
+    """The ten-player roster with the named players read as missing games."""
+    rows = [(n, pos, 10.0) for n, pos in _SQUAD_ROWS]
+    df = _roster_frame(rows).with_columns(
+        pl.when(pl.col("player").is_in(list(withheld))).then(False).otherwise(True)
+        .alias("available"))
+    src = tmp_path / name
+    df.write_parquet(src)
+    return src
+
+
+def test_a_healthy_call_is_published_fresh(site, tmp_path):
+    got = publish.roster(out=site, path=_called(tmp_path, withheld={"I"}))
+    assert isinstance(got, dict)
+    assert got["gain"] is not None
+
+
+def test_a_roster_mostly_withheld_is_stale_with_a_reason_not_ok(site, tmp_path):
+    """The degenerate-withholding control. Nine of ten withheld; the manifest has to say so."""
+    src = _called(tmp_path, withheld={n for n, _ in _SQUAD_ROWS[1:]})
+    got = publish.roster(out=site, path=src)
+    assert isinstance(got, publish.Kept), "a call built on a withheld roster published as fresh"
+    assert "withheld" in got.why
+    entry = publish.Artifact("roster", lambda: got, "no roster yet").record(site)
+    assert entry["stale"] is True and "withheld" in entry["reason"]
+
+
+def test_a_majority_withheld_with_a_lineup_still_fillable_is_also_flagged(site, tmp_path):
+    """Not only the no-lineup branch: a lineup priced from a minority of the roster is not a
+    call either."""
+    pos = ["QB"] * 3 + ["RB"] * 6 + ["WR"] * 7 + ["TE"] * 4
+    names = [f"P{i}" for i in range(len(pos))]
+    left = {"P0", "P3", "P4", "P9", "P10", "P11", "P16", "P17", "P18"}   # exactly fills it
+    df = _roster_frame([(n, p, 10.0) for n, p in zip(names, pos, strict=True)]).with_columns(
+        pl.col("player").is_in(sorted(left)).alias("available"))
+    src = tmp_path / "big.parquet"
+    df.write_parquet(src)
+    from hub.season.roster import lock
+    assert lock(pl.read_parquet(src)).gain is not None, "the fixture must still fill a lineup"
+    assert isinstance(publish.roster(out=site, path=src), publish.Kept)
+
+
+def test_a_degenerate_call_leaves_the_last_good_one_published(site, tmp_path):
+    good = publish.roster(out=site, path=_called(tmp_path, withheld=set()))
+    assert isinstance(good, dict)
+    before = (site / "roster.json").read_text()
+    bad = _called(tmp_path, withheld={n for n, _ in _SQUAD_ROWS[1:]}, name="bad.parquet")
+    got = publish.roster(out=site, path=bad)
+    assert isinstance(got, publish.Kept) and "keeping" in got.why
+    assert (site / "roster.json").read_text() == before
+
+
+def test_a_degenerate_call_with_nothing_published_still_leaves_the_page_a_file(site, tmp_path):
+    src = _called(tmp_path, withheld={n for n, _ in _SQUAD_ROWS[1:]})
+    assert isinstance(publish.roster(out=site, path=src), publish.Kept)
+    assert json.loads((site / "roster.json").read_text())["degraded"]
+
+
+def test_a_minority_withheld_that_leaves_no_lineup_is_flagged_and_a_thin_roster_is_not(
+        site, tmp_path):
+    """The two halves of the no-lineup branch. Both tight ends withheld leaves no TE to fill
+    the slot -- 2 of 10, well short of a majority, and still no call. A roster that is merely too
+    small to fill a lineup, with nobody held back, is not a fault in availability."""
+    src = _called(tmp_path, withheld={"H", "I"})
+    got = publish.roster(out=site, path=src)
+    assert isinstance(got, publish.Kept) and "no lineup" in got.why
+    thin = tmp_path / "thin.parquet"
+    _roster_frame([("Chase", "WR", 19.7)]).write_parquet(thin)
+    assert isinstance(publish.roster(out=site / "other", path=thin), dict)
