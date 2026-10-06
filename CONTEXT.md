@@ -258,7 +258,8 @@ _Avoid_: validate, backtest — both hide which question is being asked.
 What one season says inside a **Gate**: a *win* (the challenger's gain clears that season's own
 within-season noise in its favour), a *loss* (it clears it against), or an **Abstention**. A Gate
 reads a verdict off its seasons' dispositions together with the pooled interval; every season
-has exactly one.
+has exactly one. A season with a win or a loss is **resolved**; a Gate with no resolved season
+can neither adopt nor remove.
 
 **Abstention**:
 A season whose paired gain does not clear that season's own within-season noise, so it votes
