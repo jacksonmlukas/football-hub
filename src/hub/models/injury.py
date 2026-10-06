@@ -238,8 +238,10 @@ CANDIDATES = ("baseline", "out_zero", "table", "retention")
 # converts the *rule* without pre-empting it.
 WITHIN: tuple[str, ...] = SEASON_CLUSTER
 
-# The declared ceiling arm (S6, #363), by name where it prints. Pre-registered at #343's
-# adoption, the `hub.models.margin.ceiling` analogue: per held-out season, a per-injury-type
+# The declared ceiling arm (S6, #363), by name where it prints. Pre-registered for *this*
+# comparison at #343's adoption (not the component calibration's, which was the lane's own
+# choice -- see `component_error.py`), the `hub.models.margin.ceiling` analogue: per held-out
+# season, a per-injury-type
 # retention multiplier fitted *in sample on that season's own designated rows* (unshrunk,
 # `k = 0`: the oracle that knows each type's realised multiplier) and scored on the same
 # rows. The ceiling gain is `retention`'s error minus this arm's, row by row. Flattered by

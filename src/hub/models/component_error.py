@@ -144,6 +144,11 @@ def calibrated(train: pl.DataFrame, test: pl.DataFrame) -> dict[str, float]:
 # repeated-measure unit is the player (`docs/method.md` rule 3).
 WITHIN: tuple[str, ...] = ("player_id",)
 
+# **Not pre-registered: the #343 lane's own choice.** `docs/gate-power.md`'s #343 section
+# pre-registers the spread and injury-type ceilings and says nothing about this comparison,
+# which joined the batch later (2026-10-02). This construction was declared in the commit that
+# routed it, before any run, and it is flagged for the maintainer to ratify or replace -- the
+# verdict does not depend on it (see the restatement in `docs/component-projection.md`).
 # The declared ceiling arm (S6, #363), by name where it prints: each component's calibration
 # line fitted *in sample on the held-out season's own pairs* and scored on them -- the
 # `coverage` and `injury` ceilings' construction, flattered by construction, which bounds what
