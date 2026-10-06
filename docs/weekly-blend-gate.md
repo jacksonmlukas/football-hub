@@ -468,7 +468,7 @@ sets a lineup. **The weekly programme is closed.**
 
 What it produced, in order: four screened signals, a component model that beats the flat
 projection by +0.074 MAE at 5.9 se, a lineup gate it loses, a winner's curse diagnosed at the
-waiver pool, and a market/Usage blend that was first measured beating a free public ranking
+waiver pool, *(Restated 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled; on the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4 -- [weekly-projection.md](weekly-projection.md).)* and a market/Usage blend that was first measured beating a free public ranking
 by +0.711 points a team-week -- and, on a reproducible board and the corrected scale, loses to
 it by **−1.004** (the primary; REMOVE, 0 of 4 seasons; restated twice above, on the restricted
 rows −0.825 after #248). Fifteen measurements, and consensus has won fourteen and a half.

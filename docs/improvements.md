@@ -932,6 +932,12 @@ a hash-ordered frame feeding a seeded computation. Clusters are sorted now, the 
 Nothing about the decision moves: same mean, same 3/4 seasons, same monotone decay, and an
 interval that contained zero still contains it.
 
+*(Restated 2026-10-06, #311, read not re-run: this is the frozen weekly gate, which reads
+`run_gate` and not `paired_gain`, so #311 does not move its statistic -- it has clustered on the
+season since #45. The "3/4 seasons" is the pre-#335 sign count. Under the tie-aware rule the same
+gate's recorded run (the ledger, 2026-09-21, #378) is **won 0, tied 1, lost 3 of 4**, 2024 a tie,
+verdict SHOW; [weekly-blend-gate.md](weekly-blend-gate.md).)*
+
 ### 21. The Artifact was a concept with no module — DONE 2026-09-04
 
 `CLAUDE.md`'s degradation rule — *a panel whose data is missing says so and keeps rendering* —
@@ -1001,6 +1007,11 @@ The aggregation is now `best_per_week`, split out so it can be tested without th
 **Verified unchanged.** The frozen weekly gate re-runs at **+0.215, CI [-0.242, +0.684]**,
 3/4 seasons -- `lead_days` feeds no statistic, only the report. 1,423 tests pass (+12),
 `config_digest` 281b7b7a and `fitted_digest` d5598b96 unmoved.
+
+*(Restated 2026-10-06, #311: a regression check of 2026-09-04 on the frozen weekly gate, which
+reads `run_gate`, not `paired_gain`; #311 moves none of its figures. "3/4 seasons" is the
+pre-#335 sign count and was later restated to the tie-aware record on the weekly gate's own
+pages. Not re-run: it is a historical regression check, and nothing cites it as current.)*
 
 **Looked at and cleared**, so the sweep is legible as more than four hits: every `zip()` in
 the tree already passes `strict=`; there are no mutable default arguments; the other four

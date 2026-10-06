@@ -1998,6 +1998,30 @@ would reopen this: a gate whose `k` sits at or below `SMALL_CLUSTERS` (8), where
 mechanisms can disagree enough to matter and `summarise` itself already prints the percentile
 bootstrap beside the t interval for exactly that reason.
 
+## Landed 2026-10-06 (#311): option (a), and what the restatement found
+
+**Adopted 2026-09-22 as option (a); landed 2026-10-06. This box is dated and the section above is
+not edited.** `paired_gain` takes `cluster` with no default; `mean` is the mean of the cluster
+means, `se` the percentile bootstrap's over them, `t = mean / se`. The restatement order above
+ran as listed, with these results:
+
+| step | what was restated | result |
+|---|---|---|
+| 2 | weekly rebuild vs flat, `docs/weekly-projection.md` (and the arms it published) | `--fit` panel: +0.0646, **t = +5.00 on 3 df (p 0.015)**, won 4 of 4 (published +5.3 se). The 2026-09-19 comment's t = 2.66 (p 0.076, closed form) is on the **unfiltered** Panel, where the bootstrap t is +3.10 (p 0.053) and 2024 ties; on the `--fit` panel the page publishes, the figure clears. The panel is the open question, recorded in the restatement box and not decided there. |
+| 3 | spread, `docs/player-spread.md` | done under #343, which routes it through `run_gate`: `own_k` **t = +4.93 on 4 df** (this section's hand arithmetic, closed form, said ≈ 4.4 against the published 1.8 se: the direction and the side of 2 are as pre-registered; the bootstrap reads 12% higher at k = 5), runnable (MDE +0.0048 < +0.0852), and **tied in all five seasons** |
+| 4 | injury type and retention, `docs/weekly-injury.md`, method.md, where-to-look-next | type adjustment: t = +1.69 on 2 df (p 0.23), SHOW (#343). **Retention vs out_zero, the adopted result: t = +4.19 on 2 df, p = 0.053** — the interval contains zero by a hair; the decision is #360's |
+| 5, 6 | `docs/improvements.md` ×2 (not `paired_gain` statistics: the frozen weekly gate), `docs/weekly-shrinkage.md` | improvements: not moved, read not re-run. Shrinkage: rebuilt, −0.0061 at t = −0.92 on 3 df |
+| 7 | #302's quarterback log-loss diagnostic | re-run: NOT-RUNNABLE, 0 of 5 seasons archived; reads `run_gate`, cannot move |
+
+**Two things the pre-registration did not anticipate.** (1) At k = 4 the bootstrap t overstates
+the closed-form t by about `sqrt(k/(k-1))` = 15% (a percentile bootstrap of four units has the
+variance of the mean of four draws, not the unbiased one): +5.00 against +4.29 on the same four
+gains. Option (a) was adopted knowing the two "can disagree enough to matter" below
+`SMALL_CLUSTERS`; this is the size of it at k = 4, and it is why the restatement boxes print the
+p for the t on k − 1 df rather than the t alone. (2) `_cluster_se` read its units unsorted (the
+issue-#45 order defect `summarise` and `per_season` already fixed); it is sorted now, which moves
+a season's tie-disposition SE at the noise floor and nothing else.
+
 # Pre-registered 2026-09-21 — PROPOSED: the screen's verdict reads the p it computes (#312)
 
 **Status: PROPOSED.** Drafted under the #326 freeze — writing the rule, not running it.
@@ -2471,6 +2495,31 @@ must not be left standing once the arithmetic above is known, and is named here 
 left implicit. If injury type's `k=3` keeps it NOT-RUNNABLE-adjacent or SHOW under the named
 rule-16 exemption above, `docs/weekly-injury.md` restates that as the reason, not as a fresh
 failure.
+
+## Landed 2026-10-06 (#343): what the three runs returned against what this section expected
+
+**Adopted 2026-09-22; code landed 2026-10-06; this box is dated and the section above is not
+edited.** Three gate runs, all on the day's data, ledger entries in `state/gate-width.json`
+(`player_spread` ×2, `injury_type`, `component_calibration`).
+
+| comparison | expected (above) | returned |
+|---|---|---|
+| spread `own_k` | KEEP; stage-2 line new; "if its restated significance holds and its MDE clears +0.0852, a live ADOPT candidate" | **SHOW.** t = +4.93 on 4 df, MDE +0.0048 < +0.0852: *live*, as flagged — and **tied in all five seasons** (won 0, tied 5, lost 0), which blocks ADOPT. The tie half, not the interval, holds it. |
+| spread `usage` | KEEP | **SHOW**; t = −0.07, MDE +0.0434 < +0.0852 |
+| injury type | KEEP; "rule-16 exemption for the ADOPT branch at k=3" | **SHOW**; t = +1.69 on 2 df, MDE +0.0974 < the declared in-sample ceiling +0.2641 — runnable, so the null is one the design could have contradicted |
+| component calibration (not in this section; added by the 2026-10-02 review) | — | **NOT-RUNNABLE**: MDE +0.170 against a +0.019 ceiling; was *NULL — not taken* |
+
+**Two declarations the section did not make, named.** (1) The component calibration's
+ceiling arm was not pre-registered here; it was declared in the #343 commit as the
+`injury`/`coverage` construction — each component's calibration fitted in sample on the
+held-out season — before any run, and the verdict does not depend on it: no calibration could
+earn the +0.170 the design would need. A least-squares line is not MAE-optimal, so the
+in-sample arm is a flattering-by-construction bound and not a tight one. (2) The calibration's
+within-season unit is `player_id`.
+
+**Rule 16, not run.** The CELLS arithmetic above was not executed as a script; the three
+real runs are the measurement. They do not change what the section said about injury type's
+ADOPT branch at k=3 (the observed record already closes it: 2 of 3 seasons won).
 
 # Pre-registered 2026-09-21 — PROPOSED: every dollar figure against the rivals' real ledgers
 (#317)

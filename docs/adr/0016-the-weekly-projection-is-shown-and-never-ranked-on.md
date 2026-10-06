@@ -49,7 +49,7 @@ is probably better, not that the two are equivalent.
 
 **The projection is measurably more accurate and still loses the decision.** Against the flat
 projection this repo ships today it gains **+0.074 MAE at 5.9 se in every held-out season**
-([weekly-projection.md](../weekly-projection.md)). Against consensus *rank* at setting a
+([weekly-projection.md](../weekly-projection.md)). *(Dated note, 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled. On the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4; the decision does not move. [weekly-projection.md](../weekly-projection.md) has the restatement.)* Against consensus *rank* at setting a
 lineup, it loses. A future reader looking at an accuracy number that good will wonder why
 nothing starts on it, and this is the answer.
 

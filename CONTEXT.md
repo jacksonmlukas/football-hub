@@ -319,7 +319,7 @@ Panel rather than a join.
 **Weekly projection**:
 A player's expected fantasy points for one *named* week, against a named opponent.
 Distinct from **xFP**, which is per-game and season-long. It is **shown and never ranked on**: measurably more
-accurate than the flat projection (+0.074 MAE at 5.9 se) and it still lost the lineup decision
+accurate than the flat projection (+0.074 MAE at 5.9 se) and it still lost the lineup decision *(Restated 2026-10-06, #311: row-pooled; on the four held-out seasons as the unit +0.0749, t = +6.18 on 3 df, won 4 of 4 -- [weekly-projection.md](docs/weekly-projection.md).)*
 to consensus rank at −0.304 points a team-week, see
 [ADR-0016](docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md).
 _Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question

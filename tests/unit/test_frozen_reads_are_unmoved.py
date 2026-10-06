@@ -26,14 +26,23 @@ import pytest
 
 from hub.fetch import nflverse as nv
 from hub.fetch.replay import Replay
+from hub.ledger import Ledger
 from hub.models import injury, margin, spread
 
 # Measured 2026-10-01 on the code that imported `nflreadpy` directly, before #398 routed it.
 EXPECTED = {
-    "spread": "b68617dd0a7e3896",
-    "injury": "88007c4ee7b94143",
+    "spread": "de9caff2d777c279",
+    "injury": "dccb614ad4ab1bd8",
     "margin": "9630773a09e5aa01",
 }
+# **Re-measured 2026-10-06 for #343, and why.** `spread` and `injury` were "b68617dd0a7e3896" and
+# "88007c4ee7b94143" over the whole of their output, which ended with the hand-built verdict
+# line. #343 replaces that line with the Gate's report and verdict, on purpose, so those two
+# digests cannot be reproduced and are not claimed to be. What replaces them is the *same*
+# digest function applied to the output *above* the Gate's report (`cut`, in `_observed`), and
+# it was measured on the pre-#343 code too -- its output cut where its verdict began -- and on the
+# routed code, and the two agree ("de9caff2d777c279", "dccb614ad4ab1bd8"): every number the
+# measurement printed and the frame `--out` wrote are what they were. `margin` is untouched.
 
 
 def _stats_frame(rows, extra: dict[str, list] | None = None) -> pl.DataFrame:
@@ -134,8 +143,16 @@ def _serve(tables: dict[str, pl.DataFrame], cache) -> None:
     nv.select(Replay(tables), cache=cache)
 
 
-def _observed(main, argv: list[str], out) -> str:
-    """The digest of everything a reader of this command sees."""
+def _observed(main, argv: list[str], out, cut: str | None = None) -> str:
+    """The digest of everything a reader of this command sees.
+
+    `cut` (#343): a marker line before which the digest reads and after which it does not. The
+    freeze (#326) lifted, and `spread` and `injury` now print the Gate's report -- stage 2, the
+    width review, the four stamps (a commit hash among them, which moves every commit) and a
+    verdict in the Gate's words -- after their measurement. Those lines are the change #343
+    makes on purpose, and are held by the modules' own tests; what this file holds is that
+    everything *above* them, every number the measurement prints, and the frame `--out` writes
+    are what they were. `None` digests everything, as `margin` still does."""
     buf = io.StringIO()
     with redirect_stdout(buf):
         code = main([*argv, "--out", str(out)])
@@ -146,6 +163,9 @@ def _observed(main, argv: list[str], out) -> str:
     written = pl.read_parquet(out).with_columns(pl.col(pl.Float64).round(9))
     # The command names the file it wrote, and a temporary path is a different string each run.
     said = buf.getvalue().replace(str(out), "<out>")
+    if cut is not None:
+        assert cut in said, f"the Gate's report is no longer where this file looks for it: {cut!r}"
+        said = said[:said.index(cut)]
     # Line order is not compared: `injury` prints a `group_by` in the order polars hands it
     # back, which varies run to run, and a control that flickers on its own is not one. Every
     # line, and so every number, still is.
@@ -154,18 +174,28 @@ def _observed(main, argv: list[str], out) -> str:
         ordered.encode() + b"\n" + nv.content_digest(written, ()).encode()).hexdigest()[:16]
 
 
+def _isolated(main):
+    """`main` with an in-memory Ledger: a test that runs a gate's CLI must not write
+    `state/gate-width.json`."""
+    return lambda argv: main(argv, ledger=Ledger(path=None))
+
+
+# (main, argv, fixture, the line the Gate's report begins at -- or None for a module that has
+# no such report). `margin` is unchanged by #343 and digests whole.
 CASES = {
-    "spread": (spread.main, ["--fit", "--seasons", "2023,2024,2025"], _spread_tables),
-    "injury": (injury.main, ["--fit", "--seasons", "2023,2024"], _injury_tables),
-    "margin": (margin.main, ["--fit", "--shape"], _margin_tables),
+    "spread": (_isolated(spread.main), ["--fit", "--seasons", "2023,2024,2025"], _spread_tables,
+               "\n  === own_k against positional ==="),
+    "injury": (_isolated(injury.main), ["--fit", "--seasons", "2023,2024"], _injury_tables,
+               "\n  === type-adjusted against retention ==="),
+    "margin": (margin.main, ["--fit", "--shape"], _margin_tables, None),
 }
 
 
 @pytest.mark.parametrize("module", sorted(CASES))
 def test_a_frozen_module_prints_the_numbers_it_printed_before_it_was_routed(module, tmp_path):
-    main, argv, tables = CASES[module]
+    main, argv, tables, cut = CASES[module]
     _serve(tables(), tmp_path / "raw")
-    got = _observed(main, argv, tmp_path / "out.parquet")
+    got = _observed(main, argv, tmp_path / "out.parquet", cut)
     assert got == EXPECTED[module], (
         f"{module} printed a different thing from the same fixture ({got}). Under #326 no "
         f"number may move; a routing change that moves one is a modelling change.")

@@ -237,6 +237,35 @@ so MAE is the loss that decides, and the bar is every held-out season.
 not pay for itself. Recorded so it is not rediscovered — and so that a future proposal to shrink
 components has to beat a measured null rather than an intuition.
 
+> **Restated 2026-10-06 — #343 re-takes this result through the Gate, and it is not a null
+> ([method.md](method.md) rule 13; the table above and its prior reading stand as published).**
+> `component_error.verdict` read the three per-season MAEs above and said *not taken* because
+> MAE improved in one season of three: a bare every-season check on three aggregates, with no
+> interval, no stage 2 and no stamps. It is the shared rule now, on the **894 held-out
+> player-seasons** those aggregates were averaged from (the per-season MAE gains reproduce the
+> table exactly: **+0.081, −0.034, −0.048**).
+>
+> | | published | now |
+> |---|---|---|
+> | verdict | **NULL — not taken** | **NOT-RUNNABLE** |
+> | pooled gain, MAE | mean −0.000 | −0.000 (95% t interval [−0.142, +0.142], 3 clusters) |
+> | seasons | MAE better in 1 of 3 | each season's gain is inside its own within-season noise (se 0.050 over ~300 players): **tied 3 of 3** |
+> | stage 2 | none | **MDE +0.170 points a game against a declared ceiling of +0.019** |
+>
+> **What this says and does not say.** The Gate cannot tell a real calibration gain from a
+> perfect one over three held-out seasons: the smallest effect it could resolve at 80% power is
+> nine times the *largest* gain a calibration fitted in sample on the held-out season itself
+> earns (that ceiling is declared in `component_error.CEILING_ARM`, in the #343 commit). "Not
+> runnable" is *not planned*, not *failed* — it is not the claim *"this correction does not pay
+> for itself"* the section above made, which no run of three seasons could have established.
+> **What stands:** over-dispersion in 28 of 28 pairs (descriptive, not a gate); RMSE improving
+> in 3 of 3 and MAE not clearly improving in any (the observed split, unchanged); and the
+> **decision** — the correction is not taken, because nothing establishes that it pays and the
+> default is the raw projection. **What does not:** quoting this as "a measured null" for a
+> future proposal to beat. The conclusion is robust to the ceiling's construction — no
+> calibration could earn the +0.170 the design would need — so a future proposal needs more
+> held-out seasons, not a better ceiling.
+
 ### What this does and does not license
 
 It does **not** license another run at a volume model. That was screened above and came back

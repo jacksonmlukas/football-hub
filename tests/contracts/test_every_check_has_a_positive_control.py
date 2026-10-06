@@ -102,17 +102,28 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_verdict_removes_when_the_interval_excludes_zero_negatively",
         "test_verdict_is_not_runnable_when_the_mde_exceeds_delta_and_names_the_events_needed",
     )),
+    # #343: these three read the shared Gate now (`Harness.decide`/`Harness.run`), so each
+    # control plants a case through that seam -- an adoptable candidate, a candidate that does
+    # not win a season, a design whose ceiling cannot be resolved (stage 2), and a frame that
+    # never measured a ceiling (S6) -- rather than a hand-built every-season-and-2-se number.
     "hub.models.component_error.verdict": ("tests/unit/test_component_error.py", (
-        "test_the_verdict_refuses_a_calibration_that_worsens_the_linear_loss",
-        "test_the_verdict_adopts_only_when_every_held_out_season_improves",
+        "test_a_real_mis_scaling_is_taken_by_the_gate_in_every_held_out_season",
+        "test_a_calibration_that_worsens_the_linear_loss_is_not_taken",
+        "test_one_season_against_it_is_enough_to_withhold_adoption",
+        "test_a_ceiling_the_design_cannot_resolve_is_not_runnable_not_a_null",
     )),
     "hub.models.spread.verdict": ("tests/unit/test_spread.py", (
-        "test_a_candidate_that_wins_every_season_and_clears_two_se_is_adopted",
+        "test_a_candidate_that_wins_every_season_and_clears_the_interval_is_adopted",
+        "test_winning_on_average_but_losing_a_season_is_not_enough",
         "test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted",
+        "test_the_pooled_interval_is_the_season_clustered_t_interval",
+        "test_a_gate_with_no_headroom_declared_is_not_runnable_even_when_the_candidate_is_clean",
     )),
     "hub.models.injury.type_verdict": ("tests/unit/test_injury.py", (
-        "test_a_type_effect_that_wins_everywhere_and_clears_two_se_is_adopted",
-        "test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted",
+        "test_a_type_effect_that_wins_everywhere_and_clears_the_interval_is_adopted",
+        "test_a_gain_the_seasons_cannot_agree_on_is_not_adopted",
+        "test_no_ceiling_measured_is_not_runnable_even_when_the_effect_is_clean",
+        "test_a_ceiling_below_the_design_s_resolution_is_not_runnable",
     )),
     # One direction only: `injury.verdict` is an argmin with no bar (S3, #360, frozen), so
     # there is no "too small to adopt" case to plant until it has one. The positive

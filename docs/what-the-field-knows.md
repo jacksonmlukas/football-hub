@@ -17,7 +17,7 @@ benchmarked pure machine-learning projections against ESPN's for the 2025 season
 **industry projections still win on absolute error while algorithmic models are competitive on
 ranking**. That is the exact shape of [weekly-blend-gate.md](weekly-blend-gate.md): this repo
 beat its own flat projection by +0.074 MAE at 5.9 se and then lost the lineup decision to a
-free ranking.
+free ranking. *(Restated 2026-10-06, #311: the +0.074 at 5.9 se was row-pooled; on the four held-out seasons as the unit it is +0.0749, t = +6.18 on 3 df (p 0.009), won 4 of 4 -- [weekly-projection.md](weekly-projection.md).)*
 
 **The binding constraint here has never been projection accuracy.** It is worth saying plainly
 before proposing anything that improves accuracy.

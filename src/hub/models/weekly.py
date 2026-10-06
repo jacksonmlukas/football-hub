@@ -474,6 +474,11 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
 def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
     """One line: mean gain, its t, and the tie-aware every-season count (#335).
 
+    `cluster` is the season (#311): the pooled `t` is a t over the held-out seasons, on `k - 1`
+    degrees of freedom, not over ~12,000 correlated player-weeks. Every figure this prints
+    changed basis when that landed -- `docs/weekly-projection.md`'s restatement box has the
+    prior values.
+
     `within="week"` -- the finest repeated-measure unit `errs` still carries. Rule 3's own
     unit is the player, but `walk_forward` drops player identity from its output frame, so
     week is what is available here without widening this ticket into a change to that frame's
@@ -482,7 +487,8 @@ def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
     """
     from hub.models.experiment import paired_gain
     g = paired_gain(errs[f"err_{base}"].to_numpy(), errs[f"err_{arm}"].to_numpy(),
-                    season=errs["season"].to_numpy(), within=errs["week"].to_numpy())
+                    cluster=errs["season"].to_numpy(), season=errs["season"].to_numpy(),
+                    within=errs["week"].to_numpy())
     return [f"  {label:34} {g.mean:+.4f} MAE at {g.t:+5.1f} se, "
             f"wins {g.wins}, ties {g.ties}, losses {g.losses} of {g.seasons} seasons"]
 

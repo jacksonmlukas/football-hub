@@ -83,6 +83,16 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
     assert not rel.startswith("data/")
 
 
+# The width ledger is not a counter: since #362 it is append-only, one entry per gate run, so a
+# 4,096-byte cap that a counter honours is a cap it crosses on schedule -- it crossed it on
+# 2026-10-06, when #343's routed harnesses wrote their first four entries (the file held 2,997
+# bytes). It is still *our own* small bookkeeping and still no payload: an entry is a name, two
+# digests, an interval and a per-season record. 64 KiB is a few hundred runs, the size at which
+# someone should decide what to do with the history; a counter's cap stays as it was, and this
+# is the only file with its own.
+LEDGER_CAPS = {"state/gate-width.json": 65536}
+
+
 def test_the_state_directory_carries_no_third_party_payload():
     """The reason `data/raw/` is excluded still applies to whatever replaces it. Counters
     and balances are ours; a cached response is not."""
@@ -95,7 +105,8 @@ def test_the_state_directory_carries_no_third_party_payload():
     for f in records:
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
-        assert len(json.dumps(body)) < 4096, f"{f} is too large to be a counter"
+        cap = LEDGER_CAPS.get(f, 4096)
+        assert len(json.dumps(body)) < cap, f"{f} is too large ({cap} bytes) to be a counter"
 
 
 def test_the_slate_commits_the_state_it_spent():

@@ -55,6 +55,37 @@ matched through the `pfr_id`→`gsis_id` crosswalk on 99.8%.
 `own_k` wins every season and misses the significance half at 1.8 se. Chosen shrinkage was
 0.05–0.10 — the fit itself wanted to keep almost none of a player's own prior `k`.
 
+> **Restated 2026-10-06 — #343 routes this comparison through the Gate and #311's season cluster
+> comes with it ([method.md](method.md) rule 13; the figures above stand as published).** Re-run
+> the same way (`--seasons 2019,…,2025`, same 5 held-out seasons) the **held-out MAEs reproduce
+> to the digit**; what is restated is the statistic and the rule that reads it.
+>
+> | | published | before #343, run today | now |
+> |---|---|---|---|
+> | `own_k` mean gain | +0.0065 MAE | +0.0065 | **+0.0065** (+0.00653; equal-season weighted) |
+> | its significance | 1.8 se, over 1,039 pooled rows | 1.8 se | **t = +4.93 on 4 df, p = 0.008**; se 0.0013 (a bootstrap over the 5 season means); t interval [+0.0029, +0.0102] |
+> | its seasons | wins 5/5 | wins 0, ties 5, losses 0 (#335 already in force) | **won 0, tied 5, lost 0** — each season's gain (+0.0034, +0.0081, +0.0078, +0.0106, +0.0029) is inside 2 × its own within-season se (0.005–0.010, over ~200 players) |
+> | stage 2 | none | none | **runs: MDE +0.0048 against the declared ceiling +0.0852** (this page's own headroom) |
+> | `usage` mean gain | −0.0004 at −0.0 se, wins 2/5 | −0.0004, wins 0, ties 5 | **−0.0008**, t = −0.07 on 4 df (p 0.95), t interval [−0.0342, +0.0325]; won 0, tied 5, lost 0; MDE +0.0434 against +0.0852 |
+>
+> **Verdict, both candidates: SHOW — KEEP `positional`. The decision does not move; two things
+> about *why* do.** (1) **The 1.8 se was the wrong statistic and it understated `own_k`.**
+> Clustering on the season turned 1.8 into **4.9**, which is the opposite of what the repo's
+> usual worry (rule 3) leads one to expect, because the five seasons agree closely: the
+> between-season scatter of `own_k`'s gain is small beside what 1,039 pooled rows implied. It
+> is the first candidate in this record whose pooled interval excludes zero on a design that
+> can run. (2) **It is blocked by the other half, and not by the sign.** Every season's gain
+> sits inside its own noise, so none is a win and the tie blocks ADOPT (ADR-0019, #335). The
+> verdict sentence's "the sign is not consistent across seasons" is the rule's wording for any
+> season that is not a win and here means *tied*, not *lost* — all five are positive. This is
+> exactly the pre-registered case (`docs/gate-power.md`, #343) of `own_k` becoming a live
+> candidate, and the tie rule is what holds it: #381's question, not this page's. **`own_k`
+> took +0.0065 of the +0.0852 headroom, 7.7%, and that is unchanged.**
+>
+> The `wins 5/5` and `wins 2/5` above were already superseded by #335's tie-aware rule before
+> this ticket; they are restated here, with their prior values kept, because #335's own comment
+> on #311 lists this page.
+
 ## The part that actually closes the question
 
 A candidate failing is weak evidence; the ceiling is strong evidence. The outcome being

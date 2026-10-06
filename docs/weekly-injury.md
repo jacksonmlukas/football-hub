@@ -81,6 +81,23 @@ That second candidate was declared before being run, and it clears:
 Better in **all three** held-out seasons. Paired across 3,687 held-out player-weeks it beats
 `out_zero` by **0.170 MAE at 3.8 se**.
 
+> **Restated 2026-10-06 — #311: the standard error is over the season, not the row
+> ([method.md](method.md) rule 13; the figure above stands as published).** 3.8 se is a t over
+> 3,687 correlated player-weeks. On the three held-out seasons as the unit (`paired_gain`'s
+> cluster, rebuilt from `walk_forward`'s own fits, the same rows): **+0.1700 MAE (equal-season
+> weighted; row-weighted +0.1691), t = +4.19 on 2 df, p = 0.053**, se 0.0406; the seasons are
+> +0.2325, +0.0727, +0.2047. **Better in all three seasons stands** on the sign
+> (3 of 3 with the declared no-op within-season unit; won 2, tied 1 once the player is the
+> repeated-measure unit, 2024's +0.0727 sitting inside its own within-season noise). **What
+> changes is the pooled half:** 4.19 sits just under the 4.30 a 95% t interval needs on 2 df,
+> so the interval contains zero by a hair. `retention` was *adopted* on `injury.verdict`'s
+> argmin, which read no standard error at all — that decision is #360's and is not moved by this
+> restatement — but the page's "at 3.8 se" no longer describes the evidence: it is a
+> three-season result at p = 0.053, and under the corrected bar
+> ([ADR-0019](adr/0019-a-gate-requires-every-season.md), the S1 t interval) it would not clear
+> the pooled half. Named, not resolved: the figure moves, the module's decision stays frozen
+> behind #360.
+
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
 The table above prices a designation by `report_status` × `practice_status` and ignores
@@ -143,6 +160,28 @@ what a left one costs — so it was fixed and **the same gate re-run, unchanged*
 
 Pooling the evidence helped, by about what you would expect. **The verdict did not move**:
 still 2/3 seasons, still losing 2025.
+
+> **Restated 2026-10-06 — #343 routes the type comparison through the Gate; the season cluster
+> (#311) comes with it ([method.md](method.md) rule 13; the figures above stand as published).**
+> Re-run today on the same rows, the held-out MAEs and the cleaned **+0.0317 at 3.1 se,
+> 2/3 seasons reproduce**; what is restated is the statistic and the rule.
+>
+> | | published (cleaned) | now |
+> |---|---|---|
+> | mean gain | +0.0317 MAE (row-weighted) | **+0.0320** (equal-season weighted; the three seasons are +0.0507, +0.0602, −0.0150) |
+> | significance | 3.1 se over 3,687 pooled player-weeks | **t = +1.69 on 2 df, p = 0.23**; t interval [−0.0495, +0.1134] |
+> | seasons | 2/3 | won 2, tied 0, lost 1 — *sign only*: the within-season unit is the declared no-op (`season`, one cluster a season), pending #360 |
+> | stage 2 | none | **runs: MDE +0.0974 against the declared ceiling +0.2641** (the in-sample per-type multiplier; retention minus that oracle, +0.203 / +0.369 / +0.217 a season) |
+>
+> **Verdict: SHOW — KEEP `retention`. The decision does not move; the evidence for it is both
+> weaker for the type adjustment and cleaner than this page said.** 3.1 se is 1.7 on 2 degrees
+> of freedom — the interval contains zero by a wide margin, so the page's reading that the
+> adjustment "clears significance and loses a season" overstated the first half as well as
+> resting on the second. The design *can* run (the MDE is a third of the ceiling), so this is a
+> null the design could have contradicted, which the unrouted rule could not say. The type
+> adjustment recovers +0.032 of a +0.264 flattering in-sample bound: 12%.
+> **Statistic restatement only:** `injury.verdict` (the argmin that picked `retention`) is #360's
+> and untouched, and the within-season unit stays the declared no-op until #360 chooses one.
 
 Stating the obvious risk plainly, because this was the second run of one hypothesis: had the
 answer flipped, it would have been much weaker evidence than a single pre-registered run, and

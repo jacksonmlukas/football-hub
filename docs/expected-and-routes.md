@@ -22,6 +22,18 @@ rushing, 12% of passing; `targets_prior` is unchanged, by design.
 | the rebuild — `f = 1` vs flat | **+0.0634 (5.3 se)** | +0.0581 (3.2 se) |
 | both together | +0.0737 (5.9 se) | +0.0708 (3.8 se) |
 
+> **Restated 2026-10-06 — #311: the standard error is over the season, not the row
+> ([method.md](method.md) rule 13; the table above stands as published).** Both columns were
+> `paired_gain` statistics over ~12,000 player-weeks. On the four held-out seasons as the unit,
+> re-run today on the same `--fit` panel (arms rebuilt as in
+> [weekly-projection.md](weekly-projection.md)'s box): **realised priors** the week +0.0103
+> (t = +5.52 on 3 df), the rebuild +0.0646 (t = +5.00), both together +0.0749 (t = +6.18);
+> **expected priors** the week +0.0129 (t = +6.16), the rebuild +0.0589 (**t = +2.73, p 0.072**),
+> both together +0.0718 (t = +3.51, p 0.039), each won 4 of 4. The "null, slightly negative"
+> reading of expected priors does not move (the rebuild is still +0.0589 against +0.0646); what
+> moves is that the expected-priors rebuild no longer clears p < 0.05 on its own. The two gate
+> tables are `run_gate` figures and are untouched.
+
 | gate | realised | expected |
 |---|---|---|
 | frozen | **+0.711** [+0.313, +1.129] *(as first measured; restated to +0.215, then −1.004 on the corrected scale — [weekly-blend-gate.md](weekly-blend-gate.md))* | **+0.082** [−0.372, +0.534] |

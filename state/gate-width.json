@@ -7,7 +7,7 @@
       "gate": "draft",
       "hi": -5.223678571428573,
       "lo": -16.916142857142862,
-      "requires_review": false,
+      "recipe": null,
       "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 11.692464285714289
@@ -19,7 +19,7 @@
       "gate": "weekly",
       "hi": -0.5406582167832172,
       "lo": -1.1518653846153843,
-      "requires_review": true,
+      "recipe": null,
       "timestamp": "2026-09-12 (commit fb68c4e; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 0.6112071678321671
@@ -31,7 +31,7 @@
       "gate": "interval_shape",
       "hi": -0.029611641496918795,
       "lo": -0.042331431540016895,
-      "requires_review": false,
+      "recipe": null,
       "timestamp": "2026-09-13 (commit 2f7501d; no time-of-day recorded pre-#362)",
       "verdict": "NOT-RUNNABLE",
       "width": 0.0127197900430981
@@ -43,7 +43,7 @@
       "gate": "draft",
       "hi": -7.665178571428573,
       "lo": -18.761178571428573,
-      "requires_review": true,
+      "recipe": null,
       "timestamp": "2026-09-16 (commit 7e6625f; no time-of-day recorded pre-#362)",
       "verdict": "REMOVE",
       "width": 11.096
@@ -55,7 +55,7 @@
       "gate": "weekly",
       "hi": -0.5560262237762241,
       "lo": -1.604653846153846,
-      "requires_review": false,
+      "recipe": null,
       "seasons": [
         {
           "disposition": "loss",
@@ -89,6 +89,174 @@
       "timestamp": "2026-09-21T19:39:54+00:00",
       "verdict": "SHOW",
       "width": 1.0486276223776219
+    },
+    {
+      "clusters": 5.0,
+      "config_digest": "c4606f91",
+      "data_digest": "fa2e6f6c",
+      "gate": "player_spread",
+      "hi": 0.009019843882678876,
+      "lo": 0.004017979895119336,
+      "recipe": "candidate=own_k,seasons=2019+2020+2021+2022+2023+2024+2025",
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": 0.0033731669761571056,
+          "m": 207,
+          "se": 0.004753345169939487,
+          "season": 2021
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.008125402822358,
+          "m": 216,
+          "se": 0.005142871229010978,
+          "season": 2022
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.007750774768849501,
+          "m": 206,
+          "se": 0.009701502339810519,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.010548819499914439,
+          "m": 205,
+          "se": 0.009713176104736236,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.002863776559027191,
+          "m": 205,
+          "se": 0.009620187113791935,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T19:45:35+00:00",
+      "verdict": "SHOW",
+      "width": 0.00500186398755954
+    },
+    {
+      "clusters": 5.0,
+      "config_digest": "c4606f91",
+      "data_digest": "fa2e6f6c",
+      "gate": "player_spread",
+      "hi": 0.024345761289127334,
+      "lo": -0.02330822250785779,
+      "recipe": "candidate=usage,seasons=2019+2020+2021+2022+2023+2024+2025",
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": -0.023778321823379814,
+          "m": 207,
+          "se": 0.030118564859021243,
+          "season": 2021
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.04338450491303014,
+          "m": 216,
+          "se": 0.025502666585194882,
+          "season": 2022
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.015353613529926072,
+          "m": 206,
+          "se": 0.027775018896235182,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.00931970317732761,
+          "m": 205,
+          "se": 0.028040886421775765,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.029832382857600852,
+          "m": 205,
+          "se": 0.02508860168799746,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T19:45:35+00:00",
+      "verdict": "SHOW",
+      "width": 0.04765398379698513
+    },
+    {
+      "clusters": 3.0,
+      "config_digest": "c4606f91",
+      "data_digest": "3028f320",
+      "gate": "injury_type",
+      "hi": 0.060209653728508165,
+      "lo": -0.014998221561763073,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "seasons": [
+        {
+          "disposition": "win",
+          "gain": 0.05068776988460783,
+          "m": 1,
+          "se": NaN,
+          "season": 2023
+        },
+        {
+          "disposition": "win",
+          "gain": 0.06020965372850814,
+          "m": 1,
+          "se": NaN,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.014998221561763064,
+          "m": 1,
+          "se": NaN,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T19:45:49+00:00",
+      "verdict": "SHOW",
+      "width": 0.07520787529027123
+    },
+    {
+      "clusters": 3.0,
+      "config_digest": "c4606f91",
+      "data_digest": "558884e4",
+      "gate": "component_calibration",
+      "hi": 0.08081335324959334,
+      "lo": -0.047550394587651014,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": 0.08081335324959334,
+          "m": 292,
+          "se": 0.0512582470973497,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.03448406309755847,
+          "m": 308,
+          "se": 0.05015756197257456,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.047550394587651014,
+          "m": 294,
+          "se": 0.05017383908306726,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T19:46:01+00:00",
+      "verdict": "NOT-RUNNABLE",
+      "width": 0.12836374783724436
     }
   ]
 }
