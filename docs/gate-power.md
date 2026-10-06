@@ -2472,6 +2472,31 @@ left implicit. If injury type's `k=3` keeps it NOT-RUNNABLE-adjacent or SHOW und
 rule-16 exemption above, `docs/weekly-injury.md` restates that as the reason, not as a fresh
 failure.
 
+## Landed 2026-10-06 (#343): what the three runs returned against what this section expected
+
+**Adopted 2026-09-22; code landed 2026-10-06; this box is dated and the section above is not
+edited.** Three gate runs, all on the day's data, ledger entries in `state/gate-width.json`
+(`player_spread` ×2, `injury_type`, `component_calibration`).
+
+| comparison | expected (above) | returned |
+|---|---|---|
+| spread `own_k` | KEEP; stage-2 line new; "if its restated significance holds and its MDE clears +0.0852, a live ADOPT candidate" | **SHOW.** t = +4.93 on 4 df, MDE +0.0048 < +0.0852: *live*, as flagged — and **tied in all five seasons** (won 0, tied 5, lost 0), which blocks ADOPT. The tie half, not the interval, holds it. |
+| spread `usage` | KEEP | **SHOW**; t = −0.07, MDE +0.0434 < +0.0852 |
+| injury type | KEEP; "rule-16 exemption for the ADOPT branch at k=3" | **SHOW**; t = +1.69 on 2 df, MDE +0.0974 < the declared in-sample ceiling +0.2641 — runnable, so the null is one the design could have contradicted |
+| component calibration (not in this section; added by the 2026-10-02 review) | — | **NOT-RUNNABLE**: MDE +0.170 against a +0.019 ceiling; was *NULL — not taken* |
+
+**Two declarations the section did not make, named.** (1) The component calibration's
+ceiling arm was not pre-registered here; it was declared in the #343 commit as the
+`injury`/`coverage` construction — each component's calibration fitted in sample on the
+held-out season — before any run, and the verdict does not depend on it: no calibration could
+earn the +0.170 the design would need. A least-squares line is not MAE-optimal, so the
+in-sample arm is a flattering-by-construction bound and not a tight one. (2) The calibration's
+within-season unit is `player_id`.
+
+**Rule 16, not run.** The CELLS arithmetic above was not executed as a script; the three
+real runs are the measurement. They do not change what the section said about injury type's
+ADOPT branch at k=3 (the observed record already closes it: 2 of 3 seasons won).
+
 # Pre-registered 2026-09-21 — PROPOSED: every dollar figure against the rivals' real ledgers
 (#317)
 

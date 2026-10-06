@@ -144,6 +144,28 @@ what a left one costs — so it was fixed and **the same gate re-run, unchanged*
 Pooling the evidence helped, by about what you would expect. **The verdict did not move**:
 still 2/3 seasons, still losing 2025.
 
+> **Restated 2026-10-06 — #343 routes the type comparison through the Gate; the season cluster
+> (#311) comes with it ([method.md](method.md) rule 13; the figures above stand as published).**
+> Re-run today on the same rows, the held-out MAEs and the cleaned **+0.0317 at 3.1 se,
+> 2/3 seasons reproduce**; what is restated is the statistic and the rule.
+>
+> | | published (cleaned) | now |
+> |---|---|---|
+> | mean gain | +0.0317 MAE (row-weighted) | **+0.0320** (equal-season weighted; the three seasons are +0.0507, +0.0602, −0.0150) |
+> | significance | 3.1 se over 3,687 pooled player-weeks | **t = +1.69 on 2 df, p = 0.23**; t interval [−0.0495, +0.1134] |
+> | seasons | 2/3 | won 2, tied 0, lost 1 — *sign only*: the within-season unit is the declared no-op (`season`, one cluster a season), pending #360 |
+> | stage 2 | none | **runs: MDE +0.0974 against the declared ceiling +0.2641** (the in-sample per-type multiplier; retention minus that oracle, +0.203 / +0.369 / +0.217 a season) |
+>
+> **Verdict: SHOW — KEEP `retention`. The decision does not move; the evidence for it is both
+> weaker for the type adjustment and cleaner than this page said.** 3.1 se is 1.7 on 2 degrees
+> of freedom — the interval contains zero by a wide margin, so the page's reading that the
+> adjustment "clears significance and loses a season" overstated the first half as well as
+> resting on the second. The design *can* run (the MDE is a third of the ceiling), so this is a
+> null the design could have contradicted, which the unrouted rule could not say. The type
+> adjustment recovers +0.032 of a +0.264 flattering in-sample bound: 12%.
+> **Statistic restatement only:** `injury.verdict` (the argmin that picked `retention`) is #360's
+> and untouched, and the within-season unit stays the declared no-op until #360 chooses one.
+
 Stating the obvious risk plainly, because this was the second run of one hypothesis: had the
 answer flipped, it would have been much weaker evidence than a single pre-registered run, and
 would have had to be reported as such. It did not flip.

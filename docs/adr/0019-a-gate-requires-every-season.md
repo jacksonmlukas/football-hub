@@ -586,3 +586,41 @@ the six `Harness` modules.
 **What this does not move.** Both halves of the adoption bar and the precondition stand, and
 `weekly_screen.verdict` is untouched: this amendment changes what the ADR claims, not what any
 code does.
+
+---
+
+# Note, 2026-10-06 (#343): "read by every gate" now holds for nine modules, and held for six before
+
+**Dated, not edited.** Nothing above is withdrawn and the #397 amendment's text is left as
+written, including its last paragraph, which says what was *then* true. What changed is the
+code: the claim in this ADR's decision paragraph — *one implementation, `hub.models.experiment.gate`,
+read by every gate in the repo* — **held for six of the eight gate-shaped modules #343's ticket counted, and was a target for the
+other two** (`spread.verdict`, `injury.type_verdict`). `component_error.verdict`, which the
+2026-10-02 architecture review added to the batch, was a ninth that did not read it either. After
+#343 it holds for all nine.
+
+**What landed.** Each candidate-vs-baseline comparison in those three modules is one
+`Harness.run` (`Harness.decide` for the pure half a test reads): the spread candidates `own_k`
+and `usage` each against `positional`; the injury type adjustment against `retention`; the
+component calibration against the raw projection. The three hand-built rules are deleted —
+`g.wins == seasons and g.t >= MIN_SE` in both spread and injury, and "MAE improves in every
+held-out season" over three aggregates in `component_error`. All three now reach stage 2, the
+S6 ceiling precondition, the tie-aware every-season half, the S1 t interval, the width review
+and the stamps, for the first time. The declared ceilings are in each module's `CEILING_ARM`
+and in `docs/gate-power.md`'s #343 pre-registration (spread: the published +0.0852 headroom;
+injury type: the in-sample per-type multiplier of that pre-registration's adoption comment;
+component calibration: the in-sample calibration, declared in the #343 commit, which the
+pre-registration did not cover).
+
+**What still does not read it, named so the claim is not over-read.** `hub.models.injury.verdict`
+— the retention / table / baseline / out_zero argmin — has no gate in it at all, hand-built or
+otherwise, and is #360's (S3). It is not a Gate comparison of a candidate against an incumbent
+and this note does not say it is covered; `weekly_screen.verdict` is a Screen (#397) and is out
+of scope by that amendment. The `Harness` count is ten over nine modules
+(`tests/contracts/test_each_gate_declares_its_ceiling_arm.py`).
+
+**What this does not move.** Both halves of the adoption bar, the precondition, the tie rule and
+the S1 interval are unchanged; this routes three more call sites to them. Which verdicts moved
+on real data, and what each doc that published them now says, is in the #343 commit and in the
+restatement boxes of `docs/player-spread.md`, `docs/weekly-injury.md` and
+`docs/component-projection.md`.
