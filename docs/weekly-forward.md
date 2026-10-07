@@ -63,6 +63,34 @@ takes the arm as `assemble_universe`'s `arm` parameter and reaches the model onl
 computes after the first admitted week is a new arm and a new pre-registration**, and a pure
 move is not.
 
+> **Amendment, 2026-10-07 (#430): the arm is re-pinned. Prior text above kept.** The move
+> happened: `hub/models/weekly.py` is now `hub/exhibits/weekly_projection.py`, and
+> `shipped_quantiles` is now `parametric_quantiles` (the word *shipped* names the page's
+> conformalised interval and nothing else, CONTEXT.md). **This is a pure move and rename.** What
+> the projection computes is unchanged, and the proof is
+> `tests/unit/test_weekly_projection_move.py::test_the_moved_projection_computes_exactly_what_the_pinned_arm_computed`:
+> it freezes `project` (bare, under each fitted `Shrink`, and under a fixed one), `fit_shrink`
+> under both objectives, `positional_sd`, `standard_error` and the parametric quantiles on a
+> fixed fixture, from output computed **before any file moved**, and the moved module
+> reproduces every figure. The same digest was computed on the module at the originally pinned
+> blob `f6de17b2ca26a6dbaa2e606f567f8227456bc015` and found identical.
+>
+> **The pin above was already stale when this ticket began.** The tree's
+> `hub/models/weekly.py` was not at that blob when #430 began: `380486a` (#309, merged after
+> `9fc1a3a`) had edited the prose `_what_the_coverage_measurement_says` prints about the
+> published interval, and nothing else in the file (`git diff 9fc1a3a HEAD` over it is that one
+> function). Run then, the forward measurement would have refused. The digest above is
+> identical at both blobs, so the arm was never changed; the pin was stale by a diagnostic's
+> wording.
+>
+> **The arm is now pinned to blob `96114791e9ba5492d92e996c1ad5f302fca5169a`**, `hub/exhibits/weekly_projection.py`
+> (`weekly_forward.PINNED_ARM_BLOB`; `arm_blob()` finds it through `weekly_gate_data.project`
+> and a test holds it to the file). **No 2026 outcome had been read:** the design reads once,
+> after week 14, and the horizon has not passed. The pin is the old constant's replacement and
+> not a second arm, so no new pre-registration is owed. The outstanding obligation is the old
+> one: any later edit to this file, even to a comment, changes the blob and needs this same
+> amendment before the reading.
+
 ## The design
 
 ### The arms
