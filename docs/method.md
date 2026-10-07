@@ -149,6 +149,12 @@ beat it by **0.170 MAE at 3.8 se** and was adopted. An earlier, additive version
 table lost to it, and the reason is the finding: an Out player scores exactly zero, which a
 multiplicative form expresses and an additive one cannot.
 
+> *Restated 2026-10-07, #361: the 0.170 MAE at 3.8 se was measured against a within-season
+> lookahead baseline (rule 2). Strictly-prior it is +0.0623 MAE, se 0.0588, t = +1.06 on 2 df,
+> p = 0.40, interval [−0.1909, +0.3155], won 2 of 3 seasons (2024 −0.0529); usable designated
+> weeks 4,939 → 2,581, about 0.011 of the drop the lookahead itself. The incident above is
+> kept as written; the decision is #360's and the maintainer's.*
+
 ### 6. Both arms must have the same information
 
 **The incident.** A lineup-optimiser gate returned **+31.15 points per game** for the optimiser.
