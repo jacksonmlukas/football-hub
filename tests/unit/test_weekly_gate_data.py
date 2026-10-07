@@ -471,11 +471,12 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
 
 # --- the projection arm is accepted, not created (issue #342) ---------------
 #
-# Before this, `assemble_universe` imported `hub.exhibits.weekly_projection.project` inside its own body
+# Before this, `assemble_universe` imported `hub.models.weekly.project` inside its own body
 # and called it directly, so an arm other than the shipped one could only reach this function
 # by monkeypatching that module attribute from outside -- and a patch landed on the wrong
 # module once scored the shipped arm twice and printed zero flips. `arm` is now a parameter,
 # `project` its default, and this is the seam: a second value for that one parameter.
+# *(Now `hub.exhibits.weekly_projection`, #430.)*
 
 
 def test_a_second_arm_moves_the_universe_only_where_its_mu_differs(monkeypatch, tmp_path):
