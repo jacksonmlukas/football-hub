@@ -331,13 +331,18 @@
     "gate_subset": "all",
     "gate_n": 15678,
     "gate_cov80": 0.80035718841689,
-    "gate_claim": 0.77,
+    "gate_claim": 0.8,
     "band": 0.02,
-    "verdict": "OVER-COVERS",
-    "generated_at": "2026-10-07T01:37:21+00:00",
+    "verdict": "COVERS",
+    "generated_at": "2026-10-07T12:56:26+00:00",
     "interval": "conformal",
     "gate_clipped_share": 0.27758642684015816,
     "n_uncalibrated": 383,
+    "season_coverage": {
+      "season": 2025,
+      "n": 3192,
+      "cov80": 0.7985588972431078
+    },
     "survivor": {
       "verdict": "HOLDS",
       "favourite_spread": 7.0,

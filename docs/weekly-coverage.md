@@ -6,6 +6,11 @@
 > supersedes, and the restatement of 2026-09-13 -- what the interval is now *claimed* to
 > cover, and what the gate holds it to -- sits directly below this note.
 >
+> **Decided and built 2026-10-07 (#310):** the claim is 0.80 (marginal), the verdict is taken at
+> audits, and the weekly run reports and never gates; the slate's step is a smoke alarm. The
+> OVER-COVERS verdict and the red gate recorded in the 2026-10-06 box below lasted until this
+> section and are kept as they were.
+>
 > **Restated 2026-10-06 (#309):** the published interval now carries estimation error, is
 > conformalised within position, and the gate grades the whole scored board. The design and the
 > restated figures, with the prior values, are the two sections directly below the 2026-09-17
@@ -154,6 +159,73 @@ the games of evidence where the term matters; a gate that measures only part of 
 caught; the explicit order statistics must differ from the interpolated ones where it matters; a
 group under the floor must name its fallback. Each is mutated and seen red before it is trusted,
 in the commits below.
+
+## Decided and built 2026-10-07 (#310): the claim is 0.80, the verdict is taken at audits, the weekly run never gates
+
+The decision is the maintainer's `ADOPTED:` comment of 2026-09-17 (above, written before #309
+had a number), plus the 2026-10-07 addition that the clip split is reported and not a claim. This
+section is what was built and what moved. **It revisits #289**, whose 2026-09-13 restatement
+(*the claim is what it covers*, 0.77) was right for a parametric interval and is superseded for
+a conformalised one; that section is kept whole below.
+
+**What the code now does.**
+
+- `CLAIMED_COV80 = 0.80`, documented as a marginal claim the construction asserts. `BAND` is
+  unchanged at 0.02, so the audit's marginal bar is 80 +/- 2 on the whole scored board.
+- **`--audit --look k`** takes the verdict. Marginal: `coverage.verdict` at 80 +/- 2. Per position:
+  the 95% interval at sqrt(2) x the binomial SE (the root two is the calibration draw's share)
+  must contain 0.80, **only at N >= 8,377 player-weeks**; below it the group returns
+  NOT-RUNNABLE and reports its deviation, sigma and MDE. The look number and alpha per look
+  (0.0167, z = 2.394, three looks per claim-life) print beside the verdict; a fourth look is
+  refused as a restatement trigger. `--write` records the block under `audit` in
+  `state/interval_coverage.json`: the claim, the look, and each group's position, n, n_cal,
+  coverage, sigma and verdict-or-NOT-RUNNABLE. The newest season's own coverage is printed
+  beside it and never gated.
+- **`--gate` is the weekly smoke alarm and nothing more.** It reports, and exits 1 only if the
+  marginal sits more than 10 points from the claim (eight MDEs: it cannot fire on drift or noise)
+  or a group scored nothing. **This supersedes #273's statistical role, not its purpose.** #273
+  wired the gate into the slate so a verdict could not go unread; but a verdict read weekly on
+  accumulating data is a sequential test -- eighteen looks a season on one hypothesis -- and "went
+  red in week 6" would be the likeliest outcome whether or not anything was wrong. What stays
+  is the run failing when the pipeline is broken. The slate step is renamed for what it is and is
+  still not soft-failed (`tests/unit/test_coverage_audit.py` holds the step and the exit code).
+- **The clip split is a diagnostic.** `floor_split` and `by_prior` are reported and read by no
+  verdict (the artifact says so under `diagnostics`). A clip-conditional claim would be a new
+  ticket with its own pre-registered threshold, because adding it now would change an adopted
+  rule after seeing its numbers.
+
+**One number to flag.** The adopted minimum is **N = 8,377**. The formula the rule gives,
+(z_alpha + z_0.8)^2 x 0.32 / 0.02^2 at alpha = 0.0167, is **8,375.3** (`derived_n_min()`); the
+adopted figure is two weeks more conservative and **binds**. Re-deriving it to the formula after
+seeing which groups it admits would be rule 1's laundering; the contract test holds the two within
+three of each other.
+
+**What moved, with the prior values** (run 2026-10-07 on the 2021-2025 data; the measurement
+itself is #309's and did not move):
+
+| | before #310 (tree at #309) | now |
+|---|---|---|
+| `CLAIMED_COV80` / `gate_claim` | 0.77 | **0.80** |
+| `verdict` on the unchanged measurement (80.0% of 15,678) | **OVER-COVERS** | **COVERS** |
+| `state/interval_coverage.json` `band` | 0.02 | 0.02 |
+| `coverage --gate` exit on a normal week | 1 | **0** |
+| `coverage --gate` on a marginal 8 points under the claim | 1 | **0** (reports; the audit fails it) |
+| `coverage --gate` on a broken pipeline (>10 points, or an unscored group) | 1 | 1 |
+| per-position verdict | none | **NOT-RUNNABLE** for QB, RB, WR, TE (1,805 / 4,099 / 6,616 / 3,158 of 8,377) |
+| the page's sentence | "...against the claimed 77% (+/-2%) -- COVERS/OVER" | "...claimed 80% -- this week's read COVERS... the binding verdict is taken at audits; none has been taken yet" |
+
+**The verdict change, named, in both directions.** From the tree at 2026-09-13, COVERS (77.4%
+against 0.77) -> at #309, OVER-COVERS (80.0% against the unchanged 0.77) -> at #310, **COVERS**
+(80.0% against 0.80). The interval did not change between the last two; the claim did, by the
+decision pre-registered before the number existed. A dry-run audit (`--audit --look 1`, not written
+-- an audit spends one of three looks and is the maintainer's to take) reads: marginal 80.0% over
+15,678, MDE 0.015, **COVERS**; every position NOT-RUNNABLE, QB at 78.8% (-0.9 sigma, MDE 0.043).
+The clipped (86.8%) and strictly-positive (77.4%, -4.8 sigma) split of #309 is printed with
+them as a diagnostic and decides nothing.
+
+**Still true, said once more.** A miss at an audit is evidence about the shift (injuries, role
+changes, a season unlike the last) before it is evidence about the construction; and a position
+on pooled calibration for part of its window is not testing the conditional claim for those weeks.
 
 ## Restated 2026-10-06 (#309): the published interval, measured as designed above
 
@@ -543,7 +615,8 @@ that by moving `WEEKLY_K` and requiring the graded table to move with it.
 uv run python -m hub.models.coverage --measure                    # the real one
 uv run python -m hub.models.coverage --measure --centre realised  # this document's
 uv run python -m hub.models.coverage --survivor --seasons 2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025
-uv run python -m hub.models.coverage --gate                       # exits 0 on the 77% claim (#289)
+uv run python -m hub.models.coverage --gate                       # the weekly smoke alarm (#310): exits 1 only >10pp off the claim or on an unscored group
+uv run python -m hub.models.coverage --audit --look 1 --write     # the audit-time verdict (#310): marginal 80 +/- 2; a position only at N >= 8,377
 uv run python -m hub.models.coverage --measure --survivor --write # what the slate commits
 ```
 
