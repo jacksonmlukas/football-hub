@@ -594,8 +594,7 @@ def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> 
     rows = walk_forward_rows(obs)
     wf = walk_forward(obs)
     if not wf.is_empty():
-        print(f"\n  Held-out MAE (diagnostic; only retention against out_zero is gated), "
-              f"{wf.height} seasons, fitting only on earlier ones:")
+        print(f"\n  Held-out MAE, {wf.height} seasons, fitting only on earlier ones:")
         print(f"  {'season':>6} {'n':>5}  " + "  ".join(f"{c:>10}" for c in CANDIDATES))
         for r in wf.iter_rows(named=True):
             print(f"  {r['season']:>6} {r['n']:>5}  "
@@ -606,6 +605,8 @@ def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> 
     if not rows.is_empty():
         gate_run = retention_run(rows, publish=True, seasons=seasons, ledger=ledger)
         print("\n  === retention against out_zero ===")
+        print("  (the MAE table above is a diagnostic: `table` and `baseline` are reported, "
+              "never gated)")
         print("\n".join(gate_run.lines))
         print(f"\n  {verdict(rows, run=gate_run)[1]}")
     else:
