@@ -62,6 +62,12 @@ MAX_LEAD_DAYS = not_an_input(
     8, "how far ahead of kickoff a scrape may be and still be this week's page: the panel's "
        "own bound, restated for a fetcher that may not import it, and a record filter")
 
+# The columns the schedule is asked for. The `nflverse_schedules` contract refuses a frame
+# missing any column it requires, so these are a superset of its required set plus what is read
+# here (`game_type`, `gameday`); `tests/unit/test_fetch_consensus.py` holds the subset. The fetch
+# itself is network and uncovered, which is how a four-column ask went live and failed (#437).
+SCHEDULE_COLS = ("game_id", "season", "week", "game_type", "home_team", "away_team", "gameday")
+
 EASTERN = ZoneInfo("America/New_York")
 CAPTURE_COLUMNS = ("player", "pos", "team", "ecr")
 _GLOB = "wk*/cap-*.json"
@@ -246,8 +252,7 @@ def capture_week(schedule: pl.DataFrame, archive: pl.DataFrame, season: int, now
 def _fetch(  # pragma: no cover - network
         season: int) -> tuple[pl.DataFrame, pl.DataFrame, str | None]:
     from hub.fetch import nflverse
-    schedule = nflverse.load("schedules", [season], cols=("season", "week", "game_type",
-                                                          "gameday"))
+    schedule = nflverse.load("schedules", [season], cols=SCHEDULE_COLS)
     archive = nflverse.load_rankings("all", cols=nflverse.RANKINGS_COLS, refresh=True)
     pin = nflverse.data_pin("ff_rankings", ["all"], cols=nflverse.RANKINGS_COLS, as_of=None)
     return schedule, archive, (pin.digest if pin is not None else None)

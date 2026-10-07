@@ -190,3 +190,21 @@ def test_main_answers_a_failed_fetch_with_a_sentence_and_a_stale_page_with_anoth
     monkeypatch.setattr(consensus, "_fetch", lambda _s: (far, _archive(), "d"))
     assert consensus.main(["--capture"]) == 3
     assert "nothing captured" in capsys.readouterr().err
+
+
+def test_the_columns_asked_of_the_loaders_satisfy_their_contracts():
+    """`_fetch` is network and uncovered, and its first live run failed with a contract
+    violation: the schedule was asked for four columns and the contract requires five. No
+    network is needed to see it -- the contract's required columns must be inside the ask.
+    Planted: the old four-column tuple is shown missing exactly the three the live run named."""
+    from hub.contracts import PLAYER_STATS, SCHEDULES
+    from hub.season import weekly_forward
+
+    def missing(cols, contract):
+        return sorted(set(contract.required) - set(cols))
+
+    assert missing(consensus.SCHEDULE_COLS, SCHEDULES) == []
+    assert missing(weekly_forward.STATS_COLS, PLAYER_STATS) == []
+    old = ("season", "week", "game_type", "gameday")
+    assert missing(old, SCHEDULES) == ["away_team", "game_id", "home_team"]
+    assert missing(("season", "week"), PLAYER_STATS) != []

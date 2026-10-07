@@ -45,11 +45,22 @@ from hub.config import FANTASY_WEEKS
 from hub.declare import decision, not_an_input
 from hub.fetch import consensus
 from hub.fetch.consensus import Capture
-from hub.models.experiment import Actions, Ceiling, GateRun, gate
+from hub.models.experiment import PLAYER_STATS_COLS, Actions, Ceiling, GateRun, gate
 from hub.season.weekly_gate import CEILING_ARM, WITHIN, void_condition
 
 SEASON = 2026
+
+# The player-stats columns the horizon's presence check asks for: the shared list, so it is one
+# cache entry with every other reader and satisfies the `nflverse_player_stats` contract.
+STATS_COLS = PLAYER_STATS_COLS
 DESIGN = "docs/weekly-forward.md"
+
+# The arm the design pinned: the blob of `hub/models/weekly.py` at the commit that
+# pre-registered it (`docs/weekly-forward.md`, *The design*). A run whose arm is any other blob
+# refuses to read a verdict -- a change to what the projection computes is a new arm and needs a
+# new pre-registration, and a pure move that edits the file gets the same refusal until the
+# document is amended, dated, with the new blob, before any admitted outcome is read.
+PINNED_ARM_BLOB = "f6de17b2ca26a6dbaa2e606f567f8227456bc015"
 
 # The last week the measurement reads: the fantasy regular season's, `GATE_WEEKS`' own (15-17
 # are reported apart by the gate and are not read here).
@@ -108,8 +119,8 @@ def first_commit_at(path: Path) -> datetime | None:
 
     None for a path outside a repository, an untracked file, a shallow clone (its history stops
     at an arbitrary commit, and every file older than that would look committed at the boundary)
-    or a failing git. The caller treats None as *not contradicted*, never as proof: the file's
-    own `captured_at` still has to precede the deadline.
+    or a failing git. `admit` refuses a capture whose time is None: the file's own `captured_at`
+    is never a substitute for the commit.
     """
     try:
         cwd = path.parent
@@ -127,7 +138,7 @@ def first_commit_at(path: Path) -> datetime | None:
 @decision
 def admit(captures: Sequence[Capture], days: dict[int, date],
           floors: dict[int, date], *,
-          first_commit: Callable[[Path], datetime | None] | None = None) -> Admission:
+          first_commit: Callable[[Path], datetime | None]) -> Admission:
     """The weeks the measurement may read, by the rule the design fixed before any outcome.
 
     A capture is turned away when it was written at or after its week's first game day
@@ -160,8 +171,15 @@ def admit(captures: Sequence[Capture], days: dict[int, date],
             if not (floors[week] <= c.scrape_date < first):
                 why.append(f"its scrape of {c.scrape_date} is not week {week}'s page")
                 continue
-            committed = first_commit(c.path) if first_commit and c.path else None
-            if committed is not None and committed >= deadline:
+            committed = first_commit(c.path) if c.path is not None else None
+            if committed is None:
+                # Never the file's own word: it is the one thing a late capture can set.
+                where = c.path.name if c.path is not None else "(no path)"
+                why.append(f"{where}: first-commit time unknown (shallow clone, untracked "
+                           f"file or no history) -- not admitted; read with full history "
+                           f"(`fetch-depth: 0`)")
+                continue
+            if committed >= deadline:
                 why.append(f"first committed {committed:%Y-%m-%dT%H:%M}Z, after the deadline")
                 continue
             valid.append(c)
@@ -186,11 +204,17 @@ def _admission_lines(adm: Admission) -> list[str]:
     return out
 
 
+@decision
 def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capture],
                  assemble: Callable[[dict[int, Capture]], tuple[pl.DataFrame, dict | None]],
-                 first_commit: Callable[[Path], datetime | None] | None = None,
-                 arm_blob: str | None = None, seed: int = 0) -> Reading:
+                 first_commit: Callable[[Path], datetime | None],
+                 horizon_data: Callable[[], bool], arm_blob: str | None,
+                 seed: int = 0) -> Reading:
     """One reading of the forward measurement, or the statement that it is not time.
+
+    `horizon_data` says whether week 14's rows are in nflverse (a presence check, run only once
+    the date has passed); `arm_blob` is the blob the arm under test is defined in, and any value
+    but `PINNED_ARM_BLOB` refuses the reading.
 
     `assemble` is the only function that reads outcomes -- admitted weeks in, a paired frame
     (`season`, `roster`, `week`, `diff`, and `ceiling_diff`) and the gate's coverage out -- and it
@@ -204,6 +228,15 @@ def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capt
         return Reading("NOT-YET", [
             f"NOT-YET: the horizon is the end of week {HORIZON_WEEK} ({when}); this run is "
             f"{as_of}. No outcome was loaded and none will be before it ({DESIGN})."])
+    if not horizon_data():
+        return Reading("NOT-YET", [
+            f"NOT-YET: the dates are past week {HORIZON_WEEK}, but its rows are not in nflverse "
+            f"yet. No outcome was read."])
+    if arm_blob != PINNED_ARM_BLOB:
+        return Reading("REFUSED", [
+            f"REFUSED: the arm under test is blob {arm_blob}, not the pinned {PINNED_ARM_BLOB}. "
+            f"A change to the projection is a new arm and needs a new pre-registration "
+            f"({DESIGN}); no verdict is read and no outcome was loaded."])
     adm = admit(captures, days, consensus.scrape_floors(schedule), first_commit=first_commit)
     head = _admission_lines(adm)
     if len(adm.admitted) < MIN_WEEKS:
@@ -227,9 +260,7 @@ def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capt
              f"  Disposition: {run.resolved} resolved of {run.seasons.height}, "
              f"{run.abstained} abstained",
              *head]
-    if arm_blob:
-        lines.append(f"  arm under test: hub/models/weekly.py at blob {arm_blob} "
-                     f"(the design pinned f6de17b2ca26a6dbaa2e606f567f8227456bc015)")
+    lines.append(f"  arm under test: blob {arm_blob} (pinned, {DESIGN})")
     lines += [f"  caveat: {c}" for c in CAVEATS]
     return Reading(run.verdict[0], lines, run, adm)
 
@@ -277,6 +308,13 @@ def assemble_2026(admitted: dict[int, Capture]
     return paired.filter(pl.col("season") == SEASON), weekly_gate.coverage(g, weeks)
 
 
+def week14_loaded() -> bool:  # pragma: no cover - network
+    """Whether nflverse has any player-week row for the horizon week: presence only."""
+    from hub.fetch import nflverse
+    stats = nflverse.load("player_stats", [SEASON], cols=STATS_COLS)
+    return bool((stats["week"] == HORIZON_WEEK).any())
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - network
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--as-of", help="ISO date this reading is taken on (default: today, UTC)")
@@ -284,13 +322,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     as_of = date.fromisoformat(a.as_of) if a.as_of else datetime.now(UTC).date()
     try:
         from hub.fetch import nflverse
-        schedule = nflverse.load("schedules", [SEASON], cols=("season", "week", "game_type",
-                                                              "gameday"))
+        schedule = nflverse.load("schedules", [SEASON], cols=consensus.SCHEDULE_COLS)
     except Exception as exc:
         return unavailable("hub.season.weekly_forward", "the 2026 schedule", exc)
     reading = read_forward(as_of=as_of, schedule=schedule,
                            captures=consensus.read_captures(SEASON), assemble=assemble_2026,
-                           first_commit=first_commit_at, arm_blob=arm_blob())
+                           first_commit=first_commit_at, horizon_data=week14_loaded,
+                           arm_blob=arm_blob())
     print("\n".join(reading.lines))
     return 0 if reading.status in {"ADOPT", "REMOVE", "SHOW", "NOT-YET"} else 1
 

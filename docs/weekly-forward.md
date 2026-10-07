@@ -302,3 +302,37 @@ game day; before that it prints NOT-YET and loads nothing.
 **The first capture is the maintainer's to take by hand if the workflow has not run before the
 next week's first game day**: `uv run python -m hub.fetch.consensus --capture`, then commit
 `state/consensus/`. Each week without a capture is a week this measurement does not have.
+
+## Amended 2026-10-07 after the review of the build (#437; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. Each of these makes
+the harness stricter than the text above, or says more exactly what the text meant:
+
+- **Whose clock admits a capture.** *"Whatever the file says about itself"* is now enforced, not
+  only stated: a capture whose first-commit time the repository history cannot report (a shallow
+  clone, an untracked file, no history at all) is **not admitted** and is named in the reading
+  with the instruction to read with full history. The file's own `captured_at` never stands in.
+  No workflow reads the verdict; it is run by hand
+  (`uv run python -m hub.season.weekly_forward`), so what matters is that the clone it is run in
+  has full history (unshallow it first). A scheduled reader would have to check out with
+  `fetch-depth: 0`.
+- **The horizon is dates and then data.** The second day after week 14's last game day is
+  necessary; it is not sufficient. The harness also asks whether week 14's rows are in nflverse
+  (a presence check) and says NOT-YET, loading no outcome, if they are not.
+- **The arm pin is enforced.** A run whose arm is not blob
+  `f6de17b2ca26a6dbaa2e606f567f8227456bc015` (`weekly_forward.PINNED_ARM_BLOB`) is REFUSED, with
+  no outcome loaded: a different projection is a new arm and needs a new pre-registration. A
+  pure move of the file that edits it (#430's import changes) trips the same refusal, and is
+  answered by amending this document, dated, with the new blob, before any admitted outcome is
+  read, not by editing the constant alone.
+- **The roster-level Disposition is weakly informative here.** The rule reads the 2026 season's
+  Disposition from a bootstrap over the 20 rosters, whose SE excludes the week component that all
+  rosters in a week share (about 0.55 on rosters against about 0.71 on weeks at 10 weeks, from
+  the power table's own process). So the week-clustered interval is the **binding half** of (C)
+  here, and a "win" or "loss" read within rosters adds little the interval does not already say.
+  The power table is of the shipped rule as it stands and is unchanged by this note.
+- **Week numbering.** As of 2026-10-07 weeks 1-4 have been played. Week 5's first game is
+  Thursday 2026-10-08 on the usual calendar (not read from the cached schedule, which carries no
+  game dates), so week 5 is the first week a capture can still admit, and it counts only if the
+  capture precedes that day. The heading *Weeks 1-5* above is the issue's; the rule for week 5 is
+  the capture's timestamp, not its number.

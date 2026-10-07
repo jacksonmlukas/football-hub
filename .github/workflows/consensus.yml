@@ -64,7 +64,9 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/consensus
+          # `state`, not `state/consensus`: a run that captured nothing (exit 3) in a tree with no
+          # consensus directory yet would die at the pathspec (the shape of #424), and `state` exists.
+          git add state
           if git diff --cached --quiet; then
             echo "nothing changed; no commit"
             exit 0

@@ -45,8 +45,21 @@ DAYS = consensus.first_game_days(SCHEDULE)
 FLOORS = consensus.scrape_floors(SCHEDULE)
 
 
+def _known(_path):
+    """A first-commit time well before every deadline: the history git would report."""
+    return datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def _read(**kw):
+    """`read_forward` with the three things a real run supplies, defaulted to the clean case."""
+    kw.setdefault("first_commit", _known)
+    kw.setdefault("horizon_data", lambda: True)
+    kw.setdefault("arm_blob", wf.PINNED_ARM_BLOB)
+    return wf.read_forward(**kw)
+
+
 def _cap(week: int, *, hours_before: float = 20.0, scrape_days_before: int = 1,
-         path: Path | None = None, players: tuple[str, ...] = ("A", "B")) -> Capture:
+         path: Path | None = Path("state/consensus/2026/wk00/cap-x.json"), players: tuple[str, ...] = ("A", "B")) -> Capture:
     first = DAYS[week]
     return Capture(
         season=2026, week=week, captured_at=consensus.deadline_for(first)
@@ -95,18 +108,50 @@ def test_a_run_before_the_horizon_reads_no_outcome():
     called. A run on the day week 14's last game is played, and on the day after, is NOT-YET; the
     reading exists on the second day after."""
     for as_of in (date(2026, 10, 7), date(2026, 12, 14), date(2026, 12, 15)):
-        r = wf.read_forward(as_of=as_of, schedule=SCHEDULE, captures=_full(), assemble=_boom)
+        r = _read(as_of=as_of, schedule=SCHEDULE, captures=_full(), assemble=_boom)
         assert r.status == "NOT-YET" and r.run is None
         assert "No outcome was loaded" in r.lines[0]
-    r = wf.read_forward(as_of=date(2026, 12, 16), schedule=SCHEDULE, captures=_full(),
+    r = _read(as_of=date(2026, 12, 16), schedule=SCHEDULE, captures=_full(),
                         assemble=_assemble(_paired(0.0)))
     assert r.status != "NOT-YET"
 
 
 def test_no_schedule_for_the_horizon_week_is_not_yet_not_a_verdict():
     short = SCHEDULE.filter(pl.col("week") < wf.HORIZON_WEEK)
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=short, captures=_full(), assemble=_boom)
+    r = _read(as_of=AFTER_HORIZON, schedule=short, captures=_full(), assemble=_boom)
     assert r.status == "NOT-YET" and "no schedule" in r.lines[0]
+
+
+def test_dates_past_the_horizon_with_week_14_absent_from_the_data_is_not_yet():
+    """Rule 18: the dates say the horizon is past and the data says week 14 is not there -- the
+    reading must wait, and must not have loaded an outcome to find out. Flip it: with the rows
+    present the same call reads."""
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(), assemble=_boom,
+              horizon_data=lambda: False)
+    assert r.status == "NOT-YET" and "not in nflverse" in r.lines[0]
+    ok = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+               assemble=_assemble(_paired(0.0)), horizon_data=lambda: True)
+    assert ok.status != "NOT-YET"
+    # and the data is not asked about before the date has passed
+    early = _read(as_of=date(2026, 10, 7), schedule=SCHEDULE, captures=_full(), assemble=_boom,
+                  horizon_data=lambda: (_ for _ in ()).throw(AssertionError("asked early")))
+    assert early.status == "NOT-YET"
+
+
+def test_a_different_arm_refuses_the_reading_and_loads_nothing():
+    """Rule 18: plant a blob that is not the pinned one -- and `None`, an arm that cannot be
+    identified -- and the run refuses and says a new arm needs a new pre-registration. Flip it:
+    the pinned blob reads."""
+    for blob in ("0" * 40, None):
+        r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(), assemble=_boom,
+                  arm_blob=blob)
+        assert r.status == "REFUSED" and "new pre-registration" in r.lines[0]
+    assert wf.PINNED_ARM_BLOB == "f6de17b2ca26a6dbaa2e606f567f8227456bc015"
+    assert wf.PINNED_ARM_BLOB in (Path(__file__).resolve().parents[2] / "docs"
+                                  / "weekly-forward.md").read_text()
+    ok = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+               assemble=_assemble(_paired(0.0)), arm_blob=wf.PINNED_ARM_BLOB)
+    assert ok.status != "REFUSED"
 
 
 def test_the_horizon_is_the_day_after_week_14s_last_game():
@@ -122,31 +167,31 @@ def test_a_capture_after_kickoff_is_excluded_at_the_read_and_named():
     """Rule 18, the read half: the write refuses a late capture, but a file placed in the tree by
     any other route is excluded here, with its week and the reason, and the week is not scored."""
     late = _cap(9, hours_before=-3)                          # written three hours into the day
-    adm = wf.admit([*_full(range(5, 9)), late, *_full(range(10, 15))], DAYS, FLOORS)
+    adm = wf.admit([*_full(range(5, 9)), late, *_full(range(10, 15))], DAYS, FLOORS, first_commit=_known)
     assert 9 not in adm.admitted and "at or after the deadline" in adm.refused[9]
     assert sorted(adm.admitted) == [5, 6, 7, 8, 10, 11, 12, 13, 14]
     # and on the right side of the same boundary the same week is admitted
-    assert 9 in wf.admit([_cap(9, hours_before=0.01)], DAYS, FLOORS).admitted
+    assert 9 in wf.admit([_cap(9, hours_before=0.01)], DAYS, FLOORS, first_commit=_known).admitted
 
 
 def test_a_stale_page_is_refused_and_the_latest_valid_capture_is_the_one_used():
     stale = _cap(6, scrape_days_before=9)                    # nine days before: week 5's page
-    assert "not week 6's page" in wf.admit([stale], DAYS, FLOORS).refused[6]
+    assert "not week 6's page" in wf.admit([stale], DAYS, FLOORS, first_commit=_known).refused[6]
     # week 5's Wednesday page filed under week 6 is stale however recent it is
     wrong = dataclasses.replace(_cap(6), scrape_date=date(2026, 10, 7))
-    assert "not week 6's page" in wf.admit([wrong], DAYS, FLOORS).refused[6]
+    assert "not week 6's page" in wf.admit([wrong], DAYS, FLOORS, first_commit=_known).refused[6]
     early, later = _cap(7, hours_before=60), _cap(7, hours_before=5)
-    assert wf.admit([early, later], DAYS, FLOORS).admitted[7].captured_at == later.captured_at
+    assert wf.admit([early, later], DAYS, FLOORS, first_commit=_known).admitted[7].captured_at == later.captured_at
     # one bad capture does not veto a good one of the same week
-    adm = wf.admit([_cap(7, scrape_days_before=9), later], DAYS, FLOORS)
+    adm = wf.admit([_cap(7, scrape_days_before=9), later], DAYS, FLOORS, first_commit=_known)
     assert 7 in adm.admitted and 7 not in adm.refused
 
 
 def test_a_week_with_no_capture_is_named_not_scored():
-    adm = wf.admit(_full(range(8, 15)), DAYS, FLOORS)
+    adm = wf.admit(_full(range(8, 15)), DAYS, FLOORS, first_commit=_known)
     assert adm.uncaptured == (1, 2, 3, 4, 5, 6, 7) and adm.refused == {}
     assert sorted(adm.admitted) == list(range(8, 15))
-    assert wf.admit([_cap(15)], DAYS, FLOORS).admitted == {}        # 15-17 are never read
+    assert wf.admit([_cap(15)], DAYS, FLOORS, first_commit=_known).admitted == {}        # 15-17 are never read
 
 
 def test_a_capture_first_committed_after_the_deadline_is_not_admitted():
@@ -159,7 +204,16 @@ def test_a_capture_first_committed_after_the_deadline_is_not_admitted():
                                             first_commit=lambda _p: late).refused[5]
     early = consensus.deadline_for(DAYS[5]) - timedelta(hours=2)
     assert 5 in wf.admit([cap], DAYS, FLOORS, first_commit=lambda _p: early).admitted
-    assert 5 in wf.admit([cap], DAYS, FLOORS, first_commit=lambda _p: None).admitted
+    # Rule 18, the shallow-clone plant: git cannot say when it was committed, and the file's own
+    # `captured_at` (well before the deadline) must not stand in for it. Flip it: a known time
+    # admits the identical capture.
+    unknown = wf.admit([cap], DAYS, FLOORS, first_commit=lambda _p: None)
+    assert 5 not in unknown.admitted
+    assert "first-commit time unknown" in unknown.refused[5] and "cap-x.json" in unknown.refused[5]
+    assert "fetch-depth: 0" in unknown.refused[5]
+    assert 5 in wf.admit([cap], DAYS, FLOORS, first_commit=_known).admitted
+    no_path = dataclasses.replace(cap, path=None)
+    assert 5 not in wf.admit([no_path], DAYS, FLOORS, first_commit=_known).admitted
 
 
 def test_first_commit_at_reads_git_and_says_none_where_it_cannot(tmp_path):
@@ -189,11 +243,11 @@ def test_first_commit_at_reads_git_and_says_none_where_it_cannot(tmp_path):
 # --- too few weeks: the exemption is named -------------------------------------------------------
 
 def test_fewer_than_the_pre_registered_weeks_is_not_runnable_and_loads_nothing():
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(range(10, 15)),
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(range(10, 15)),
                         assemble=_boom)
     assert r.status == "NOT-RUNNABLE" and "5 admitted week(s), fewer than the 6" in r.lines[0]
     assert wf.MIN_WEEKS == 6
-    r6 = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(range(9, 15)),
+    r6 = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(range(9, 15)),
                          assemble=_assemble(_paired(0.0, weeks=range(9, 15))))
     assert r6.status != "NOT-RUNNABLE"
 
@@ -204,11 +258,11 @@ def test_a_planted_effect_is_detected_in_both_directions():
     """The positive control the design asks for. An effect a hundred points wide is ADOPT, its
     negative REMOVE, and the same frame with no effect is neither -- so a harness that returned
     SHOW for everything, or ADOPT for everything, would fail here."""
-    up = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    up = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                          assemble=_assemble(_paired(100.0)))
-    down = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    down = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                            assemble=_assemble(_paired(-100.0)))
-    null = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    null = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                            assemble=_assemble(_paired(0.0)))
     assert (up.status, down.status, null.status) == ("ADOPT", "REMOVE", "SHOW")
     assert _run(up).resolved == 1 and _run(up).abstained == 0
@@ -222,7 +276,7 @@ def test_the_week_is_the_cluster_not_the_roster_and_it_widens_the_interval():
     and not twenty. The same frame clustered on the roster gives a narrower interval than the
     one this reads -- the difference the design's unit choice makes, seen rather than asserted."""
     frame = _paired(0.5, week_sd=3.0, noise=2.0)
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                         assemble=_assemble(frame))
     by_week = _run(r).summary
     by_roster = gate(frame.drop("ceiling_diff"), cluster=("roster",), within=("roster",),
@@ -233,20 +287,20 @@ def test_the_week_is_the_cluster_not_the_roster_and_it_widens_the_interval():
 
 
 def test_a_ceiling_below_the_mde_is_not_runnable_in_the_forward_gate_too():
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                         assemble=_assemble(_paired(0.0, ceiling=0.05)))
     assert r.status == "NOT-RUNNABLE" and "ceiling" in _run(r).verdict[1]
 
 
 def test_a_join_failure_voids_the_forward_gate_as_it_voids_the_weekly_gate():
     cover = {"cells": 100.0, "join_failure": 0.5}
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                         assemble=_assemble(_paired(100.0), cover))
     assert r.status == "VOID"
 
 
 def test_a_frame_with_no_ceiling_column_is_not_runnable_not_adopted():
-    r = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                         assemble=_assemble(_paired(100.0).drop("ceiling_diff")))
     assert r.status == "NOT-RUNNABLE"
 
@@ -270,7 +324,7 @@ def test_the_simulated_rule_is_the_shipped_rule(power):
     assert power.ROSTERS == 20 and wf.CLUSTER_WEEK == ("week",)
     for delta in (100.0, -100.0, 0.0):
         frame = _paired(delta)
-        shipped = wf.read_forward(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+        shipped = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
                                   assemble=_assemble(frame)).status
         assert power.read(frame.drop("ceiling_diff"), 0, 4000) == shipped
 
