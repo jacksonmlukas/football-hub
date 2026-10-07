@@ -51,6 +51,20 @@ def _own_artifact(tmp_path, monkeypatch):
     """No test here writes, or reads the audit looks of, the committed artifact: a look is
     spent when it is recorded, and this file must never spend one (#438)."""
     monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "interval_coverage.json")
+    monkeypatch.setattr(coverage, "_schedules", _offline)
+    monkeypatch.setattr(coverage, "_current_or_none", _no_current_row)
+
+
+def _no_current_row(cache, as_of):
+    """The weekly run's 2026 row, stubbed to the empty one: these tests are not about it, and an
+    unmeasurable row is a failed run (#423), which is tested where the row is."""
+    return {"label": "out-of-sample", "season": 2026, "weeks_complete": 0, "n": 0,
+            "by_position": [], "looks": {}}
+
+
+def _offline(seasons, cache):
+    """No schedule offline: the current-season row degrades (#423) instead of reaching the wire."""
+    raise OSError("offline in tests")
 
 
 def _row(group, n, cov):
@@ -126,11 +140,11 @@ def test_an_audit_past_its_third_look_is_a_restatement_trigger_not_a_verdict(
 
 def test_the_audit_prints_the_look_and_alpha_beside_the_verdict_and_gates_on_the_marginal(
         monkeypatch, capsys):
-    """Calibrated draws cover 80%: the audit passes (exit 0) and says look 2 of 3, alpha, z."""
+    """Calibrated draws cover 80%: the audit passes (exit 0) and says look 1 of 3, alpha, z."""
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(seed=3))
-    assert coverage.main(["--audit", "--look", "2"]) == 0
+    assert coverage.main(["--audit", "--look", "1"]) == 0
     out = capsys.readouterr().out
-    assert "look 2 of 3" in out and "0.0167" in out and "2.394" in out
+    assert "look 1 of 3" in out and "0.0167" in out and "2.394" in out
     assert "NOT-RUNNABLE" in out, "no position has 8,377 weeks in a fixture this size"
     assert "season's own coverage" in out and "never gated" in out
 
@@ -295,8 +309,11 @@ def test_a_look_already_recorded_is_refused_and_the_record_is_untouched(monkeypa
     assert coverage.main(["--audit", "--look", "1", "--write"]) == 1
     assert "already recorded" in capsys.readouterr().err
     assert json.loads(coverage.ARTIFACT.read_text()) == first, "the recorded look is untouched"
-    assert coverage.main(["--audit", "--look", "2", "--write"]) == 0, "the next look is open"
-    assert coverage.looks_taken() == [1, 2]
+    # The next look is open as far as the record goes: look 2 is refused for its *week* here (no
+    # 2026 schedule offline), not as "already recorded".
+    assert coverage.main(["--audit", "--look", "2", "--write"]) != 0
+    assert "already recorded" not in capsys.readouterr().err
+    assert coverage.looks_taken() == [1]
 
 
 def test_the_write_seam_refuses_a_recorded_look_even_if_the_cli_does_not():

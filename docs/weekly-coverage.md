@@ -252,6 +252,37 @@ still change:
 changes, a season unlike the last) before it is evidence about the construction; and a position
 on pooled calibration for part of its window is not testing the conditional claim for those weeks.
 
+**Built 2026-10-07 (#423): the row the two looks read, and how it is refused until it is time.**
+`state/interval_coverage.json` now carries `current_season`: the current season's completed weeks
+scored by the published interval, labelled `out-of-sample`, with `n`, `cov80`, `cov68`,
+`clipped_share` and sigma at the binomial SE, the positions NOT-RUNNABLE below 8,377 with the MDE
+beside them, and no marginal verdict. It is not pooled into the 2021-2025 figure; the file's top
+level is still the backtest. Three construction choices, none of which moves the interval:
+
+- **A week is complete** when its last game was played more than a day ago *and* its rows are in
+  nflverse, counted from week 1 without a gap (`coverage.completed_weeks`). Thursday's game of a
+  week with three days left does not make it complete, so a Saturday run does not score a partial
+  week. The row is empty until week 5 (the prior centre needs four earlier weeks): on the day it
+  was built, 2026-10-07, four weeks were complete and `n = 0`.
+- **The calibration window is the same one the backtest uses**: the last 14 `(season, week)`
+  cells before the cell scored, so the first 2026 weeks are calibrated on the 2025 weeks behind
+  them. The row reads the current season and the two before it, and a unit test holds that equal to
+  the five-season read (`test_two_seasons_of_history_give_the_calibration_a_full_window...`).
+- **Looks 2 and 3 refuse before their week.** `--audit --look 2|3` reads this row, `--look 1`
+  reads the backtest. Look 2 is refused (exit 2, nothing loaded, nothing written) until week 14's
+  last game was played more than a day ago and then, once the stats are loaded, until week 14's
+  rows are in nflverse; look 3 likewise for week 18 (`coverage.LOOK_WEEKS`, `look_date_reached`,
+  `completed_weeks`). A refused look spends nothing. Controls (`tests/unit/test_coverage_current.py`)
+  plant the run date on week 14's last game and the day after it (refused) and two days after
+  (taken), and cut the data at week 13 with the date past it (refused).
+
+The closed backtest and the survivor block are measured once per key (the config, the code of the
+modules that compute them, and the identity of the closed season span) and read back while it
+holds; `--remeasure` forces a pull. The data side of the key is the declared span, not a hash of
+the bytes (hashing them is the pull this avoids), so a restated nflverse season is the one thing it
+cannot see. Written floats are rounded to six places and a run that changes nothing writes
+nothing, so the slate commits no noise to the pre-registration.
+
 ## Restated 2026-10-06 (#309): the published interval, measured as designed above
 
 > **What moved, in one line.** The gate's figure went from **77.4% of 10,536 unclipped

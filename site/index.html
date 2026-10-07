@@ -292,8 +292,20 @@ function intervalCoverageBody(ic) {
   const weekly = `<p class="legend">Weekly interval, labelled 80%: covers ${esc(pct(ic.gate_cov80))}
     of ${esc(pop)} against the claimed ${esc(pct(ic.gate_claim))}
     (±${esc(pct(ic.band))}) — this week's read ${esc(ic.verdict)}, measured ${esc(ic.generated_at)}.${esc(auditNote)}</p>`;
+  // The current season's completed weeks, beside the backtest and never pooled with it (#423):
+  // an out-of-sample row that carries no verdict of its own. Looks 2 and 3 of the claim read it,
+  // after weeks 14 and 18, and the page says so rather than letting the backtest read as current.
+  const c = ic.current_season;
+  const current = c ? `<p class="legend">${esc(c.season)} so far, out of sample
+    (${esc(c.weeks_complete)} weeks complete, not pooled with the figure above): ` +
+    (c.n ? `the 80% interval covers ${esc(pct(c.cov80))} of ${esc(Number(c.n).toLocaleString())}
+    scored player-weeks (68% interval ${esc(pct(c.cov68))}, ${esc(pct(c.clipped_share))} clipped at
+    zero, ${esc(fmt(c.sigma, 1))} sigma at the binomial standard error)`
+      : "no week has been scored yet") +
+    `. No verdict is read from this row until the audit looks at weeks ` +
+    `${esc(Object.values(c.looks ?? {}).map(l => l.after_week).join(" and "))}.</p>` : "";
   const s = ic.survivor;
-  if (!s) return weekly;
+  if (!s) return weekly + current;
   const floor = s.min_bucket ?? 50;
   const buckets = Array.isArray(s.buckets) ? s.buckets : [];
   const signed = v => (v === null || v === undefined) ? "—" : (v >= 0 ? "+" : "") + fmt(v, 3);
@@ -309,7 +321,7 @@ function intervalCoverageBody(ic) {
     { label: "won", get: r => fmt(r.actual, 3), cls: r => r.thin ? "thin" : "" },
     { label: "gap", get: r => signed(r.gap), cls: r => r.thin ? "thin" : "" },
   ], buckets) : "";
-  return weekly + headline + rows;
+  return weekly + current + headline + rows;
 }
 
 // The survivor panel's body: the remaining plan, and the scope that makes it readable.

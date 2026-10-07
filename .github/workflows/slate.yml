@@ -72,6 +72,23 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
 
+      # The coverage measurement, written where the commit below can carry it (#273) and
+      # *before* the publish that reads it (#423: it used to run after, so the track record
+      # embedded the previous run's measurement). It reports the closed 2021-2025 backtest read
+      # back from `state/interval_coverage.json` while its key holds -- measured once, not pulled
+      # twice a week -- and the current season's completed weeks as a separate out-of-sample row,
+      # and it writes only if a number moved (floats at `ROUND_DIGITS`; an unchanged run
+      # commits nothing). Measured here, never gated here: the gate runs after the commit, so a
+      # red gate is a red run and not an unpublished slate.
+      #
+      # `continue-on-error`, because a fetch that fails here must not take the slate down with
+      # it -- the publisher then reads the last committed measurement, which is the degradation
+      # `CLAUDE.md` asks for. The gate step below is the one that is allowed to be red, and the
+      # contract test holds it to having no such escape.
+      - name: Measure the interval's coverage and the survivor price
+        continue-on-error: true
+        run: uv run python -m hub.models.coverage --measure --survivor --write
+
       # `make slate` and not a hand-copied list of commands: the Makefile is what a human runs
       # and what SETUP.md documents, so CI exercising anything else would be a second recipe
       # that drifts. Its optional sources are already marked with a leading `-` there.
@@ -102,21 +119,22 @@ jobs:
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
         run: make slate
 
-      # The coverage measurement, written where the commit below can carry it (#273). The
-      # publisher reads `state/interval_coverage.json` into the track record, and for as
-      # long as the file lived under the gitignored `data/processed/` it read nothing on this
-      # runner. Measured here, never gated here: the gate runs after the commit, so a red
-      # gate is a red run and not an unpublished slate.
-      #
-      # `continue-on-error`, because this is five seasons of player-weeks pulled cold from
-      # nflverse on every run, and a fetch that fails here must not take the slate that
-      # `make slate` just refreshed down with it -- the publisher then reads the last
-      # committed measurement, which is the degradation `CLAUDE.md` asks for. The gate
-      # step below is the one that is allowed to be red, and the contract test holds it to
-      # having no such escape.
-      - name: Measure the interval's coverage and the survivor price
-        continue-on-error: true
-        run: uv run python -m hub.models.coverage --measure --survivor --write
+      # The track record's coverage half is the state file as of the publish, so a measurement
+      # written after the publish is published by the *next* run. That was V5's second defect
+      # (Audit V): `track_record.json` carried `generated_at: 2026-10-03T17:53:10` in the commit
+      # of 2026-10-04. The measure step is therefore *above* `make slate` and the check below it
+      # reads the stamp the record embedded back against the file's (#423).
+      - name: Check the track record carries the measurement this run wrote
+        run: |
+          [ -f state/interval_coverage.json ] || { echo "no measurement on disk; nothing to compare"; exit 0; }
+          WROTE=$(jq -r '.generated_at // empty' state/interval_coverage.json)
+          PUBLISHED=$(jq -r '.interval_coverage.generated_at // empty' site/data/track_record.json)
+          # An absent measurement (nothing was ever measured) publishes null, which is the
+          # last-good rule and not a mismatch; two present and different stamps are the bug.
+          if [ -n "$WROTE" ] && [ "$WROTE" != "$PUBLISHED" ]; then
+            echo "::error::track_record.json embeds interval_coverage.generated_at='$PUBLISHED' but state/interval_coverage.json says '$WROTE': the record was published from a measurement other than the one this run wrote"
+            exit 1
+          fi
 
       # Read back rather than trusted. A run whose sources all failed still writes a manifest,
       # and a manifest of six stale panels is a successful-looking job that published nothing --
