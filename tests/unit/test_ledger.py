@@ -240,8 +240,15 @@ def test_a_ledger_entry_round_trips_the_inputs_it_read(tmp_path):
     assert got.entry.inputs == reads
     ledger.record(_entry(width=1.1, lo=-1.0, hi=1.0))
     first, second = json.loads(path.read_text())["entries"]
-    assert first["inputs"] == reads and "inputs" not in second
+    # #434: the row names the reads by digest; the full set is stored once beside the ledger.
+    assert "inputs" not in first and "inputs_digest" in first, "the row carries a digest only"
+    assert "inputs" not in second and "inputs_digest" not in second
+    entries = Ledger(path)._read()
+    assert entries is not None
+    assert sorted(ledger.inputs_of(entries[0]) or [], key=lambda r: r["source"]) == reads
+    assert ledger.inputs_of(entries[1]) is None
     first["inputs"] = "not a list"
+    del first["inputs_digest"]
     path.write_text(json.dumps({"entries": [first, second]}))
     entries = Ledger(path)._read()
     assert entries is not None and all(e.inputs is None for e in entries)

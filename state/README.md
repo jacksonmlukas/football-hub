@@ -94,6 +94,21 @@ What this repo has spent against two metered third-party accounts:
   draft gate reads twelve unpinned `player_stats` cache entries, and what a replay is diffed
   against. Optional and additive: absent on an older entry, which is unrecorded, not empty.
 
+  **Restated 2026-10-07 (#434, rule 13): `inputs` are stored once, beside the ledger.** The
+  paragraph above says every entry carries the list; that is true of the three rows written
+  before this note and no longer of what the writer does. Inline, the draft gate's 36 reads
+  were about 3 KB of an entry whose other fields are about 1 KB, and the ledger's cap was sized
+  without them. A file-backed `Ledger` now writes the run's reads once to
+  `state/inputs/<digest>.json` -- `{"inputs": [...]}`, sorted by `(source, as_of, digest)`, the
+  digest being the first 16 hex characters of the SHA-256 of that canonical text -- and the row
+  carries `"inputs_digest"` instead of `"inputs"`. Runs that read the same pins hash alike and
+  share one file. `Ledger.inputs_of(entry)` reads either form back; a stored set that is missing
+  or whose content no longer hashes to its name reads as *unrecorded*, never as another run's
+  reads, and a row whose set could not be written keeps `inputs` inline. **Old rows were not
+  migrated**: the ledger is append-only, so the three that carry `inputs` inline keep them, byte for byte; only rows written from here use the compact form. The files
+  under `state/inputs/` are as append-only as the ledger -- do not edit or delete one a row
+  names.
+
   **`code_digest`, since #435 (2026-10-07).** The key above is `(name, recipe, config_digest,
   data_digest)` and `config_digest` hashes the config and the fitted constants, **not code**, so a
   change to a gate's arms with config and data unchanged produced an entry the ledger took as

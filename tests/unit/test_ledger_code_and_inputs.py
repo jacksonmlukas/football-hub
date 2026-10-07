@@ -103,3 +103,61 @@ def test_code_digest_is_order_free_and_refuses_what_it_cannot_hash(tmp_path, mon
         code_digest(["planted435_nothing_here"])
     with pytest.raises(ValueError, match="package"):
         code_digest(["hub.models"])
+
+
+# --- #434 ------------------------------------------------------------------------------------
+
+_READS = [{"source": "ff_rankings", "as_of": "2025-08-31", "digest": "abc"},
+          {"source": "player_stats", "as_of": None, "digest": "unpinned"}]
+
+
+def test_runs_that_read_the_same_pins_share_one_stored_set(tmp_path):
+    """#434: two runs, the same reads in a different order, one file under `inputs/`, and each
+    row carries a digest rather than the list -- which is the whole saving."""
+    path = tmp_path / "gate-width.json"
+    ledger = Ledger(path)
+    ledger.record(_entry(width=1.0, lo=-1.0, hi=1.0, inputs=_READS))
+    ledger.record(_entry(width=1.1, lo=-1.0, hi=1.0, inputs=list(reversed(_READS))))
+    rows = json.loads(path.read_text())["entries"]
+    assert rows[0]["inputs_digest"] == rows[1]["inputs_digest"]
+    assert [f.name for f in (tmp_path / "inputs").iterdir()] == [
+        rows[0]["inputs_digest"] + ".json"]
+    other = [*_READS, {"source": "pbp", "as_of": "2025-09-01", "digest": "def"}]
+    ledger.record(_entry(width=1.2, lo=-1.0, hi=1.0, inputs=other))
+    assert len(list((tmp_path / "inputs").iterdir())) == 2
+
+
+def test_an_old_row_keeps_its_inline_inputs_and_a_bad_stored_set_reads_unrecorded(tmp_path):
+    """#434: a row written before this (inline `inputs`, no digest) still reads as it did and is
+    rewritten as it was; a stored set whose content no longer hashes to its name, or that is
+    gone, reads as unrecorded -- never as some other run's reads."""
+    path = tmp_path / "gate-width.json"
+    old = {"gate": "draft", "recipe": None, "config_digest": "c", "data_digest": "d",
+           "width": 4.0, "clusters": 4.0, "lo": -2.0, "hi": 2.0, "verdict": "SHOW",
+           "inputs": _READS}
+    path.write_text(json.dumps({"entries": [old]}))
+    ledger = Ledger(path)
+    ledger.record(_entry(width=1.0, lo=-1.0, hi=1.0, inputs=_READS))
+    rows = json.loads(path.read_text())["entries"]
+    assert rows[0]["inputs"] == _READS and "inputs_digest" not in rows[0], "history untouched"
+    entries = ledger._read()
+    assert entries is not None
+    assert ledger.inputs_of(entries[0]) == _READS
+    assert ledger.inputs_of(entries[1]) is not None
+    stored = tmp_path / "inputs" / f"{rows[1]['inputs_digest']}.json"
+    stored.write_text(json.dumps({"inputs": [{"source": "someone else", "as_of": None,
+                                              "digest": "x"}]}))
+    assert ledger.inputs_of(entries[1]) is None, "content that does not hash to its name"
+    stored.unlink()
+    assert ledger.inputs_of(entries[1]) is None, "a missing file"
+
+
+def test_inputs_that_cannot_be_stored_stay_inline_rather_than_vanish(tmp_path):
+    """The write can fail and the run still has a verdict: `inputs/` here is a file, so the
+    directory cannot be made, and the row keeps its list inline instead of naming a set that
+    is not there."""
+    (tmp_path / "inputs").write_text("in the way")
+    path = tmp_path / "gate-width.json"
+    Ledger(path).record(_entry(width=1.0, lo=-1.0, hi=1.0, inputs=_READS))
+    row = json.loads(path.read_text())["entries"][0]
+    assert row["inputs"] == _READS and "inputs_digest" not in row

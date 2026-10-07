@@ -27,6 +27,10 @@ if nothing had changed (#361's retention baseline). `WidthEntry.key` ends in `co
 and an entry read off disk with no `"code_digest"` key is of *unknown code*: named, never
 compared (`WidthEntry.code_known`, the same shape as `known` for the recipe).
 
+**A run's inputs are stored once since #434.** The row carries `inputs_digest`; the sorted
+reads live in `<ledger dir>/inputs/<digest>.json`, shared by every run that read the same pins
+(`Ledger.inputs_of` reads either form). Rows written earlier keep `inputs` inline.
+
 **What the Ledger owns.** The equality on `key` that decides comparability; the append; the
 atomic write (`hub.atomic`, so a killed process leaves the previous file exactly as it was);
 the refusal to write over a file that is present but does not parse (CLAUDE.md's degradation
@@ -117,6 +121,11 @@ class WidthEntry:
     # for an unknown recipe.
     code_digest: str | None = None
     code_known: bool = True
+    # #434: the digest of this run's `inputs`, whose full list lives in a content-addressed file
+    # beside the ledger (`Ledger.inputs_of` reads it back). Set on an entry a file-backed
+    # `Ledger` wrote; an older entry carries its `inputs` inline and no digest.
+    inputs_digest: str | None = None
+
     @property
     def key(self) -> tuple[str, str | None, str, str, str | None]:
         """`(name, recipe, config_digest, data_digest, code_digest)` -- #385's key, #384's
@@ -161,7 +170,9 @@ class WidthEntry:
             out["abstained"] = self.abstained
         if self.code_known:
             out["code_digest"] = self.code_digest
-        if self.inputs is not None:
+        if self.inputs_digest is not None:
+            out["inputs_digest"] = self.inputs_digest
+        elif self.inputs is not None:
             out["inputs"] = self.inputs
         return out
 
@@ -197,6 +208,8 @@ class WidthEntry:
             inputs=_inputs(d.get("inputs")),
             code_digest=d["code_digest"] if isinstance(d.get("code_digest"), str) else None,
             code_known="code_digest" in d,
+            inputs_digest=(d["inputs_digest"] if isinstance(d.get("inputs_digest"), str)
+                           else None),
         )
 
 
@@ -250,6 +263,19 @@ def code_digest(modules: Iterable[str]) -> str:
             raise ValueError(f"{name!r} is a package; name the modules whose code the arms run")
         h.update(name.encode() + b"\0" + Path(spec.origin).read_bytes() + b"\0")
     return h.hexdigest()[:8]
+
+
+def inputs_digest(inputs: list[dict]) -> str:
+    """16-char hash of a run's reads as a *set*: sorted by `(source, as_of, digest)`, then
+    canonical JSON. Two runs that read the same pins share a digest whatever order the reads
+    were remembered in, which is what lets one file stand for both (#434)."""
+    return hashlib.sha256(_canonical_inputs(inputs).encode()).hexdigest()[:16]
+
+
+def _canonical_inputs(inputs: list[dict]) -> str:
+    ordered = sorted(inputs, key=lambda r: (str(r.get("source")), str(r.get("as_of") or ""),
+                                            str(r.get("digest"))))
+    return json.dumps(ordered, sort_keys=True, separators=(",", ":"))
 
 
 def _num(v: object, missing: float = float("nan")) -> float:
@@ -326,6 +352,49 @@ class Ledger:
             return [WidthEntry._from_dict({"gate": gate, **rec})
                     for gate, rec in got.items() if isinstance(rec, dict)]
         return []
+
+    @property
+    def inputs_dir(self) -> Path | None:
+        """Where the content-addressed input sets live: `inputs/` beside the ledger file."""
+        return None if self.path is None else self.path.parent / "inputs"
+
+    def _compact(self, entry: WidthEntry) -> WidthEntry:
+        """`entry` as it is written (#434): its `inputs` replaced by their digest, the full
+        list stored once under that digest in `inputs_dir`. A set already stored is not written
+        again, so runs that read the same pins cost one file between them. If the file cannot
+        be written the entry keeps its `inputs` inline -- a row never names a file that is not
+        there, and the record is never thinner for the failure."""
+        dest = self.inputs_dir
+        if entry.inputs is None or dest is None:
+            return entry
+        digest = inputs_digest(entry.inputs)
+        target = dest / f"{digest}.json"
+        try:
+            if not target.exists():
+                dest.mkdir(parents=True, exist_ok=True)
+                atomic.write_text(target, '{"inputs": ' + _canonical_inputs(entry.inputs)
+                                  + "}\n")
+        except OSError:
+            return entry
+        return replace(entry, inputs=None, inputs_digest=digest)
+
+    def inputs_of(self, entry: WidthEntry) -> list[dict] | None:
+        """What `entry` read: its inline `inputs` (an entry written before #434, or in memory),
+        else the stored set its `inputs_digest` names. `None` is *unrecorded* -- no inputs at
+        all, a missing file, or a file whose content no longer hashes to its name (never
+        raises, and never returns a set that is not the one the row recorded)."""
+        if entry.inputs is not None:
+            return entry.inputs
+        if entry.inputs_digest is None or self.inputs_dir is None:
+            return None
+        try:
+            got = json.loads((self.inputs_dir / f"{entry.inputs_digest}.json").read_text())
+        except (OSError, ValueError):
+            return None
+        reads = _inputs(got.get("inputs")) if isinstance(got, dict) else None
+        if reads is None or inputs_digest(reads) != entry.inputs_digest:
+            return None
+        return reads
 
     @decision
     def record(self, entry: WidthEntry) -> Comparison:
@@ -415,7 +484,7 @@ class Ledger:
                          f"run changed since), not compared -- state/README.md")
 
         if self.write:
-            entries.append(stamped)
+            entries.append(stamped if self.path is None else self._compact(stamped))
             if self.path is None:
                 self._entries = entries
             else:
