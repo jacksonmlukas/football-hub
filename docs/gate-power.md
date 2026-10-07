@@ -2200,6 +2200,23 @@ correlated the two-part screen's halves are. If it changes others, each is resta
 with the superseded figure kept beside it per rule 13, and the false-discovery table is
 re-printed at the same run so a reader sees the diagnostic and the corrected rule together.
 
+> **Adopted and landed 2026-10-07 (#312), as drafted; the section above is kept as written.**
+> Three places where the run read differently from the draft, each stated rather than smoothed:
+>
+> * **`td_rate_prior` was not a flip.** The draft read it as `NULL_BROKEN` under the flat bar
+>   from the ticket's own figures. On the settled basis the sign is 4/5 seasons, so the
+>   every-season half had already classed it `clears` (*noisy, not a signal*); the p bar keeps
+>   the status and changes the note to *null as pre-stated (p 0.071)*. The statuses that do
+>   move are `inj_sev` in the joint screen (clears → killed, −2.70 se, p 0.054, every anchor),
+>   `snap_trend` at anchors 4 and 6 on the two superseded bases, and two Usage cells. The
+>   ticket's p 0.089 is a `t` of 2.49 on three degrees of freedom; five seasons give 0.068.
+> * **The joint size is about 0.02** (0.017–0.0225 over four features, 2000 permutation draws),
+>   from the same draws as `every_season_null`'s other figures, and the two halves are
+>   positively dependent (their product is 0.0016). Under the old bar it was 0.025–0.034.
+> * **The family counts distinct tests.** 120 printed rows across anchors and bases are 48
+>   tests, since an anchor-invariant feature is one test printed five times. Threshold 0.0361,
+>   18 below it. `weekly-screen.md`, "Restated 2026-10-07", carries every figure.
+
 # Pre-registered 2026-09-21 — PROPOSED: four arithmetic items that move published numbers
 (#315)
 

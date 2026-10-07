@@ -964,6 +964,131 @@ family, if one is wanted, is the number of features permuted in that run.
 > with the run's digests and the decision that the threshold is a diagnostic, is under
 > [method.md rule 14](method.md); the sweep's other anchors have not been printed.
 
+## Restated 2026-10-07 — the verdict reads the p it computes (#312)
+
+**Restated under [method.md rule 13](method.md); nothing above is edited.** Every table and
+sentence on this page keeps the wording it was published with, and what follows says which of
+them moved and by how much. The rule was pre-registered in
+[gate-power.md](gate-power.md) ("Pre-registered 2026-09-21 — PROPOSED: the screen's verdict
+reads the p it computes (#312)"), adopted as drafted, and its restatement order is followed
+below.
+
+**The change.** `weekly_screen.verdict` compared `abs(t) < 2.0`. The `t` is built from five
+season means, so it has **four degrees of freedom**, where a flat 2.0 is a two-sided p of
+**0.116** (0.139 at three). It now compares the two-sided p of that `t` on `seasons - 1`
+degrees of freedom against `experiment.ALPHA`, 0.05 — the same comparison as a `t` of **2.776**
+at four degrees of freedom (3.182 at three) — and the note on every row prints the p it read.
+The every-season half is unchanged. One season has no degrees of freedom, so no p, and clears
+nothing.
+
+**Run.** `uv run python -m hub.models.weekly_screen --run --all-bases`, 2026-10-07, cfg
+`c4606f91`, fitted `5024dd03`, data `a4050443` over five pinned sources, 14,483 player-weeks;
+the Usage cells from `--trend-min-week 8 --usage --basis pooled`; the joint size from
+`--trend-min-week 8 --permute` (2000 permutation draws per feature, seed 0). The old column in
+every comparison below is the old rule applied to the **same run**, not the published figure,
+so a difference is the bar and not the data.
+
+### What changed status
+
+| where | feature | before (flat 2.0 se) | after (p < 0.05) | the figure |
+|---|---|---|---|---|
+| settled basis, joint screen, **every anchor** | `inj_sev` | clears, 5/5 seasons | **killed**: 5/5 seasons, but p above the bar | −2.70 se, p 0.054 |
+| settled basis, independent signals | the set at anchors 4, 6, 8, 12 | {dvp, implied_total, inj_sev} | {dvp, implied_total} | |
+| settled basis, independent signals | the set at anchor 10 | {dvp, implied_total, inj_sev, snap_trend} | {dvp, implied_total, snap_trend} | |
+| pooled basis (the superseded one), alone | `snap_trend`, anchors 4 and 6 | clears | **killed** | +2.48 se, p 0.068 |
+| decomposed basis (superseded), alone | `snap_trend`, anchors 4 and 6 | clears | **killed** | +2.32 se, p 0.081 |
+| Usage, pooled-basis survivors, week ≥ 8 | `td_rate_prior` × passing attempts | **null broken** | **clears** as a pre-stated null | +0.0046 at +2.71 se, p 0.054 |
+| Usage, pooled-basis survivors, week ≥ 8 | `snap_trend` × passing attempts | clears | **killed** | +0.0295 at +2.43 se, p 0.072 |
+
+Of the 120 (basis, anchor, feature) alone-and-joint rows the sweep prints, **nine change
+status**: five `inj_sev` joint verdicts on the settled basis, four `snap_trend` alone verdicts
+on the two superseded ones. On the settled basis at the published anchor nothing alone moves —
+`implied_total` (+12.43 se), `own_spread` (+5.37), `dvp` (+3.76) and `inj_sev` (−3.10, p 0.036)
+all clear on their own, as before — and the snap-share trend is still conditional on the anchor
+(`10:clears`, the other four killed), as before. The Usage screen was re-read on both
+survivor sets at week ≥ 8: **two of the 20** pooled-basis cells change and **none of the 15**
+settled-basis cells.
+
+**`td_rate_prior`, the case the ticket was written on.** The pre-registration worked it as a
+flip: −2.49 se read as a broken pre-stated null under the flat bar and clears under the p bar.
+**On the settled basis it is not a flip, and this page says so rather than let the draft's
+prediction stand.** The feature is −0.0120 at −2.45 se today (−0.0122 at −2.49 as published
+above; [method.md rule 14](method.md) records that every `t` on the grown archive reproduces
+within a tenth), with 2023 on
+the other side of zero — 4/5 seasons. The every-season half already read that as *noisy, not a
+signal* and the status was `clears` before; it is `clears` now, and what changes is the reason
+the note gives: *null as pre-stated (−2.4 se, p 0.071)* in place of *noisy, not a signal
+(4/5 seasons agree)*. Its p is **0.068 at the published −2.49** on the five seasons the screen
+has, not the 0.089 the ticket body quotes: 0.089 is a `t` of 2.49 on **three** degrees of
+freedom (four seasons), and this screen has five. Both are above 0.05, and above the
+false-discovery threshold; neither supports "a finding". The earlier movement of this same
+number — 1.9 se, then 2.7 se across 5/5 seasons under #169, then −2.49 across 4/5 under #229
+— is why it should not be quoted as freshly settled now either: it has been a pre-stated null,
+a broken one, and a held one, on three different readings of the same data. On the **pooled**
+basis it is still a broken null (p 0.0018, 5/5 seasons) and still a survivor; the −0.040 across
+five of five seasons stands as a fact about that basis and nothing else, as it did under #229.
+
+**`inj_sev`, the verdict that does move.** It was the fourth of the four independent signals
+on the settled basis. Controlled for the others over its weeks it is −0.0115 at **−2.70 se,
+p 0.054** in every anchor — the sign holds in all five seasons and the p is 0.004 above the
+bar. It still clears on its own at −3.10 se, p 0.036, and is still below the false-discovery
+threshold in its own family (adjusted p 0.072, [method.md rule 14](method.md)). Nothing in
+`src/` reads it as an input: it is a Panel column and a screened feature, so no module acts on
+the change. What the page claims about it is that it clears alone and does not clear once the
+other signals are controlled for.
+
+### The joint size of the two-part rule
+
+The rule is a conjunction — the sign in every season **and** p below 0.05 — and its size was
+never computed. `every_season_null` already permutes the feature within its (season, week)
+cell and re-residualises, so the joint size is read off the same draws rather than from a
+second harness. At week ≥ 8 on the settled basis, 2000 draws each:
+
+| feature | P(every season holds) | P(p < 0.05) alone | **joint, the rule as written** | if the halves were independent | under the old flat 2.0 bar |
+|---|---|---|---|---|---|
+| `dvp` | 0.030 | 0.0535 | **0.0195** | 0.0016 | 0.0280 |
+| `inj_sev` | 0.030 | 0.0560 | **0.0225** | 0.0017 | 0.0290 |
+| `implied_total` | 0.035 | 0.0485 | **0.0225** | 0.0017 | 0.0335 |
+| `own_spread` | 0.026 | 0.0530 | **0.0170** | 0.0014 | 0.0245 |
+
+**The two-part rule's size is about 0.02** (0.017 to 0.0225; the Monte Carlo error on a figure
+this size over 2000 draws is about 0.003, so the four are one number). It is **conservative**
+against the nominal 0.05 — which is what a conjunction should be — and it sits at the *one-sided*
+tail, 0.025, because a draw with every season mean on the same side of zero has a `t` of the
+same sign, so the second half is mostly the first with a magnitude attached. The halves are
+**strongly positively dependent**: their product would be 0.0016 and the joint is more than ten
+times that, so a reader who multiplied the two marginals to size the rule would have reported
+a rule twelve times more conservative than it is. The p half alone is 0.05 to within
+simulation error, which is the check that the permutation null and the t reference agree at
+five seasons. The old flat bar's joint size was 0.025 to 0.034 — a rule that looked like 0.05
+from the outside and was about 0.03, again conservative, because the every-season half carried
+most of the weight. The correction therefore makes the bar *honest*; it does not make the rule
+liberal, and it costs power, not size.
+
+### The family, counted across what was run
+
+`with_family` counts the rows one call was handed, so every printed anchor said eight tests
+while the sweep had run forty and the three bases a hundred and twenty printed rows. The run
+now ends with one family over **every distinct alone test, across anchors and bases**: a
+feature whose rows do not depend on the anchor is one test the sweep printed five times, and
+the trend features, measured on different rows at each anchor, are one test each. That is
+3 bases × (6 + 2 × 5) = **48 distinct tests**, from 120 printed rows. Benjamini–Hochberg at
+q = 0.10: threshold **0.0361**, **18 below it** — `implied_total` and `own_spread` on every
+basis, `td_rate_prior` on the pooled and decomposed ones, `inj_sev` and `dvp` on all three
+(`inj_sev` on the settled basis at adjusted p 0.096, `dvp` at 0.060), and `snap_trend` on the
+pooled and decomposed ones at anchors 8 and 10. The per-call family lines above are
+unchanged and still say what they counted; this one says what was run. `--all-bases` is what
+sweeps the other two bases, unprinted, so the count includes them; without it the line says
+how many of the three it saw. It is a diagnostic and decides nothing (#274).
+
+### What this page now claims
+
+On the settled basis the independent signals are **the implied team total and defence versus
+position**; the injury designation clears alone and not jointly, own spread is the implied
+total's shadow, the prior TD rate is a pre-stated null that held (p 0.07), and the snap-share
+trend is conditional on the anchor and unlicensed. The bar is the p, and the p is printed on
+the row it decides.
+
 ## Reproduce
 
 ```bash
