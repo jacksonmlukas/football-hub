@@ -92,6 +92,17 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_void_condition_preempts_every_branch_and_is_the_caller_s_sentence",
         "test_a_ceiling_below_the_effect_says_so_loudly_in_the_gate_s_own_places",
     )),
+    # #432: the capture's refusal (rule 18's own control for it) and the read that excludes a
+    # late capture the write never saw -- both planted on either side of the deadline.
+    "hub.fetch.consensus.write_capture": ("tests/unit/test_fetch_consensus.py", (
+        "test_a_capture_written_after_kickoff_is_refused_and_nothing_lands",
+        "test_a_capture_is_append_only_atomic_and_idempotent",
+    )),
+    "hub.season.weekly_forward.admit": ("tests/unit/test_weekly_forward.py", (
+        "test_a_capture_after_kickoff_is_excluded_at_the_read_and_named",
+        "test_a_stale_page_is_refused_and_the_latest_valid_capture_is_the_one_used",
+        "test_a_capture_first_committed_after_the_deadline_is_not_admitted",
+    )),
     "hub.models.margin.verdict": ("tests/unit/test_margin.py", (
         "test_a_better_challenger_is_adopted",
         "test_a_challenger_better_on_average_but_not_every_season_is_not_adopted",

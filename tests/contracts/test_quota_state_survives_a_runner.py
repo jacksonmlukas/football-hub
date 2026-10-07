@@ -95,6 +95,11 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # is the only file with its own.
 LEDGER_CAPS = {"state/gate-width.json": 262144}
 
+# #432: one capture of the weekly consensus page, a few hundred ranked players, is a record of
+# what could have been read before a week's first game and is the only thing that can ever say
+# so. Bigger than a counter by design; still one small JSON document a file.
+CAPTURE_CAP = 131072
+
 
 def test_the_state_directory_carries_no_third_party_payload():
     """The reason `data/raw/` is excluded still applies to whatever replaces it. Counters
@@ -104,7 +109,13 @@ def test_the_state_directory_carries_no_third_party_payload():
     market's per-game median spread, derived from The Odds API. Their terms permit "storing
     our data and retaining it indefinitely" and "calculating and displaying values you derive
     from our data", and prohibit redistribution "as a standalone data product"; this repo is
-    private. What this test holds is the mechanical line: small JSON records, nothing else."""
+    private. What this test holds is the mechanical line: small JSON records, nothing else.
+
+    A second (#432): `state/consensus/` holds one week's FantasyPros `weekly-op` page, as
+    redistributed by DynastyProcess, taken before kickoff because a ranking that is not kept
+    cannot be shown to have been read in time. That source's terms have **not** been checked the
+    way The Odds API's were; the repo is private, and `state/README.md` says to re-examine this
+    directory first if it is ever made public."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
                              capture_output=True, text=True).stdout.split()
     assert tracked, "state/ is not tracked, so a runner still starts with no record"
@@ -114,8 +125,10 @@ def test_the_state_directory_carries_no_third_party_payload():
     for f in records:
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
-        cap = LEDGER_CAPS.get(f, 4096)
-        what = "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter"
+        capture = f.startswith("state/consensus/")
+        cap = CAPTURE_CAP if capture else LEDGER_CAPS.get(f, 4096)
+        what = ("one week's captured page" if capture
+                else "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
         assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
 
 

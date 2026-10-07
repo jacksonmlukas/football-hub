@@ -70,7 +70,7 @@ _ACTIONS = Actions(adopt="ADOPT", remove="REMOVE", show="SHOW")
 _TOP = Ceiling("non-binding", np.array([float("inf")]))
 
 
-def _load_gate_horizon():
+def _load_horizon_harness():
     spec = importlib.util.spec_from_file_location("gate_horizon", _HERE / "gate_horizon.py")
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -81,7 +81,7 @@ def _load_gate_horizon():
 
 def baseline_row_var() -> float:
     """#388's weekly roster-week variance (#418's baseline), not re-derived here."""
-    return _load_gate_horizon().estimates()["weekly"].row_var
+    return _load_horizon_harness().estimates()["weekly"].row_var
 
 
 @dataclass(frozen=True)

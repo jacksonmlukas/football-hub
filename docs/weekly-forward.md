@@ -270,3 +270,35 @@ FantasyPros' and DynastyProcess' terms before then.
 Before the first admitted week's outcome is read: nothing, except an error in the arithmetic,
 dated and with the prior text kept. After: nothing at all (rule 16's sibling rule: the identical
 edit after the study has rows is rule 1 laundered).
+
+## Amended 2026-10-07, when the capture and the harness were built (prior text kept)
+
+Written before any capture exists and before any 2026 outcome has been read, which is the
+condition under which this document may be edited (rule 16's sibling rule). Two things the build
+made more exact than the text above, neither of which moves a number in the power table:
+
+- **A week's page is stricter than "within 8 days of kickoff".** A scrape is week *w*'s page only
+  if it is dated **after the previous week's last game day** and before *w*'s first game day, and
+  no more than 8 days before it. Wednesday's page for week 5 is eight days ahead of week 6 and is
+  week 5's: the panel's `assign_weeks` assigns a scrape to the first week with a game still to
+  play, and a window that read "8 days" alone would have filed it under week 6 on a run taken
+  just after week 5's deadline. `consensus.scrape_floors` is the window; the harness applies the
+  same one when it reads. A tighter window can only refuse more captures, never admit one this
+  text would have refused.
+- **"When week 14 is played" is a date, not a look at results.** The horizon is reached on the
+  second day after week 14's last game day in nflverse's schedule (`weekly_forward.LAG_DAYS`
+  gives the data the day it lands). The harness decides this from the schedule's dates alone,
+  which is what lets a run before the horizon say NOT-YET without opening a single outcome.
+
+What was built, by name: the capture is `hub.fetch.consensus` (`--capture`), run by
+`.github/workflows/consensus.yml` four times a week (Tuesday 21:00 UTC and Wednesday 11:00, 17:00
+and 23:00 UTC) and written to `state/consensus/`; the harness is `hub.season.weekly_forward`;
+the power is `scripts/weekly_forward_power.py`, whose tests hold its simulated rule equal to the
+harness's (`tests/unit/test_weekly_forward.py`, `test_the_simulated_rule_is_the_shipped_rule`).
+**It has not been run on 2026 data and must not be before the horizon**: the way to read it is
+`uv run python -m hub.season.weekly_forward` on or after the second day following week 14's last
+game day; before that it prints NOT-YET and loads nothing.
+
+**The first capture is the maintainer's to take by hand if the workflow has not run before the
+next week's first game day**: `uv run python -m hub.fetch.consensus --capture`, then commit
+`state/consensus/`. Each week without a capture is a week this measurement does not have.
