@@ -32,9 +32,19 @@ from hub.models import injury, margin, spread
 # Measured 2026-10-01 on the code that imported `nflreadpy` directly, before #398 routed it.
 EXPECTED = {
     "spread": "de9caff2d777c279",
-    "injury": "dccb614ad4ab1bd8",
+    "injury": "d484e114505eec3c",
     "margin": "8558d7dc99e33da8",
 }
+# **Re-measured 2026-10-07 for #360 -- `injury` only, and why.** `injury` was "dccb614ad4ab1bd8"
+# over everything above the type comparison's report. #360 puts the retention-against-`out_zero`
+# Gate (`=== retention against out_zero ===`) ahead of that report, replacing the argmin verdict
+# line (`ADOPT 'retention': held-out MAE ...`) on purpose, so the cut moves to the new marker
+# and the digest with it. Checked, not argued: the old code (`bca2634`) and the new, run on this
+# same fixture, print the same lines above their respective cuts except exactly two that the
+# old code printed and the new does not -- that argmin verdict line, and the `Injury types by
+# volume` line, which now follows the Gate's block and is therefore below the cut. Nothing
+# printed above the cut appears in only one of them, and the old digest reproduces from the old
+# code ("dccb614ad4ab1bd8"), so the harness is the one that measured it. No number moved.
 # **Re-measured 2026-10-06 for #381 -- `margin` only, and why.** `margin` was "9630773a09e5aa01"
 # over the whole of its output. #381 (C) puts the abstention count into the Gate's verdict
 # sentence ("10 resolved of 10, 0 abstained"), and `margin`'s shape verdict prints that sentence
@@ -194,7 +204,7 @@ CASES = {
     "spread": (_isolated(spread.main), ["--fit", "--seasons", "2023,2024,2025"], _spread_tables,
                "\n  === own_k against positional ==="),
     "injury": (_isolated(injury.main), ["--fit", "--seasons", "2023,2024"], _injury_tables,
-               "\n  === type-adjusted against retention ==="),
+               "\n  === retention against out_zero ==="),
     "margin": (margin.main, ["--fit", "--shape"], _margin_tables, None),
 }
 

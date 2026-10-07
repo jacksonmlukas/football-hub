@@ -42,7 +42,11 @@ DECLARED_UNITS: dict[str, tuple[str, ...]] = {
     # #343: the three comparisons that reached the Gate by hand before this.
     "hub.models.spread.HARNESS": ("player_id",),
     "hub.models.component_error.HARNESS": ("player_id",),
-    "hub.models.injury.HARNESS": ("season",),          # declared no-op, pending #360
+    # #360 (2026-10-07): the player, rule 3's unit. The type comparison's declared no-op
+    # (`season`) is discharged, and the retention-vs-`out_zero` gate that replaces the
+    # `verdict` argmin reads the same unit.
+    "hub.models.injury.HARNESS": ("gsis_id",),
+    "hub.models.injury.RETENTION_HARNESS": ("gsis_id",),
 }
 
 

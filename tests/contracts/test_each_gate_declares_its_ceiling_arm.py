@@ -26,14 +26,15 @@ import pytest
 from gate_harnesses import GATE_MODULES, all_harnesses, assert_declares_ceiling_arm
 
 
-def test_ten_harnesses_over_the_nine_gate_modules():
+def test_eleven_harnesses_over_the_nine_gate_modules():
     """The discovery itself. #387 fixed it at seven declarations over six modules (margin has
     two, for its two verdicts; every other gate module has one); #343 routed the spread
     candidates, the injury type verdict and the component calibration through the Gate, which
     is three more modules and three more declarations -- and ADR-0019's claim that every gate
-    reads the one rule is what makes the count ten rather than seven."""
+    reads the one rule is what makes the count ten rather than seven; #360 declared a second
+    injury harness (retention against `out_zero`), which makes it eleven."""
     found = all_harnesses()
-    assert len(found) == 10, f"expected ten harnesses, found {len(found)}: {sorted(found)}"
+    assert len(found) == 11, f"expected eleven harnesses, found {len(found)}: {sorted(found)}"
     assert len(GATE_MODULES) == 9, f"expected nine gate modules, found {sorted(GATE_MODULES)}"
 
 
