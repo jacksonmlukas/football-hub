@@ -29,10 +29,13 @@ calibrate on the whole of the season before, bounded by `window` like any other 
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 
+import numpy as np
 import polars as pl
 
 from hub.config import ModelConfig
@@ -40,6 +43,13 @@ from hub.config import ModelConfig
 # conf/ owns this: `model.conformal_alpha` in the dataclass, overridable from conf/config.yaml.
 DEFAULT_ALPHA = ModelConfig().conformal_alpha
 DEFAULT_MIN_CALIBRATION = 40
+
+# #309: a group is calibrated on its own rows only from this many. Split conformal's realised
+# coverage on n calibration points is Beta-distributed with sd ~0.055 at 50 and ~0.028 at 200;
+# below ~200 the order statistic is ordinal noise, so a thinner group borrows the pooled window
+# and says it did (`Calibration.fell_back`). Not a fitted quantity: a floor on how little data
+# a quantile is allowed to be read from.
+MIN_GROUP_CALIBRATION = 200
 
 
 class NotEnoughCalibration(Exception):
@@ -56,6 +66,79 @@ def interval(residuals: pl.Series, alpha: float) -> float:
     n = residuals.len()
     k = min(1.0, (1.0 - alpha) * (n + 1) / n)
     return float(residuals.abs().quantile(k) or 0.0)
+
+
+def history(cells: Sequence[tuple[int, int]], current: tuple[int, int],
+            window: int | None = None) -> list[tuple[int, int]]:
+    """The cells a `current` cell may calibrate on: strictly earlier in time, the last `window`.
+
+    A tuple comparison is the timeline -- season first, then week -- and this is the whole of
+    #262: `x < w` over week numbers let a later season's September into an earlier season's
+    window. It is a function so that the walk here and any other walk over `(season, week)`
+    cells (`hub.models.coverage`'s, #309) cannot disagree about what "earlier" means.
+    `cells` is read in time order whatever order it arrives in.
+    """
+    past = sorted(c for c in cells if c < current)
+    return past[-window:] if window is not None else past
+
+
+def order_statistic(scores: Sequence[float] | np.ndarray, p: float, *, upper: bool) -> float:
+    """The split-conformal order statistic of `scores`, taken by rank and never interpolated.
+
+    `p` is the quantile level. Upper (`p` = 0.90): the `ceil(p (n + 1))`-th smallest, which is
+    what makes a one-sided bound at level `p` cover at least `p` in finite samples. Lower
+    (`p` = 0.10): the `floor(p (n + 1))`-th smallest -- the mirror, so at most `p` of a fresh
+    exchangeable score falls below it. A rank past either end returns the infinity that covers
+    everything, because a calibration set too small to place the quantile has no finite
+    bound to offer.
+
+    **Not `interval`'s quantile call.** `interval` computes the same correction and hands it to
+    polars' default `nearest` interpolation, which is #371 and is not fixed here; this states
+    the rank and takes it. The product is rounded to nine places before `ceil`/`floor`:
+    `0.07 * 100` is 7.000000000000001, and a `ceil` of it is rank 8, not 7; a rank that depends on
+    which side of a float the product falls on is not a rank.
+    """
+    s = np.sort(np.asarray(scores, dtype=float))
+    n = s.size
+    if upper:
+        k = math.ceil(round(p * (n + 1), 9))
+        return float("inf") if k > n or n == 0 else float(s[max(k, 1) - 1])
+    k = math.floor(round(p * (n + 1), 9))
+    return float("-inf") if k < 1 or n == 0 else float(s[min(k, n) - 1])
+
+
+class Calibration(NamedTuple):
+    """What one group's rows were calibrated on: the scores' quantiles, how many, and whether
+    the group's own rows were enough (#309)."""
+    q_lo: float
+    q_hi: float
+    n_cal: int
+    fell_back: bool
+
+
+def mondrian(scores: np.ndarray, groups: np.ndarray, group: str, *, lower_p: float,
+             upper_p: float, floor: int = MIN_GROUP_CALIBRATION) -> Calibration | None:
+    """Class-conditional (Mondrian) calibration of one group, with a named pooled fallback.
+
+    `group`'s own scores when there are at least `floor` of them; otherwise every group's
+    scores pooled, with `fell_back` set so the caller can name the rows that did not test the
+    conditional claim. Pooled below `floor` as well is not a calibration, and the answer is
+    `None` -- the caller reports the rows it could not score rather than reading a quantile
+    off a handful of points.
+
+    `lower_p` and `upper_p` are the nominal tail levels (0.10, 0.90): the lower bound is the
+    empirical `lower_p` quantile and the upper the empirical `upper_p` one, each a one-sided
+    split-conformal rank (`order_statistic`).
+    """
+    own = scores[groups == group]
+    if own.size >= floor:
+        use, fell = own, False
+    elif scores.size >= floor:
+        use, fell = scores, True
+    else:
+        return None
+    return Calibration(order_statistic(use, lower_p, upper=False),
+                       order_statistic(use, upper_p, upper=True), int(own.size), fell)
 
 
 def _cell(season: int, week: int) -> pl.Expr:
@@ -95,12 +178,8 @@ def rolling_coverage(df: pl.DataFrame, alpha: float = DEFAULT_ALPHA,
 
     by_week, covered, total, widths, cal_ns = [], 0, 0, [], []
     for s, w in cells:
-        # Strictly earlier in time: season first, then week. A tuple comparison is the
-        # timeline, and this is the whole of #262 -- `x < w` over week numbers let a later
-        # season's September into an earlier season's window.
-        past_cells = [c for c in cells if c < (s, w)]
-        if window is not None:
-            past_cells = past_cells[-window:]
+        # Strictly earlier in time: season first, then week -- `history`, #262.
+        past_cells = history(cells, (s, w), window)
         past = (df.filter(pl.any_horizontal(*[_cell(*c) for c in past_cells]))
                 if past_cells else df.clear())
         if past.height < min_calibration:

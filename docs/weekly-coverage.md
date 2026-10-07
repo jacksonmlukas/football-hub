@@ -6,6 +6,17 @@
 > supersedes, and the restatement of 2026-09-13 -- what the interval is now *claimed* to
 > cover, and what the gate holds it to -- sits directly below this note.
 >
+> **Decided and built 2026-10-07 (#310):** the claim is 0.80 (marginal), the verdict is taken at
+> audits, and the weekly run reports and never gates; the slate's step is a smoke alarm. The
+> OVER-COVERS verdict and the red gate recorded in the 2026-10-06 box below lasted until this
+> section and are kept as they were.
+>
+> **Restated 2026-10-06 (#309):** the published interval now carries estimation error, is
+> conformalised within position, and the gate grades the whole scored board. The design and the
+> restated figures, with the prior values, are the two sections directly below the 2026-09-17
+> pre-registration. The 2026-09-13 section and everything under it remain the record of the
+> parametric interval.
+>
 > **Pre-registered 2026-09-17 (#310), ahead of #309's measurement:** what the claim becomes
 > once the interval is conformalised, and what the gate becomes. It sits directly below this
 > note, above the 2026-09-13 restatement it will supersede when #309 lands. Nothing in
@@ -67,6 +78,260 @@ calibrates within position (Mondrian), and a conditional bar is stated beside th
 layer that gets a verdict this season, and the conditional bar's job is to report QB honestly
 and say it cannot yet rule. That is thinner than #310 set out to build, and **the thinness was
 chosen**: the alternative was a bar that fires on calibration luck and is read as a finding.
+
+## Design 2026-10-06 (#309): how estimation error enters, and what the conformal step calibrates
+
+Written and committed **before** the run that produces the number (rule 1 of [method.md](method.md)).
+Nothing below has a measurement behind it; the 2026-09-13 restatement stands, and the section it
+will move is restated in its own dated box when the number exists. #310 owns the verdict -- the
+claim constant and `coverage.verdict` are not touched here.
+
+**1. Estimation error: a variance term, not a t.** The interval's scale is
+`sd_pred = sd * sqrt(1 + 1/n)`, where `sd = K[position] * sqrt(mu)` is the shape law and `n` is
+the games of evidence behind the mean (`n_prior` under the prior centre). That is the shape
+law's variance plus the mean's estimation error, `sd^2 / n`, and adds no fitted constant. Two
+alternatives were considered and set aside. *A t on n - 1 degrees of freedom* does not compose
+with the Cornish-Fisher transform, which is a map from a normal draw. *`weekly.standard_error`*
+(`sigma_pos / sqrt(n)`, the quantity `docs/parameter-uncertainty.md` measured) uses a positional
+median sd; a low-mean player's weekly sd is the shape law's `K * sqrt(mu)`, well under it, so the
+positional constant overstates his estimation error and understates a star's. The player's own
+`sd / sqrt(n)` is the same quantity expressed in the law the interval already uses. `n` is
+clipped to at least one game, as `standard_error` does. `predict.moments` is **not** changed:
+its `sd` is the outcome spread the draft and lineup simulators draw from, which carry their own
+mean uncertainty (`TALENT_CV` at season level; `docs/parameter-uncertainty.md` Experiment B for
+the lineup), and adding the term there would count it twice and move every simulation. The
+inflation is a separate function, `predict.predictive_sd`.
+
+**2. Conformalisation: scaled split conformal on the signed standardised residual.** The
+nonconformity score of a played week is `(points - mu) / sd_pred`. The published bounds are
+`mu + sd_pred * q_lo` and `mu + sd_pred * q_hi`, with `q_lo` and `q_hi` the *empirical* lower and
+upper order statistics of the calibration scores -- so the lower bound is empirical, not the
+clipped parametric one, and the skew is whatever the window shows rather than the fitted law.
+The two tails are separate one-sided ranks: the upper is the `ceil(p (n + 1))`-th smallest score,
+the lower the `floor((1 - p) (n + 1))`-th, at `(p_lo, p_hi) = (0.10, 0.90)` and `(0.16, 0.84)`
+(`LEVELS`, unchanged -- the label did not move). The ranks are taken explicitly rather than
+through `conformal.interval`, whose quantile call is #371's open defect: **this ticket does not
+touch `conformal.interval`** and does not fix it; the new function states its own ranks and has
+its own planted test. The published lower bound is clipped at zero, as the interval always has
+been, and **coverage is graded on the clipped bounds** -- a week at minus one point is a miss of
+a lower bound pinned at zero, which is the distribution the repo serves.
+
+**3. The window is the one the conformal module builds.** The walk is over `(season, week)`
+cells in time order and a cell's calibration is the cells strictly before it, bounded to the last
+**14** cells -- the span one season's scored weeks (week 5, the first with four earlier weeks,
+through week 18) occupy, i.e. "the prior full season" #309 names as the default. The cell
+history is `conformal`'s own, factored out so the two modules cannot disagree about what "strictly
+earlier" means (#262).
+
+**4. Calibration is within position (Mondrian), and a thin group says so.** A position is
+calibrated on its own rows in the window when there are at least **200** (the floor #309
+adopted: split conformal's realised coverage is Beta-distributed, sd 0.055 at 50 and 0.028 at
+200). Below it the position's rows in that cell are calibrated on the **pooled** window of every
+position, and the result carries the fallback: per position, `n_cal` (the median calibration
+size its rows had), `n_cal_min`, the count of rows that fell back and **which `(season, week)`
+cells they were**. A pooled window below 200 rows too is not a calibration: those rows are not
+scored, and the gate reports how many (`n_uncalibrated`) and which cells beside the scored count.
+A position that ran on pooled calibration is not testing the conditional claim, and the row
+says so.
+
+**5. The gate grades the whole board it scored.** The gate population is every player-week that
+has a calibration, clipped and unclipped; `GATE_SUBSET` is `"all"`. The clipped share -- the share
+of scored weeks whose published lower bound is pinned at zero -- is reported beside the rate, and
+the floor split stays as a diagnostic, not a population. The rows that could not be scored for
+want of calibration (the first weeks of the first season) are named, not silently dropped: the
+board is 16,061 player-weeks and the gate says how many of them it scored.
+
+**6. What each group row reports** (and nothing more is decided here): `position`, `n`, `n_cal`,
+the coverage, its deviation from 0.80, and sigma, the deviation over the binomial standard error
+at `p = 0.80` scaled by sqrt(2) -- the form #310 pre-registered. Whether a group may rule, the
+MDE beside it and the look count are #310's.
+
+**7. What is deliberately not done.** `hub.models.weekly.shipped_quantiles` -- the CRPS
+diagnostic's distribution for the walk-forward arms -- and the shape gate's comparison
+(`--shape`, pre-registered in [gate-power.md](gate-power.md)) are the *parametric* law and
+stay so: the shape decision is about that law, which the draft and lineup simulators still draw
+from, and changing its arms after the sign could be seen is rule 16's sibling. The conformal
+interval is the published claim; the parametric one is kept beside it in the artifact as the
+prior values.
+
+**Controls, planted first (rule 18).** An interval that omits estimation error must go red at
+the games of evidence where the term matters; a gate that measures only part of the board must be
+caught; the explicit order statistics must differ from the interpolated ones where it matters; a
+group under the floor must name its fallback. Each is mutated and seen red before it is trusted,
+in the commits below.
+
+## Decided and built 2026-10-07 (#310): the claim is 0.80, the verdict is taken at audits, the weekly run never gates
+
+The decision is the maintainer's `ADOPTED:` comment of 2026-09-17 (above, written before #309
+had a number), plus the 2026-10-07 addition that the clip split is reported and not a claim. This
+section is what was built and what moved. **It revisits #289**, whose 2026-09-13 restatement
+(*the claim is what it covers*, 0.77) was right for a parametric interval and is superseded for
+a conformalised one; that section is kept whole below.
+
+**What the code now does.**
+
+- `CLAIMED_COV80 = 0.80`, documented as a marginal claim the construction asserts. `BAND` is
+  unchanged at 0.02, so the audit's marginal bar is 80 +/- 2 on the whole scored board.
+- **`--audit --look k`** takes the verdict. Marginal: `coverage.verdict` at 80 +/- 2. Per position:
+  the 95% interval at sqrt(2) x the binomial SE (the root two is the calibration draw's share)
+  must contain 0.80, **only at N >= 8,377 player-weeks**; below it the group returns
+  NOT-RUNNABLE and reports its deviation, sigma and MDE. The look number and alpha per look
+  (0.0167, z = 2.394, three looks per claim-life) print beside the verdict; a fourth look is
+  refused as a restatement trigger. `--write` records the block under `audit` in
+  `state/interval_coverage.json`: the claim, the look, and each group's position, n, n_cal,
+  coverage, sigma and verdict-or-NOT-RUNNABLE. The newest season's own coverage is printed
+  beside it and never gated.
+- **`--gate` is the weekly smoke alarm and nothing more.** It reports, and exits 1 only if the
+  marginal sits more than 10 points from the claim (eight MDEs: it cannot fire on drift or noise)
+  or a group scored nothing. **This supersedes #273's statistical role, not its purpose.** #273
+  wired the gate into the slate so a verdict could not go unread; but a verdict read weekly on
+  accumulating data is a sequential test -- eighteen looks a season on one hypothesis -- and "went
+  red in week 6" would be the likeliest outcome whether or not anything was wrong. What stays
+  is the run failing when the pipeline is broken. The slate step is renamed for what it is and is
+  still not soft-failed (`tests/unit/test_coverage_audit.py` holds the step and the exit code).
+- **The clip split is a diagnostic.** `floor_split` and `by_prior` are reported and read by no
+  verdict (the artifact says so under `diagnostics`). A clip-conditional claim would be a new
+  ticket with its own pre-registered threshold, because adding it now would change an adopted
+  rule after seeing its numbers.
+
+**Two guards added on review, 2026-10-07 (#438).** The smoke alarm's "a group scored nothing"
+clause reads the four expected positions, not the table, because the table carries only
+positions that have rows and so could never show an absent one. And a look is spent once:
+`--look` has no default, `--write` records each look under `audit_looks` in the artifact, a look
+already recorded is refused (and never overwritten), so three looks per claim-life cannot be
+reused by re-running one.
+
+**One number to flag.** The adopted minimum is **N = 8,377**. The formula the rule gives,
+(z_alpha + z_0.8)^2 x 0.32 / 0.02^2 at alpha = 0.0167, is **8,375.3** (`derived_n_min()`); the
+adopted figure is two weeks more conservative and **binds**. Re-deriving it to the formula after
+seeing which groups it admits would be rule 1's laundering; the contract test holds the two within
+three of each other.
+
+**What moved, with the prior values** (run 2026-10-07 on the 2021-2025 data; the measurement
+itself is #309's and did not move):
+
+| | before #310 (tree at #309) | now |
+|---|---|---|
+| `CLAIMED_COV80` / `gate_claim` | 0.77 | **0.80** |
+| `verdict` on the unchanged measurement (80.0% of 15,678) | **OVER-COVERS** | **COVERS** |
+| `state/interval_coverage.json` `band` | 0.02 | 0.02 |
+| `coverage --gate` exit on a normal week | 1 | **0** |
+| `coverage --gate` on a marginal 8 points under the claim | 1 | **0** (reports; the audit fails it) |
+| `coverage --gate` on a broken pipeline (>10 points, or an unscored group) | 1 | 1 |
+| per-position verdict | none | **NOT-RUNNABLE** for QB, RB, WR, TE (1,805 / 4,099 / 6,616 / 3,158 of 8,377) |
+| the page's sentence | "...against the claimed 77% (+/-2%) -- COVERS/OVER" | "...claimed 80% -- this week's read COVERS... the binding verdict is taken at audits; none has been taken yet" |
+
+**The verdict change, named, in both directions.** From the tree at 2026-09-13, COVERS (77.4%
+against 0.77) -> at #309, OVER-COVERS (80.0% against the unchanged 0.77) -> at #310, **COVERS**
+(80.0% against 0.80). The interval did not change between the last two; the claim did, by the
+decision pre-registered before the number existed. A dry-run audit (`--audit --look 1`, not written
+-- an audit spends one of three looks and is the maintainer's to take) reads: marginal 80.0% over
+15,678, MDE 0.015, **COVERS**; every position NOT-RUNNABLE, QB at 78.8% (-0.9 sigma, MDE 0.043).
+The clipped (86.8%) and strictly-positive (77.4%, -4.8 sigma) split of #309 is printed with
+them as a diagnostic and decides nothing.
+
+**Still true, said once more.** A miss at an audit is evidence about the shift (injuries, role
+changes, a season unlike the last) before it is evidence about the construction; and a position
+on pooled calibration for part of its window is not testing the conditional claim for those weeks.
+
+## Restated 2026-10-06 (#309): the published interval, measured as designed above
+
+> **What moved, in one line.** The gate's figure went from **77.4% of 10,536 unclipped
+> player-weeks** (parametric interval, no estimation error) to **80.0% of 15,678 scored
+> player-weeks** (conformal, estimation-aware, clipped and unclipped), and its verdict from
+> **COVERS to OVER-COVERS** against the unchanged claim of 0.77 -- which #310 re-decides. The
+> design is the section above, committed before this run. Every prior value is kept in the table
+> and in `state/interval_coverage.json` under `parametric`.
+
+Run 2026-10-06 on the five seasons 2021-2025, prior centre, window 14 cells, floor 200:
+`uv run python -m hub.models.coverage --measure --write`.
+
+| | prior (2026-09-13) | now (2026-10-06) |
+|---|---|---|
+| interval graded | parametric `skewed(mu, K sqrt(mu))`, clipped | conformal on `(y - mu) / (sd sqrt(1 + 1/n))`, within position |
+| population | **10,536** unclipped of 16,061 | **15,678 scored** of 16,061, clipped and unclipped |
+| rows not scored | 5,525 (the clipped third, by design) | **383**, named: 2021 weeks 5-6, no calibration yet |
+| clipped share of the board | 34.4% (5,525 / 16,061) | **27.8%** of scored weeks have a published lower bound pinned at zero |
+| **gate figure** | **77.4%** | **80.0%** (80.04) |
+| whole board (the pool) | 79.8% on 16,061 | 80.0% on 15,678 |
+| verdict vs the claim 0.77 +/- 0.02 | COVERS | **OVER-COVERS** |
+
+**By position** (prior, parametric, all 16,061 -> now, conformal, scored rows). `n_cal` is the
+median of the position's own calibration rows in the window, `min` the smallest; a position
+below 200 borrows the pooled window for those rows, which are named.
+
+| | n now | coverage prior -> now | sigma now | n_cal (min) | rows on the pooled window, and when |
+|---|---|---|---|---|---|
+| QB | 1,805 (was 1,862) | 75.7% -> **78.8%** | -0.9 | 367 (57) | 152 rows, 2021 weeks 7-12 (6 cells) |
+| RB | 4,099 (was 4,197) | 79.0% -> **79.9%** | -0.1 | 836 (98) | 107 rows, 2021 weeks 7-8 |
+| WR | 6,616 (was 6,775) | 80.8% -> **80.2%** | +0.3 | 1,337 (159) | 72 rows, 2021 week 7 |
+| TE | 3,158 (was 3,227) | 81.2% -> **80.5%** | +0.5 | 635 (69) | 173 rows, 2021 weeks 7-10 |
+| all | 15,678 (was 16,061) | 79.8% -> **80.0%** | +0.1 | 838 (57) | 504 rows, all in 2021 |
+
+sigma is the deviation from 0.80 over sqrt(2) times the binomial standard error at 0.80 -- the
+form #310 pre-registered, and nothing here rules on it: **QB, which the 2026-09-17 note put at
+3.3 sigma under 0.80, is now -0.9 sigma at 78.8%**, on 1,805 rows against the 8,377 #310
+requires before any group may rule. Every position was on the pooled window for part
+of 2021 only; from 2022 week 5 every position calibrates on its own rows, so for the
+position's own conditional claim the first season is not a test of it, and the rows say so.
+
+**What estimation error did alone.** The parametric interval at the estimation-aware scale,
+before any calibration, on the same 16,061 rows and the same clip: **82.5%** over the board
+(was 79.8%); **80.9%** on the 10,536 unclipped weeks (was 77.4%); 85.6% on the clipped ones (was
+84.5%). So on the weeks the old gate measured, the term the repo already knew how to compute
+and had no caller for moved the figure from 2.6 points under 80 to 0.9 over it, a gain of
+3.5 -- #309's claim that estimation error is "almost certainly most of the 80-to-77.4 gap" is
+confirmed, and it overshoots slightly, which the conformal step then takes back.
+
+**By games of evidence behind the centre** (the cut the 2026-09-07 restatement printed, there
+as unclipped-only parametric coverage: 75.5% at 4-5 prior weeks, 77.6% at 6-8, 77.9% at 9-12,
+78.0% at 13+). Published interval, scored rows: **81.1%** at 4-5, **80.5%** at 6-8, **79.8%**
+at 9-12, **78.6%** at 13+. The thin-end under-coverage the estimation error is for is gone and
+the slope has reversed: the thick end now runs about a point and a half short, the calibration
+mixing a scale that is right on average and a little narrow where the centre is well known.
+That is a conditional the marginal 80 hides, and it is reported, not decided.
+
+**What the marginal hides, and #310 should read.** Split on whether the published lower bound
+is pinned at zero, the pool of 80.0% is a cancellation: the clipped weeks (4,352) cover
+**86.8%** and the strictly positive weeks (11,326) cover **77.4%**, -4.8 sigma on the
+sqrt(2) form. The parametric interval had the same shape (84.5% and 77.4%); the conformal step
+fixed the position margins and the marginal, not this one, because the score is not
+conditioned on the clip. The gate now reads the whole board and reports the clipped share
+beside the rate, as #309 asked; whether a clip-conditional bar is wanted is #310's.
+
+**The verdict change, named.** `verdict` COVERS -> **OVER-COVERS**, because the claim constant
+is still the 2026-09-13 restatement (0.77) and the interval now covers 80.0%, 3.0 points above
+it -- the stale-claim-upward case the 2026-09-13 section wrote the gate to catch.
+`--gate` exits 1 on this tree, and the scheduled slate's gate step is red until #310 lands the
+claim at 0.80 and the verdict at audits; **that is the sequence the ticket chain
+specified**, not a defect in the interval. `CLAIMED_COV80` and `coverage.verdict` are untouched
+here.
+
+**Beside it, the other gate.** `--shape` (the skew law under CRPS, pre-registered in
+[gate-power.md](gate-power.md)) is unchanged on purpose and reads the parametric interval; re-run
+2026-10-06 it returns the same **NOT RUNNABLE** (MDE +0.0117 against a ceiling of +0.0081;
+skew-free scores worse by 0.031 pooled, every season a loss). Its ledger entry --
+`interval_shape`, recipe `min_mu=2,min_prior=4,min_weeks=8,seed=0`, 5 resolved seasons, 0
+abstained, width 0.0127 -- is the first with a recipe and abstention counts; the entry of
+2026-09-13 predates the ledger's recipe and is not comparable to it
+(`state/gate-width.json`).
+
+**Published figures that moved.** `state/interval_coverage.json` (the artifact: new rows with
+`position`, `n_cal`, deviation and sigma; the prior table under `parametric`);
+`site/data/track_record.json` `interval_coverage` (`gate_subset` unclipped -> all, `gate_n`
+10,536 -> 15,678, `gate_cov80` 0.7737 -> 0.8004, `verdict` COVERS -> OVER-COVERS, plus
+`gate_clipped_share` 0.2776 and `n_uncalibrated` 383); the page's sentence under the
+calibration curve, which now says "scored player-weeks" with the clipped share and the rows it
+could not score; `weekly.py`'s report line for the same figure. The 2026-09-13 section below,
+`docs/gate-power.md`'s "77.4% with the skew and 79.5% without" and the 2026-09-07 restatement
+are the record of the parametric interval and are not edited.
+
+**Not touched, and said.** `conformal.interval` (#371) is not changed and not fixed;
+`weekly.shipped_quantiles` and the Gate A CRPS table are the parametric law and did not move;
+`predict.moments` is unchanged, so no draft, lineup or roster number moved.
+`predict.skewed`'s docstring now states the clip's measured effect: a receiver at a mean of three
+clips in 21.8% of draws and the clipped draws average 11% above the mean asked for and spread
+11% under the sd asked for.
 
 ## Restated 2026-09-13: the interval labelled 80% covers 77%, and that is now the claim
 
@@ -357,7 +622,8 @@ that by moving `WEEKLY_K` and requiring the graded table to move with it.
 uv run python -m hub.models.coverage --measure                    # the real one
 uv run python -m hub.models.coverage --measure --centre realised  # this document's
 uv run python -m hub.models.coverage --survivor --seasons 2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025
-uv run python -m hub.models.coverage --gate                       # exits 0 on the 77% claim (#289)
+uv run python -m hub.models.coverage --gate                       # the weekly smoke alarm (#310): exits 1 only >10pp off the claim or on an unscored group
+uv run python -m hub.models.coverage --audit --look 1 --write     # the audit-time verdict (#310): marginal 80 +/- 2; a position only at N >= 8,377
 uv run python -m hub.models.coverage --measure --survivor --write # what the slate commits
 ```
 
