@@ -146,10 +146,53 @@ LEVELS: tuple[tuple[float, float], ...] = not_an_input(
 #
 # Not a fitted constant and not a choice a prediction reads: a restated claim about a
 # measurement, pinned so that the gate and the doc cannot say two different numbers.
+#
+# **Restated again, 2026-10-07 (#310, revisiting #289): 0.80.** Conformalisation changed the
+# kind of claim. The 0.77 above was honest for a parametric interval nothing made cover 80%;
+# the published interval is now calibrated on the rolling window, so 80% is a *marginal* claim
+# the construction asserts and the gate's job is to test whether it holds -- a gate that can
+# only restate its own label is not a decision (ADR-0015). The 0.77 and its reasoning stay in
+# `docs/weekly-coverage.md` as the record of the parametric interval.
 CLAIMED_COV80 = not_an_input(
-    0.77,
-    "the restated claim the grading harness holds the deployed interval to; it grades "
+    0.80,
+    "the claim the grading harness holds the deployed interval to; it grades "
     "predictions already made and makes none of its own")
+
+# The pre-registered audit rule of #310 (the maintainer's ADOPTED comment, 2026-09-17), in code
+# so the weekly run and the audit cannot disagree about it (rule 1). Not fitted, not read by
+# any prediction.
+#
+# Three looks per claim-life, alpha spent across them (0.05 / 3 = 0.0167 a look, two-sided, so
+# z = 2.394): the verdict is the full-history gate taken *at each audit*, because a gate read
+# weekly on accumulating rows is a sequential test -- eighteen looks a season on one hypothesis.
+LOOKS = not_an_input(
+    3, "the number of audit looks a claim is allowed to live through, pre-registered (#310)")
+ALPHA_PER_LOOK = not_an_input(
+    0.05 / 3, "the type-I error spent on each audit look, pre-registered (#310)")
+Z_PER_LOOK = not_an_input(
+    statistics.NormalDist().inv_cdf(1.0 - 0.05 / 3 / 2),
+    "the critical value of one audit look, derived from ALPHA_PER_LOOK (#310)")
+# A position returns a verdict only at this many player-weeks: Delta = 0.02 (the band itself),
+# power 0.80, variance under p = 0.80: (z_alpha + z_0.8)^2 * 0.32 / 0.02^2. The adopted rule
+# names 8,377; the formula at the rounded z's is 8,375.3 (`derived_n_min`). **The adopted number
+# binds** -- it is two weeks the more conservative, and changing a pre-registered figure after
+# seeing which groups it admits is rule 1's laundering.
+N_MIN_GROUP = not_an_input(
+    8377, "the player-weeks below which a position cannot rule, pre-registered (#310)")
+# The weekly run's smoke alarm: marginal coverage further than this from the claim (eight
+# MDEs; it cannot fire on drift or noise, only on a broken pipeline), or a group with nothing
+# scored. This is what survives of #273's statistical role in the weekly step.
+SMOKE_BAND = not_an_input(
+    0.10, "the weekly smoke alarm's distance from the claim, pre-registered (#310)")
+# The 95% interval a position's coverage must sit in, at sqrt(2) x the binomial SE.
+GROUP_Z = not_an_input(
+    1.959963984540054, "the 95% two-sided normal quantile of the per-position interval (#310)")
+
+
+def derived_n_min() -> float:
+    """The minimum group size the adopted rule's formula gives; 8,375.3 beside the adopted 8,377."""
+    zb = statistics.NormalDist().inv_cdf(0.80)
+    return (Z_PER_LOOK + zb) ** 2 * 0.32 / BAND ** 2
 
 # Pre-registered before the prior-centre numbers were looked at, and the only other thing
 # `--gate` reads: empirical coverage must sit within this of the claim. Two points is roughly
@@ -580,6 +623,85 @@ def verdict(row: dict[str, Any], claim: float = CLAIMED_COV80, band: float = BAN
     return "UNDER-COVERS" if gap < 0 else "OVER-COVERS"
 
 
+def _mde(n: int) -> float:
+    """The smallest miss from 0.80 a group of `n` weeks can resolve at 80% power at one look:
+    (z_alpha + z_0.8) * sqrt(0.32 / n), the variance taken under p = 0.80 (#310). 0.0200 at
+    8,377, 0.0144 on the whole 16,061-week board -- printed beside every group."""
+    zb = statistics.NormalDist().inv_cdf(0.80)
+    return (Z_PER_LOOK + zb) * math.sqrt(0.32 / n) if n else float("nan")
+
+
+def group_verdict(row: dict[str, Any]) -> dict[str, Any]:
+    """One position's audit reading: a verdict only at `N_MIN_GROUP` player-weeks.
+
+    At or above it, the verdict is whether the 95% interval at sqrt(2) x the binomial SE
+    (`row["se"]`, which already carries the root two) contains 0.80. Below it the group
+    returns **NOT-RUNNABLE** and reports its deviation and sigma -- no verdict, not
+    invisibility (rule 16: nothing ships on a conditional verdict, so this is not the harmful
+    case). `n_required` is printed so the exemption names itself.
+    """
+    n = int(row["n"])
+    out = {"group": row["group"], "position": row.get("position"), "n": n,
+           "n_cal": row.get("n_cal"), "cov80": row["cov80"], "deviation": row["deviation"],
+           "se": row["se"], "sigma": row["sigma"], "mde": _mde(n),
+           "n_required": N_MIN_GROUP, "pooled_calibration": bool(row.get("n_fallback"))}
+    if n < N_MIN_GROUP:
+        out["verdict"] = "NOT-RUNNABLE"
+    elif abs(row["deviation"]) <= GROUP_Z * row["se"]:
+        out["verdict"] = "COVERS"
+    else:
+        out["verdict"] = "UNDER-COVERS" if row["deviation"] < 0 else "OVER-COVERS"
+    return out
+
+
+def audit_verdict(rows: list[dict[str, Any]], claim: float = CLAIMED_COV80,
+                  band: float = BAND) -> dict[str, Any]:
+    """The audit-time verdict (#310, adopted 2026-09-17): marginal 80 +/- 2 on the whole
+    board, and per position the sqrt(2) interval -- a verdict only at `N_MIN_GROUP`.
+
+    `passes` is the marginal COVERS and no *runnable* group missing; a NOT-RUNNABLE group
+    neither passes nor fails the audit, and says so. Only the position rows and the pool are
+    read: the clipped/unclipped split is a diagnostic the maintainer decided on 2026-10-07 not
+    to make a claim, and its rows (no `position`) are not inputs here.
+    """
+    pool = next(r for r in rows if r["group"] == GATE_SUBSET)
+    marginal = verdict(pool, claim=claim, band=band)
+    groups = [group_verdict(r) for r in rows if r.get("position")]
+    return {"marginal": marginal, "claim": claim, "band": band, "n": pool["n"],
+            "cov80": pool["cov80"], "mde": _mde(int(pool["n"])), "groups": groups,
+            "passes": marginal == "COVERS" and all(
+                g["verdict"] in ("COVERS", "NOT-RUNNABLE") for g in groups)}
+
+
+def smoke_alarm(got: dict[str, Any]) -> list[str]:
+    """What the weekly step still fails the run on: a broken pipeline, not a drift.
+
+    Marginal coverage further than `SMOKE_BAND` from the claim -- eight MDEs, so noise and
+    drift cannot reach it -- or a group whose rows could not be scored at all. Empty means the
+    week is fine. Supersedes #273's statistical role (a verdict read weekly is a sequential
+    test) and keeps its purpose: a run that measures nothing sensible is a red run.
+    """
+    reasons = []
+    miss = got["gate_cov80"] - got["gate_claim"]
+    if abs(miss) > SMOKE_BAND:
+        reasons.append(f"marginal coverage {got['gate_cov80']:.1%} is {abs(miss):.1%} from the "
+                       f"claimed {got['gate_claim']:.0%}, further than {SMOKE_BAND:.0%}")
+    reasons += [f"{r['group']} reported zero calibration rows (nothing scored)"
+                for r in got["by_position"] if not r["n"]]
+    return reasons
+
+
+def _season_coverage(g: pl.DataFrame) -> dict[str, Any] | None:
+    """The newest scored season's own coverage, reported beside the full-history figure and
+    never gated (#310): a season is a look at one year, and the claim is the history's."""
+    s = g.filter(pl.col("scored"))
+    if not s.height:
+        return None
+    last = int(cast(int, s["season"].max()))
+    row = _published_row(str(last), s.filter(pl.col("season") == last), None)
+    return {"season": last, "n": row["n"], "cov80": row["cov80"]}
+
+
 def _uncalibrated_cells(g: pl.DataFrame) -> list[list[int]]:
     left = g.filter(~pl.col("scored"))
     return [list(c) for c in sorted({(int(a), int(b)) for a, b in
@@ -634,6 +756,12 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
     param_gated = next((r for r in split if r["group"] == "strictly positive"),
                        param_rows[-1])
     gated = gate_population(rows)
+    # Each group row carries the audit reading beside its figures (#310): a verdict at
+    # N_MIN_GROUP, NOT-RUNNABLE below it, never a silent omission.
+    for r in rows:
+        r["verdict"] = (verdict(r, claim=claim, band=band) if r["group"] == GATE_SUBSET
+                        else group_verdict(r)["verdict"])
+        r["mde"] = _mde(int(r["n"]))
     clipped_param = next((r["n"] for r in split if r["group"] == "clipped at zero"), 0)
     return {
         "centre": centre, "lookahead": centre == "realised", "interval": "conformal",
@@ -647,6 +775,11 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
         "gate_subset": GATE_SUBSET, "gate_n": gated["n"], "gate_cov80": gated["cov80"],
         "gate_clipped_share": gated["clipped_share"],
         "gate_claim": claim, "verdict": verdict(gated, claim=claim, band=band),
+        "season_coverage": _season_coverage(cal),
+        # Reported beside the verdict and read by none (the 2026-10-07 decision, #310): the
+        # clipped/unclipped split is not a claim, and a clip-conditional claim would be a new
+        # ticket with its own pre-registered threshold.
+        "diagnostics": ["floor_split", "by_prior"],
         "estimation_only": _estimation_only(g),
         "parametric": {
             "by_position": param_rows, "floor_split": split,
@@ -843,10 +976,32 @@ def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
     block already in the file is kept (#273): one file, two verdicts, one reader.
     """
     p = path or ARTIFACT
-    kept = _existing(p).get("survivor")
+    have = _existing(p)
+    # The survivor block and the last audit are not this run's to erase: a weekly write is a
+    # report, and the audit's verdict stands until the next audit replaces it (#310).
+    keep = {k: have[k] for k in ("survivor", "audit") if have.get(k)}
     atomic.write_text(p, jsonio.dumps({"name": "interval_coverage",
-                                       "generated_at": jsonio.stamp(), **result,
-                                       **({"survivor": kept} if kept else {})}, indent=2))
+                                       "generated_at": jsonio.stamp(), **result, **keep},
+                                      indent=2))
+    return p
+
+
+def write_audit(got: dict[str, Any], audit: dict[str, Any], look: int,
+                path: Path | None = None) -> Path:
+    """Record an audit's verdict beside the weekly measurement it was read from (#310).
+
+    The block carries the claim the verdict was compared against (#289's rule), the look
+    number and alpha per look, and every group's position, n, n_cal, coverage, sigma and
+    verdict-or-NOT-RUNNABLE -- what an auditor needs to read the verdict without the run.
+    """
+    p = write_summary(got, path)
+    block = {"look": look, "looks": LOOKS, "alpha_per_look": ALPHA_PER_LOOK,
+             "z_per_look": Z_PER_LOOK, "taken_at": jsonio.stamp(), "claim": audit["claim"],
+             "band": audit["band"], "marginal": audit["marginal"], "passes": audit["passes"],
+             "n": audit["n"], "cov80": audit["cov80"], "mde": audit["mde"],
+             "season_coverage": got.get("season_coverage"), "groups": audit["groups"]}
+    have = _existing(p)
+    atomic.write_text(p, jsonio.dumps({**have, "audit": block}, indent=2))
     return p
 
 
@@ -901,7 +1056,9 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
             # #309: what the page needs to say that the number is the whole scored board and
             # how much of the board that is. Absent in an artifact written before it, which
             # the page then words as it always did.
-            "interval", "gate_clipped_share", "n_uncalibrated")}
+            "interval", "gate_clipped_share", "n_uncalibrated", "season_coverage")}
+    if isinstance(got.get("audit"), dict):
+        out["audit"] = got["audit"]
     # An artifact written before the claim was carried (#289) had its verdict read against
     # the label, so that is the claim it is published with -- a reader printing `verdict`
     # beside `gate_claim` then says what that run actually compared.
@@ -947,7 +1104,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--survivor", action="store_true",
                     help="survivor win probability by spread bucket")
     ap.add_argument("--gate", action="store_true",
-                    help="measure, then exit 1 if the interval leaves the band")
+                    help="the weekly step: measure and report, exit 1 only on the smoke alarm "
+                         "(marginal >10pp from the claim, or a group with nothing scored)")
+    ap.add_argument("--audit", action="store_true",
+                    help="the audit-time verdict (#310): marginal 80 +/- 2 on the whole board, "
+                         "per position only at N >= 8,377; exit 1 if it fails")
+    ap.add_argument("--look", type=int, default=1,
+                    help=f"which of the {LOOKS} audit looks this is, for --audit")
     ap.add_argument("--shape", action="store_true",
                     help="the skew law under CRPS, season-clustered, as pre-registered (#292)")
     ap.add_argument("--centre", default="prior", choices=("prior", "realised"),
@@ -961,7 +1124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cache", default=None, help="raw-cache root; defaults to this repo's")
     a = ap.parse_args(argv)
 
-    if not (a.measure or a.survivor or a.gate or a.shape):
+    if not (a.measure or a.survivor or a.gate or a.shape or a.audit):
         ap.print_help()
         return 0
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
@@ -1025,7 +1188,13 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{pooled['n']:,}  (a diagnostic; the verdict reads the unclipped rows)")
         print(f"\n  {run.verdict[1]}")
 
-    if a.measure or a.gate:
+    if a.audit and not 1 <= a.look <= LOOKS:
+        print(f"hub.models.coverage: look {a.look} is outside the {LOOKS} looks a claim is "
+              f"allowed to live through; a claim that outlives them is a restatement trigger "
+              f"(docs/weekly-coverage.md, #310), not a fourth read", file=sys.stderr)
+        return 1
+
+    if a.measure or a.gate or a.audit:
         try:
             stats = _stats(seasons, cache)
         except Exception as e:
@@ -1064,14 +1233,46 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"+/- {got['band']:.0%} (interval labelled {got['nominal']['cov80']:.0%}) over "
               f"{got['gate_n']:,}, {got['gate_clipped_share']:.1%} of them clipped "
               f"-> {got['verdict']}")
+        sc = got["season_coverage"]
+        if sc:
+            print(f"    the season's own coverage ({sc['season']}): {sc['cov80']:.1%} over "
+                  f"{sc['n']:,} -- reported beside the full-history figure and never gated")
+        if a.audit:
+            audit = audit_verdict(got["by_position"], claim=got["gate_claim"], band=got["band"])
+            _print_audit(audit, a.look)
+            if a.write:
+                print(f"    written to {write_audit(got, audit, a.look)}")
+            return 0 if audit["passes"] else 1
         if a.write:
             print(f"    written to {write_summary(got)}")
-        if a.gate and got["verdict"] != "COVERS":
-            print("    the deployed interval does not cover what docs/weekly-coverage.md "
-                  "says it covers; restate the claim or find what moved the function.",
-                  file=sys.stderr)
-            return 1
+        if a.gate:
+            # The weekly run reports and never gates (#310): a verdict read weekly on
+            # accumulating rows is a sequential test. What stays is the smoke alarm.
+            print(f"    the weekly run reports and never gates; the verdict is taken at audits "
+                  f"(--audit --look k, {LOOKS} looks). Smoke alarm: marginal within "
+                  f"{SMOKE_BAND:.0%} of the claim and every group scored.")
+            alarm = smoke_alarm(got)
+            if alarm:
+                print("    smoke alarm -- the pipeline looks broken, not drifted: "
+                      + "; ".join(alarm), file=sys.stderr)
+                return 1
     return 0
+
+
+def _print_audit(audit: dict[str, Any], look: int) -> None:
+    """The audit's verdict with the look count and alpha beside it, and each group (#310)."""
+    print(f"  AUDIT look {look} of {LOOKS}, alpha {ALPHA_PER_LOOK:.4f} per look "
+          f"(z = {Z_PER_LOOK:.3f}): marginal {audit['cov80']:.1%} against the claimed "
+          f"{audit['claim']:.0%} +/- {audit['band']:.0%} over {audit['n']:,} "
+          f"(MDE {audit['mde']:.3f}) -> {audit['marginal']}")
+    for g in audit["groups"]:
+        note = (f"NOT-RUNNABLE: needs {g['n_required']:,} player-weeks to rule"
+                if g["verdict"] == "NOT-RUNNABLE" else g["verdict"])
+        pooled = "  (pooled calibration for part of the window)" if g["pooled_calibration"] else ""
+        print(f"    {g['group']:<4}{g['n']:>7,} weeks  {g['cov80']:.1%}  dev {g['deviation']:+.1%}"
+              f"  sigma {g['sigma']:+.1f}  MDE {g['mde']:.3f}  -> {note}{pooled}")
+    print(f"    audit {'PASSES' if audit['passes'] else 'FAILS'}: the marginal binds; a position "
+          f"below the minimum neither passes nor fails it.")
 
 
 if __name__ == "__main__":

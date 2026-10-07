@@ -225,12 +225,12 @@ def test_an_unknown_centre_is_refused():
 # --- the verdict, and what reads it --------------------------------------
 
 @pytest.mark.parametrize("cov,want", [
-    (0.77, "COVERS"), (0.774, "COVERS"), (0.785, "COVERS"), (0.745, "UNDER-COVERS"),
-    (0.80, "OVER-COVERS"), (0.893, "OVER-COVERS")])
+    (0.80, "COVERS"), (0.782, "COVERS"), (0.818, "COVERS"), (0.77, "UNDER-COVERS"),
+    (0.83, "OVER-COVERS"), (0.893, "OVER-COVERS")])
 def test_the_verdict_reads_the_pre_registered_band(cov, want):
-    """Against the *claim*, 77 +/- 2 (#289), and not the label. 80.0% is outside the band:
-    an interval that drifted up to what its label says would be a stale claim, and the
-    gate's job is to say the claim is stale, whichever way it went."""
+    """Against the *claim*, 80 +/- 2 (#310, revisiting #289's 77), and not the label. The
+    band is the same and so is the rule that a claim stale in either direction is reported;
+    what moved is the claim, now the nominal 0.80 as a marginal the construction asserts."""
     assert coverage.verdict({"cov80": cov}) == want
 
 
@@ -238,8 +238,8 @@ def test_the_gate_reads_the_restated_claim_and_the_label_is_unchanged():
     """#289: the interval is still built at (p10, p90) and still labelled 80%; what moved is
     what the gate holds it to. Two constants, two jobs, and the test pins both so a later
     hand cannot "fix" the gate by relabelling the interval."""
-    assert coverage.CLAIMED_COV80 == 0.77
-    assert coverage.LEVELS[0] == (0.10, 0.90), "the label did not move; the claim did"
+    assert coverage.CLAIMED_COV80 == 0.80, "#310: the claim returned to the label, as marginal"
+    assert coverage.LEVELS[0] == (0.10, 0.90)
     got = coverage.measure(_drawn(n_players=40), "prior")
     assert got["nominal"]["cov80"] == 0.80, "the label the interval is served under"
     assert got["gate_claim"] == coverage.CLAIMED_COV80
@@ -538,10 +538,9 @@ def test_the_gate_refuses_when_the_interval_leaves_the_band(capsys, monkeypatch)
     a = _drawn(n_players=250, weeks=17, seasons=(2023,), seed=5)
     b = _drawn(n_players=250, weeks=17, spread=1.6, seasons=(2024,), seed=6)
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: pl.concat([a, b]))
-    monkeypatch.setattr(coverage, "measure", _claiming(0.80))
-    assert coverage.main(["--gate"]) == 1
+    assert coverage.main(["--audit", "--look", "1"]) == 1
     out = capsys.readouterr()
-    assert "UNDER-COVERS" in out.out and "does not cover" in out.err
+    assert "UNDER-COVERS" in out.out and "AUDIT look 1 of 3" in out.out
 
 
 def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, capsys):
@@ -558,15 +557,15 @@ def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, cap
     assert "of them clipped" in out, "the clipped share is beside the rate"
 
 
-def test_an_interval_that_covers_its_label_fails_the_stale_077_claim(monkeypatch, capsys):
-    """The claim is read, not the label: the conformal interval covers 80%, the committed
-    claim is still 0.77 until #310 decides it, and the gate says the claim is stale -- OVER
-    -- which is the verdict change #309 names rather than hides."""
+def test_an_interval_read_against_the_old_077_claim_is_stale_upward(monkeypatch, capsys):
+    """The claim is read, not the label, in either direction: the conformal interval covers
+    80%, so read against #289's 0.77 it is OVER-COVERS -- the verdict #309 alone produced and
+    #310's 0.80 clears. Kept so the stale-claim-upward branch has a fixture."""
     monkeypatch.setattr(coverage, "_stats",
                         lambda seasons, cache: _drawn(n_players=250, weeks=17, seed=9,
                                                       seasons=(2023, 2024)))
-    assert coverage.CLAIMED_COV80 == 0.77
-    assert coverage.main(["--gate"]) == 1
+    monkeypatch.setattr(coverage, "measure", _claiming(0.77))
+    assert coverage.main(["--audit", "--look", "1"]) == 1
     assert "OVER-COVERS" in capsys.readouterr().out
 
 
