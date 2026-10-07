@@ -31,6 +31,19 @@ row-level frame gives -- `tests/unit/test_gate_horizon.py` holds that equality.
     uv run python scripts/gate_horizon.py --render $TMPDIR/388-table.json \
         --with-sensitivity $TMPDIR/388-sens.json
 
+#381 added `--rule-c`: (C), the verdict over *resolved* seasons with the abstention count
+(ADR-0019's 2026-10-06 amendment), read off the same `gate` run as the rule that ships.
+`verdict_abstain` and `verdict_resolved` below are the two rules as functions of the one summary
+and seasons frame `gate` produced, so a trial reads both on identical frames and neither is a
+second simulation; the harness's "ship" column is whatever `gate` itself returned, and a unit
+test holds it equal to whichever of the two is landed. **(C) landed in `gate` the same day
+(#381), so "ship" is (C) from that commit on and the "abstain" column is #388's shipped rule,
+kept so #388's table stays reproducible.** `sign` is the pre-#335 rule, unchanged:
+
+    uv run python scripts/gate_horizon.py --rule-c --trials 40000 --workers 6 \
+        --out $TMPDIR/381-rule-c.json
+    uv run python scripts/gate_horizon.py --render-rule-c $TMPDIR/381-rule-c.json
+
 #418 added `--rule16`: the same harness started from `rule16_combined_power.py`'s generating
 process and moved to this one a factor at a time (`--render-rule16` prints the table):
 
@@ -164,6 +177,31 @@ def _frame(rng: np.random.Generator, proc: Process, seasons: Sequence[tuple[int,
                          "diff": np.concatenate(diff)})
 
 
+def verdict_abstain(summary: dict, records: Sequence[dict]) -> str:
+    """(A), the rule as ADOPTED on #335 and landed to 2026-10-06: ADOPT needs a win in every
+    season, REMOVE a loss in every season, so one Abstention vetoes both. ADOPT / REMOVE / SHOW
+    only: the harness holds the ceiling open, so VOID and NOT-RUNNABLE cannot arise."""
+    disps = [r["disposition"] for r in records]
+    if summary["t_lo"] > 0 and all(d == "win" for d in disps):
+        return "ADOPT"
+    if summary["t_hi"] < 0 and all(d == "loss" for d in disps):
+        return "REMOVE"
+    return "SHOW"
+
+
+def verdict_resolved(summary: dict, records: Sequence[dict]) -> str:
+    """(C), ADOPTED on #381 2026-10-06: the every-season half reads the *resolved* seasons only
+    (a win or a loss; an Abstention is neither), at least one of them -- with none, "every
+    resolved season wins" is vacuously true and the interval half alone would adopt -- and the
+    interval half is unchanged, pooling all k seasons, abstaining ones included."""
+    disps = [r["disposition"] for r in records if r["disposition"] != "tie"]
+    if disps and summary["t_lo"] > 0 and all(d == "win" for d in disps):
+        return "ADOPT"
+    if disps and summary["t_hi"] < 0 and all(d == "loss" for d in disps):
+        return "REMOVE"
+    return "SHOW"
+
+
 def _read(paired: pl.DataFrame, seed: int, bootstrap: int = BOOTSTRAP) -> dict[str, int | float]:
     """Drive `gate` on the frame and read the shipped verdict, the pre-#335 verdict, and the
     interval half alone, off the one summary and one seasons frame `gate` produced."""
@@ -171,12 +209,16 @@ def _read(paired: pl.DataFrame, seed: int, bootstrap: int = BOOTSTRAP) -> dict[s
                actions=_ACTIONS, bootstrap=bootstrap, seed=seed)
     ship = run.verdict[0]
     # The pre-#335 reading: a seasons frame with no `se`/`m` is read by sign alone
-    # (`_seasons_won_tied_lost`'s documented backward compatibility), the rest unchanged.
-    sign = experiment._verdict(run.summary, run.seasons.select("season", "gain", "n"),
-                               _ACTIONS)[0]
+    # (`_seasons_won_tied_lost`'s documented backward compatibility), the rest unchanged --
+    # and read with (A)'s conjunction, whatever `gate` ships, so this column keeps meaning
+    # "the sign test" after #381 and the two readings of the sign stay the same rule.
+    sign = verdict_abstain(run.summary, experiment._season_records(
+        run.seasons.select("season", "gain", "n")))
     recs = experiment._season_records(run.seasons)
     gains = run.seasons["gain"].to_numpy()
-    return {"ship": ship, "sign": sign,
+    return {"ship": ship, "sign": sign, "abstain": verdict_abstain(run.summary, recs),
+            "resolved": verdict_resolved(run.summary, recs),
+            "n_resolved": sum(r["disposition"] != "tie" for r in recs),
             "ties": sum(r["disposition"] == "tie" for r in recs),
             "int_adopt": int(run.summary["t_lo"] > 0), "int_remove": int(run.summary["t_hi"] < 0),
             "all_pos": int(bool((gains > 0).all())), "all_neg": int(bool((gains < 0).all()))}
@@ -186,7 +228,7 @@ def run_chunk(cell: Cell, proc: Process, n: int, seed_seq: np.random.SeedSequenc
     """`n` trials of one cell, seeded from `seed_seq` alone: the answer does not depend on how
     many workers split the cells."""
     rng = np.random.default_rng(seed_seq)
-    ship, sign = Counter(), Counter()
+    ship, sign, abstain, resolved = Counter(), Counter(), Counter(), Counter()
     tot = Counter()
     violations = 0
     for _ in range(n):
@@ -194,28 +236,43 @@ def run_chunk(cell: Cell, proc: Process, n: int, seed_seq: np.random.SeedSequenc
                     cell.bootstrap)
         ship[out["ship"]] += 1
         sign[out["sign"]] += 1
+        abstain[out["abstain"]] += 1
+        resolved[out["resolved"]] += 1
+        tot["resolved_seasons"] += out["n_resolved"]
+        tot["none_resolved"] += out["n_resolved"] == 0
+        # #381's inclusions, per frame: (A) adopts only where (C) does, and (C) only where the
+        # interval half alone does (it is that half plus a condition on the seasons) -- a
+        # violation of either is a harness reading two rules off two frames, not a finding.
+        tot["c_not_superset_of_a"] += (out["abstain"] == "ADOPT" and out["resolved"] != "ADOPT") \
+            + (out["abstain"] == "REMOVE" and out["resolved"] != "REMOVE")
+        tot["c_beyond_interval"] += (out["resolved"] == "ADOPT" and not out["int_adopt"]) \
+            + (out["resolved"] == "REMOVE" and not out["int_remove"])
+        tot["ship_is_neither"] += out["ship"] not in (out["abstain"], out["resolved"])
         tot["ties"] += out["ties"]
         tot["any_tie"] += out["ties"] > 0
         for key in ("int_adopt", "int_remove", "all_pos", "all_neg"):
             tot[key] += out[key]
         # #335's prediction as a per-trial inclusion, not only a rate: whatever the tie-aware
-        # rule adopts, the sign-alone rule adopts on the same frame (and mirrored for REMOVE).
-        violations += (out["ship"] == "ADOPT" and out["sign"] != "ADOPT") \
-            + (out["ship"] == "REMOVE" and out["sign"] != "REMOVE")
+        # rule (A) adopts, the sign-alone rule adopts on the same frame (and mirrored for
+        # REMOVE). It is stated of (A), not of `ship`: (C) can adopt on a frame whose abstaining
+        # season has the wrong sign, which the sign test reads as a loss.
+        violations += (out["abstain"] == "ADOPT" and out["sign"] != "ADOPT") \
+            + (out["abstain"] == "REMOVE" and out["sign"] != "REMOVE")
         # ...and the discordant frames the tie mechanism is answerable for: the paired count
         # that makes the difference between the two columns a difference rather than a rate.
-        tot["sign_not_ship"] += out["sign"] == "ADOPT" and out["ship"] != "ADOPT"
-    return {"n": n, "ship": dict(ship), "sign": dict(sign), "tot": dict(tot),
-            "violations": violations}
+        tot["sign_not_ship"] += out["sign"] == "ADOPT" and out["abstain"] != "ADOPT"
+    return {"n": n, "ship": dict(ship), "sign": dict(sign), "abstain": dict(abstain),
+            "resolved": dict(resolved), "tot": dict(tot), "violations": violations}
 
 
 def _merge(parts: Sequence[dict]) -> dict:
-    out: dict = {"n": 0, "ship": Counter(), "sign": Counter(), "tot": Counter(), "violations": 0}
+    keys = ("ship", "sign", "abstain", "resolved", "tot")
+    out: dict = {"n": 0, "violations": 0, **{k: Counter() for k in keys}}
     for p in parts:
         out["n"] += p["n"]
         out["violations"] += p["violations"]
-        for key in ("ship", "sign", "tot"):
-            out[key].update(p[key])
+        for key in keys:
+            out[key].update(p.get(key, {}))
     return {k: (dict(v) if isinstance(v, Counter) else v) for k, v in out.items()}
 
 
@@ -287,6 +344,68 @@ def sensitivity_cells() -> list[Cell]:
             cells += [weekly_cell(k, 13, d, ts) for d in (0.0, 0.3)]
             cells += [draft_cell(k, 20, d, ts) for d in (0.0, DRAFT_DELTA)]
     return cells
+
+
+# --- #381: (C) beside (A), on the same frames ---------------------------------------------------
+#
+# Pre-registered in `docs/gate-power.md`, *(C) before it lands (#381)*. The baseline is #388's
+# estimated process (#418's finding). The grid is the subset of #388's the decision reads: k = 4
+# through 8 at the observed rows on both paths, and k = 4 at the other row counts.
+
+def rule_c_cells() -> list[Cell]:
+    cells: list[Cell] = []
+    for k in K_GRID:
+        cells += [weekly_cell(k, 13, d) for d in (0.0, *WEEKLY_DELTAS)]
+        cells += [draft_cell(k, 20, d) for d in (0.0, DRAFT_DELTA)]
+    for w in (11, FULL_SEASON_WEEKS):
+        cells += [weekly_cell(4, w, d) for d in (0.0, *WEEKLY_DELTAS)]
+    for rooms in (40, 80):
+        cells += [draft_cell(4, rooms, d) for d in (0.0, DRAFT_DELTA)]
+    # the planted controls: an effect far above range must be adopted by (C) as by (A)
+    cells += [weekly_cell(4, 13, PLANTED_DELTA["weekly"]), weekly_cell(8, 13, PLANTED_DELTA["weekly"]),
+              draft_cell(8, 20, PLANTED_DELTA["draft"])]
+    return cells
+
+
+def render_rule_c(results: Sequence[dict]) -> str:
+    """The (A) and (C) columns side by side, from a `--rule-c` result file. Every cell's two
+    rates are read off the same frames, so a difference between them is a paired one."""
+    by = _index(results)
+
+    def trio(path: str, seasons: tuple, delta: float) -> str:
+        a = by[(path, seasons, delta, 1.0)]
+        c = rate(a, "ADOPT", "resolved")
+        return f"{rate(a, 'ADOPT', 'abstain'):.4f} | {c:.4f} | {se_of(c, a['n']):.4f}"
+
+    out = ["**Weekly path** (δ in points per roster-week); (A) abstain-and-veto and (C) resolved "
+           "seasons, both read off the same frames. null is ADOPT at δ=0.", "",
+           "| k | rows | null (A) | null (C) | SE | power δ=0.3 (A) | (C) | SE | power δ=0.5 (A) "
+           "| (C) | SE | interval alone δ=0.3 | P(0 resolved) δ=0.3 | resolved seasons of k, δ=0.3 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for k, w in sorted([(k, 13) for k in K_GRID] + [(4, 11), (4, FULL_SEASON_WEEKS)]):
+        s = ((WEEKLY_M, w),) * k
+        a3 = by[("weekly", s, 0.3, 1.0)]
+        out.append(f"| {k} | {WEEKLY_M * w} ({WEEKLY_M}×{w}) | {trio('weekly', s, 0.0)} | "
+                   f"{trio('weekly', s, 0.3)} | {trio('weekly', s, 0.5)} | "
+                   f"{rate(a3, 'int_adopt', 'tot'):.4f} | {tot(a3, 'none_resolved'):.4f} | "
+                   f"{tot(a3, 'resolved_seasons'):.2f} |")
+    out += ["", f"**Draft path** (δ = {DRAFT_DELTA} points per team-game); rows are rooms.", "",
+            f"| k | rooms | null (A) | null (C) | SE | power δ={DRAFT_DELTA} (A) | (C) | SE "
+            "| interval alone | P(0 resolved) | resolved seasons of k |",
+            "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for k, rooms in sorted([(k, 20) for k in K_GRID] + [(4, 40), (4, 80)]):
+        s = ((rooms, 1),) * k
+        a = by[("draft", s, DRAFT_DELTA, 1.0)]
+        out.append(f"| {k} | {rooms} | {trio('draft', s, 0.0)} | {trio('draft', s, DRAFT_DELTA)} | "
+                   f"{rate(a, 'int_adopt', 'tot'):.4f} | {tot(a, 'none_resolved'):.4f} | "
+                   f"{tot(a, 'resolved_seasons'):.2f} |")
+    out += ["", "**Per-frame inclusions (each must be 0), summed over every cell.** Frames on which (A) "
+            "adopts or removes and (C) does not: "
+            f"{sum(r['tot'].get('c_not_superset_of_a', 0) for r in results)}. Frames on which (C) "
+            "adopts or removes and the interval half alone does not: "
+            f"{sum(r['tot'].get('c_beyond_interval', 0) for r in results)}. Frames on which `gate`'s "
+            f"own verdict is neither rule's: {sum(r['tot'].get('ship_is_neither', 0) for r in results)}."]
+    return "\n".join(out)
 
 
 # --- #418: this harness at rule 16's generating process, and the steps between the two -----------
@@ -489,6 +608,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--render", metavar="TABLE_JSON")
     mode.add_argument("--rule16", action="store_true")
     mode.add_argument("--render-rule16", metavar="RULE16_JSON")
+    mode.add_argument("--rule-c", action="store_true")
+    mode.add_argument("--render-rule-c", metavar="RULE_C_JSON")
     ap.add_argument("--with-sensitivity", metavar="JSON", default=None)
     ap.add_argument("--trials", type=int, default=40_000)
     ap.add_argument("--workers", type=int, default=6)
@@ -511,6 +632,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.render_rule16:
         with open(a.render_rule16) as fh:
             print(render_rule16(json.load(fh), rule16_ladder()[2]))
+        return 0
+    if a.render_rule_c:
+        with open(a.render_rule_c) as fh:
+            print(render_rule_c(json.load(fh)))
+        return 0
+    if a.rule_c:
+        cells = rule_c_cells()
+        t0 = time.time()
+        results = run_cells(cells, procs, trials=a.trials, workers=min(a.workers, 6), label="rule-c")
+        print(f"{len(cells)} cells x {a.trials} trials in {time.time() - t0:.0f}s")
+        if a.out:
+            with open(a.out, "w") as fh:
+                json.dump(results, fh)
         return 0
     if a.rule16:
         ladder_procs, ladder_cells, _ = rule16_ladder()

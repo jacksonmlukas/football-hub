@@ -1163,9 +1163,26 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     **The every-season half is tie-aware, since #335.** ADOPTED (A) with (i): a season is a
     *win* only if its gain clears `2 * se` over its own within-season clusters (`_disposition`,
     reading `seasons["se"]`/`seasons["m"]` when `per_season` computed them, falling back to
-    the sign alone otherwise or below `TIE_MIN_CLUSTERS`); a *tie* is neither a win nor a loss
-    and blocks **both** directions, symmetrically -- it is not a win ADOPT needs in every
-    season, and it is not a loss REMOVE needs in every season either.
+    the sign alone otherwise or below `TIE_MIN_CLUSTERS`); a *tie* is neither a win nor a loss.
+
+    **What an Abstention does to the verdict, since #381 (C), ADOPTED 2026-10-06.** Under
+    #335's (A) a tie blocked **both** directions: ADOPT needed a win in every season and REMOVE
+    a loss in every season, so one abstaining season forced SHOW and the rule's power was about
+    0.0008 weekly and 0.0075 draft at k=4 (`docs/gate-power.md`, #388/#418). The every-season
+    half now reads the *resolved* seasons -- those with a win or a loss (CONTEXT.md,
+    **Disposition**) -- and an **Abstention** is never counted as a win: ADOPT needs at least
+    one resolved season and every resolved season a win; REMOVE the mirror. **With no resolved
+    season a Gate can neither adopt nor remove** (SHOW, "0 resolved of k, k abstained"; not
+    NOT-RUNNABLE, which stays the design-cannot-reach-its-effect verdict) -- "every resolved
+    season won" is vacuously true at zero, and without the guard the interval half alone would
+    adopt. There is **no floor beyond one resolved season**: a floor such as ceil(k/2) would be
+    a second threshold chosen after seeing abstention rates. **The interval half is unchanged
+    and still pools all k seasons**, abstaining ones included, so a resolved-unanimous frame
+    whose pooled interval crosses zero is SHOW. **Every sentence carries the count** ("3
+    resolved of 4, 1 abstained"), never a bare verdict, and `GateRun.resolved`/`.abstained` and
+    the ledger entry carry it as numbers. `docs/gate-power.md` (*(C) before it lands*) has the
+    null (0.014 weekly, 0.029 draft at k=4) and power (0.083 / 0.083); ADR-0019's 2026-10-06
+    amendment has the decision. #375's posterior supersedes this rule when it lands.
 
     **A gate that measured no ceiling is NOT-RUNNABLE in both directions, since #363 (S6),
     option 1.** Before this, the precondition fired only when *both* the MDE and the ceiling
@@ -1203,24 +1220,34 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
         return "SHOW", f"{actions.show} Nothing measured -- no paired observation."
     won, tied, lost = _seasons_won_tied_lost(seasons)
     total = seasons.height
+    resolved = won + lost
     t_lo = summary.get("t_lo", float("nan"))
     t_hi = summary.get("t_hi", float("nan"))
     has_interval = reading(summary, "t_lo") is Field.VALUE
+    # The tally keeps its `tied` word (the code's `ties` field and every recorded sentence
+    # say it); `count` is the sentence #381 requires beside every verdict, in CONTEXT.md's
+    # words: a Gate never prints a bare ADOPT or REMOVE, and never a bare SHOW either.
     tally = f"won {won}, tied {tied}, lost {lost} of {total} seasons"
-    if has_interval and t_lo > 0 and won == total:
-        return "ADOPT", (f"{actions.adopt} It won in every held-out season ({tally}) "
+    count = f"{resolved} resolved of {total}, {tied} abstained"
+    # (C): the every-season half reads the *resolved* seasons, and needs at least one -- with
+    # none, "every resolved season won" is vacuously true and the interval half alone would
+    # adopt, and a Gate with no resolved season can neither adopt nor remove.
+    if has_interval and t_lo > 0 and resolved >= 1 and lost == 0:
+        return "ADOPT", (f"{actions.adopt} It won in every resolved season ({count}; {tally}) "
                          f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
-    if has_interval and t_hi < 0 and lost == total:
-        return "REMOVE", (f"{actions.remove} Worse in every held-out season ({tally}) "
+    if has_interval and t_hi < 0 and resolved >= 1 and won == 0:
+        return "REMOVE", (f"{actions.remove} Worse in every resolved season ({count}; {tally}) "
                           f"and the t interval [{t_lo:+.3f}, {t_hi:+.3f}] excludes zero.")
     if not has_interval:
         why = "too few clusters for a t interval"
+    elif resolved == 0:
+        why = "no season resolved, so this gate can neither adopt nor remove"
     elif t_lo <= 0 <= t_hi:
         why = "the interval contains zero"
     else:
         why = "the interval excludes zero but the sign is not consistent across seasons"
-    return "SHOW", (f"{actions.show} {tally} and {why} -- absence of evidence, not evidence "
-                    f"of equivalence.")
+    return "SHOW", (f"{actions.show} {count} ({tally}) and {why} -- absence of evidence, not "
+                    f"evidence of equivalence.")
 
 
 # --- one gate run: the sequence around the rule, written once (issue #135) -----------------
@@ -1270,6 +1297,18 @@ class GateRun(NamedTuple):
     verdict: tuple[str, str]
     lines: list[str]
     stamped: pl.DataFrame
+    # #381: how many of the seasons were *resolved* (a win or a loss) and how many abstained
+    # (CONTEXT.md, **Abstention**). `None` on a `GateRun` a caller hand-builds without a
+    # seasons frame to count (`starter_change`'s degraded return); `gate` always sets both.
+    resolved: int | None = None
+    abstained: int | None = None
+
+
+def _resolved_and_abstained(seasons: pl.DataFrame) -> tuple[int, int]:
+    """`(resolved, abstained)` over every row of `seasons`: a season with a win or a loss is
+    resolved, every other season abstains. They sum to `seasons.height`."""
+    won, tied, lost = _seasons_won_tied_lost(seasons)
+    return won + lost, tied
 
 
 def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
@@ -1309,7 +1348,8 @@ def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequenc
     summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
     seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
     verdict = _verdict(summary, seasons, actions, void=void)
-    return GateRun(summary, seasons, verdict, [], paired)
+    resolved, abstained = _resolved_and_abstained(seasons)
+    return GateRun(summary, seasons, verdict, [], paired, resolved, abstained)
 
 
 def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]:
@@ -1478,7 +1518,8 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
                        clusters=float(summary.get("clusters", 0)),
                        lo=float(summary.get("lo", float("nan"))),
                        hi=float(summary.get("hi", float("nan"))),
-                       verdict=verdict[0], seasons=_season_records(seasons))
+                       verdict=verdict[0], seasons=_season_records(seasons),
+                       resolved=core.resolved, abstained=core.abstained)
     comparison = writer.record(entry)
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
@@ -1490,7 +1531,7 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
         "",
         *stamp.split("\n"),
     ]
-    return GateRun(summary, seasons, verdict, lines, stamped)
+    return GateRun(summary, seasons, verdict, lines, stamped, core.resolved, core.abstained)
 
 
 # --- one declaration per gate (#387) -----------------------------------------------------

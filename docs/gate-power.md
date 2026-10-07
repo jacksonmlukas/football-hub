@@ -383,6 +383,20 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > `docs/weekly-blend-gate.md`'s published −1.004 REMOVE, which this ticket does not re-run and
 > does not move.
 >
+> > **Restated 2026-10-06 (#381, rule 13; the verdict above is kept, not edited).** *Prior value:
+> > SHOW (won 0, tied 1, lost 3 of 4).* **Now: REMOVE on 3 resolved of 4, 1 abstained.** The same
+> > recipe re-run through `gate` under (C) (`uv run python -m hub.season.weekly_gate --run
+> > --ceiling`; the per-season table is the same to the digit: 2022 −1.120, 2023 −1.448, 2024
+> > −0.259 an Abstention, 2025 −1.761; t interval [−2.032, −0.262], excluding zero). Under (A) the
+> > one Abstention vetoed REMOVE; under (C) every resolved season is a loss, the pooled interval
+> > excludes zero, and the verdict sentence says three of the four resolved. Nothing about the
+> > design moved: MDE +1.119 against a ceiling of +10.873 (9.7x), as above. The number that
+> > changed is the reading of 2024, whose |−0.259| sits below every season's 2·SE (the narrowest
+> > is 0.82): an Abstention about the effect, not the season (ADR-0019, 2026-10-06). This is the
+> > ceiling-recipe run, not the published gate's `--shrink mae-market --drafts 40`, so
+> > `docs/weekly-blend-gate.md`'s own REMOVE is unchanged. Ledger entry: `state/gate-width.json`,
+> > `weekly`, 2026-10-06, `resolved: 3, abstained: 1`.
+>
 > `state/gate-width.json` is restored after this run the same way #376's was:
 > `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
 > evidence is untouched by this ticket either.
@@ -417,6 +431,24 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > #363 (S6) amendment named NOT-RUNNABLE pending this ticket now carry a measured ceiling, and
 > neither MDE exceeds it. That is what #376 asks this ticket to end for the draft half, the same
 > way the note above ended it for the weekly half.
+>
+> > **Restated 2026-10-06 (#381, rule 13; the table above is kept, not edited).** *Prior value:
+> > SHOW (won 0, tied 1, lost 3 of 4 seasons).* **Now: REMOVE on 3 resolved of 4, 1 abstained.**
+> > Under (C) the one Abstention (2024) no longer vetoes REMOVE: the three resolved seasons are
+> > losses and the pooled interval excludes zero. The same recipe re-run today
+> > (`hub.draft.backtest --seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling`, about 45
+> > minutes) **is not a bit-for-bit re-reading of the run above, and the difference is flagged
+> > rather than argued away**: 2022 −15.35, 2023 −8.41 and 2024 −5.99 are identical, 2025 is
+> > **−14.34 where this run recorded −19.86**, so the mean is **−11.02 [−14.84, −7.20]** (percentile;
+> > t [−17.22, −4.82]) against −12.40 [−17.60, −7.20] (t [−21.11, −3.69]), and the season-clustered
+> > MDE is **7.84 against 11.01** (ceiling +21.90 either way, so ceiling / MDE is 2.8x against
+> > 1.99x). Something between 2026-09-21 and today moved 2025's replay (the run's own join-failure
+> > line reads optimizer 0.6% of 1,120 drafted names); this restatement does not attribute it and
+> > reads the verdict off today's run. On #376's own recorded numbers (the table above) the (C)
+> > reading is REMOVE as well (three losses, one Abstention, t interval excluding zero). The run's per-season
+> > SEs, the first the draft gate has recorded: 3.31 / 3.11 / **3.75** / 2.03 (m = 20 each);
+> > 2024's is the widest, which ADR-0019's 2026-10-06 amendment reads for the 2024 sub-question.
+> > Ledger entry: `state/gate-width.json`, `draft`, 2026-10-06, `resolved: 3, abstained: 1`.
 >
 > **This run's own verdict is not the published one and is not read as such** -- the same
 > caveat the weekly half carried. `n_drafts=20`, no `--shrink` (there is none to give): this
@@ -4495,3 +4527,173 @@ it.
 - **The generating process is row-iid with no roster component and one common σ_row**, as
   pre-registered; both are estimated from one weekly run and one draft frame whose SEs bracket but
   do not equal #376's.
+
+---
+
+# Pre-registered 2026-10-06: (C), the verdict over resolved seasons, before it lands (#381)
+
+**Written and committed before any number in this section's tables exists.** Rule 16: a rule's
+null size and power are computed before it is adopted into `gate`. The maintainer ADOPTED (C) on
+#381 on 2026-10-06, with this computation first and a stop condition (below). This commit adds
+the harness extension (`scripts/gate_horizon.py --rule-c`, tests in
+`tests/unit/test_gate_horizon.py`) and **does not touch `experiment.gate`**; the results go under
+*Results (C)*, and the design above that heading is not edited after it.
+
+## The rule being measured
+
+A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md; the code's
+field is still `ties`). A season with a win or a loss is **resolved**.
+
+- **ADOPT** — at least one resolved season, *every resolved season a win*, and the t interval
+  over all k seasons' pooled gains excludes zero from above.
+- **REMOVE** — the mirror: at least one resolved season, every resolved season a loss, the t
+  interval excludes zero from below.
+- With **no resolved season** the Gate can neither ADOPT nor REMOVE: SHOW, with "0 resolved of
+  k, k abstained". It is not NOT-RUNNABLE.
+- **No floor beyond one resolved season.** The interval half still pools all k seasons,
+  Abstentions included.
+- The verdict sentence and the ledger record carry the abstention count.
+
+**What is measured.** `verdict_abstain` (A, as shipped) and `verdict_resolved` (C) in the harness
+are the two rules as functions of the one summary and seasons frame that the shipped
+`experiment.gate` returns, so each trial reads both on identical frames (a paired comparison)
+and nothing about `summarise`, `per_season`, `_disposition` or the t interval is reimplemented.
+The only reimplemented part is the four-line conjunction, and a unit test holds the harness's
+"ship" column (what `gate` itself returned) equal to the landed rule's function on every trial.
+The ceiling is held non-binding, as in #388; VOID and NOT-RUNNABLE do not arise.
+
+## Baseline, grid, trials
+
+**Baseline: #388's estimated process**, which #418 found reproduces the recorded season SEs and
+the observed tie rate (weekly τ = 0.4083, σ_row² = 62.564; draft τ = 5.6912, σ_row² = 161.280).
+Cells: k = 4..8 at 260 weekly rows (20×13) at δ = 0, 0.3, 0.5, and at 20 draft rooms at δ = 0,
+2.0; and at k = 4 the other row counts (weekly 220 and 280; draft 40 and 80 rooms), plus the
+three planted-δ controls. **40,000 trials a cell, worst SE 0.0025** (the target; the null cells
+are far below it). Seeds `SeedSequence([388, cell_index])` as #388's harness derives them, so the
+(A) column is the same draws as a #388-style run of the same grid, not the same draws as #388's
+81-cell table (the cell indices differ).
+
+## The pre-registered stop condition (the maintainer's, 2026-10-06)
+
+**If (C)'s null ADOPT at k = 4 exceeds 0.05 on either path, (C) does not land and returns to the
+maintainer; `experiment.gate` is not changed.** The expectation, stated before the run: (C)
+ADOPTs only where the interval half alone does (it is that half with a weaker condition on the
+seasons than (A)'s), whose null at k = 4 #388 measured at 0.034 (weekly) and 0.034 (draft), so
+the null is expected under 0.035 on both. A null above 0.05 would be a harness fault before it
+was a finding.
+
+## Controls (rule 18), each of which must pass or the table is not published
+
+1. **The (A) column reproduces #388's shipped column.** At weekly k = 4, 260 rows, δ = 0.3 and
+   0.5: (A) within 3 SEs of **0.0007** and **0.0043**; draft k = 4, 20 rooms, δ = 2.0: within 3 SEs
+   of **0.0076**; null (A) within 3 SEs of **0.0000** (weekly) and **0.0014** (draft), where a SE
+   is the larger of the two runs' (a rate near 0 has a plug-in SE near 0, so the comparison is
+   also stated in counts). A harness whose (A) is not #388's (A) is not driving the same rule.
+2. **Inclusions, per frame:** zero frames on which (A) adopts or removes and (C) does not; zero
+   on which (C) adopts or removes and the interval half alone does not; zero on which `gate`'s own
+   verdict is neither rule's.
+3. **A planted δ far above range** (weekly δ = 20 at k = 4 and 8, draft δ = 60 at k = 8): (C)
+   ADOPT rate ≥ 0.99, so (C) can adopt.
+4. **The paired difference is real where it must be:** at weekly k = 4, δ = 0.5, (C) ADOPT
+   exceeds (A) by more than 4 SEs of the paired difference (`√d/N`, `d` the discordant frames);
+   a control that cannot tell (A) from (C) measures neither.
+
+## What this cannot do
+
+It does not say whether any arm beats any incumbent (δ is planted), it estimates a between-season
+variance from four seasons (#388's sensitivity table is that admission, and (C) is bounded above
+by the interval-alone column, which that table already covers), and it **adopts nothing**:
+landing (C) is the maintainer's decision, already made, conditional on the stop condition above.
+
+## Results (C)
+
+Run 2026-10-06 against the design above, which `3201859` committed first and which was not
+edited. `gate_horizon.py --rule-c --trials 40000 --workers 6`, 38 cells × 40,000 trials, 25
+minutes, seeds `SeedSequence([388, cell_index])`; raw counts not committed (`$TMPDIR/381-*`),
+re-running the command reproduces them to the bit. **Worst SE of any rate in the table: 0.0025**
+(the (C) power at k=7–8, δ=0.5); the null cells' are 0.0006–0.0009.
+
+### The stop condition did not fire
+
+**(C)'s null ADOPT at k = 4 is 0.0140 (562 of 40,000, SE 0.0006) on the weekly path and 0.0291
+(1,163 of 40,000, SE 0.0008) on the draft path, both under the 0.05 bar.** The largest null (C)
+ADOPT anywhere in the grid is **0.0351** (draft, k = 4, 80 rooms), and across k = 4..8 on both
+paths it is 0.0140–0.0232 (weekly) and 0.0285–0.0321 (draft). The mirrored null REMOVE at k = 4
+is 0.0143 / 0.0285, the same as ADOPT within a SE, as symmetry predicts. The expectation written
+before the run (under 0.035) held on both paths. (C) is not free: it raises the null from (A)'s
+0.0001 / 0.0014 to 0.0140 / 0.0291 at k = 4, a factor of over 100 (weekly) and 20 (draft) on a
+base that was effectively zero, and it stays under `ALPHA`.
+
+### The table
+
+**Weekly path** (δ in points per roster-week); (A) abstain-and-veto and (C) resolved seasons, both
+read off the same frames. null is ADOPT at δ=0.
+
+| k | rows | null (A) | null (C) | SE | power δ=0.3 (A) | (C) | SE | power δ=0.5 (A) | (C) | SE | interval alone δ=0.3 | P(0 resolved) δ=0.3 | resolved seasons of k, δ=0.3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | 220 (20×11) | 0.0001 | 0.0129 | 0.0006 | 0.0006 | 0.0757 | 0.0013 | 0.0022 | 0.1747 | 0.0019 | 0.1286 | 0.4603 | 0.70 |
+| 4 | 260 (20×13) | 0.0001 | 0.0140 | 0.0006 | 0.0008 | 0.0829 | 0.0014 | 0.0039 | 0.2003 | 0.0020 | 0.1313 | 0.4225 | 0.77 |
+| 4 | 280 (20×14) | 0.0001 | 0.0145 | 0.0006 | 0.0006 | 0.0920 | 0.0014 | 0.0050 | 0.2111 | 0.0020 | 0.1420 | 0.4045 | 0.81 |
+| 5 | 260 (20×13) | 0.0000 | 0.0167 | 0.0006 | 0.0002 | 0.1167 | 0.0016 | 0.0010 | 0.2822 | 0.0023 | 0.1622 | 0.3449 | 0.96 |
+| 6 | 260 (20×13) | 0.0000 | 0.0194 | 0.0007 | 0.0000 | 0.1510 | 0.0018 | 0.0004 | 0.3619 | 0.0024 | 0.1908 | 0.2809 | 1.15 |
+| 7 | 260 (20×13) | 0.0000 | 0.0219 | 0.0007 | 0.0000 | 0.1795 | 0.0019 | 0.0000 | 0.4311 | 0.0025 | 0.2149 | 0.2250 | 1.34 |
+| 8 | 260 (20×13) | 0.0000 | 0.0232 | 0.0008 | 0.0000 | 0.2105 | 0.0020 | 0.0000 | 0.4926 | 0.0025 | 0.2420 | 0.1776 | 1.54 |
+
+**Draft path** (δ = 2.0 points per team-game); rows are rooms.
+
+| k | rooms | null (A) | null (C) | SE | power δ=2.0 (A) | (C) | SE | interval alone | P(0 resolved) | resolved seasons of k |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | 20 | 0.0014 | 0.0291 | 0.0008 | 0.0077 | 0.0828 | 0.0014 | 0.0919 | 0.1147 | 1.67 |
+| 4 | 40 | 0.0047 | 0.0317 | 0.0009 | 0.0196 | 0.0958 | 0.0015 | 0.0982 | 0.0451 | 2.15 |
+| 4 | 80 | 0.0100 | 0.0351 | 0.0009 | 0.0382 | 0.0974 | 0.0015 | 0.0983 | 0.0144 | 2.61 |
+| 5 | 20 | 0.0003 | 0.0316 | 0.0009 | 0.0019 | 0.0983 | 0.0015 | 0.1027 | 0.0664 | 2.09 |
+| 6 | 20 | 0.0001 | 0.0321 | 0.0009 | 0.0008 | 0.1143 | 0.0016 | 0.1180 | 0.0391 | 2.51 |
+| 7 | 20 | 0.0000 | 0.0307 | 0.0009 | 0.0003 | 0.1232 | 0.0016 | 0.1303 | 0.0222 | 2.93 |
+| 8 | 20 | 0.0000 | 0.0285 | 0.0008 | 0.0001 | 0.1258 | 0.0017 | 0.1390 | 0.0132 | 3.34 |
+
+### What it says
+
+- **(C)'s power at k = 4** is **0.083** (weekly δ=0.3), **0.200** (weekly δ=0.5) and **0.083**
+  (draft δ=2.0), against (A)'s 0.0008 / 0.0039 / 0.0077 on the same frames. The paired differences
+  are 0.082, 0.196 and 0.075 (SEs of the paired difference 0.0014, 0.0022, 0.0014: 57, 89 and 54
+  SEs). (C) recovers **63%** (weekly δ=0.3) and **90%** (draft) of what the interval half alone
+  reaches, 0.131 and 0.092. So at the weekly gate's noise, an Abstention still costs most of the
+  residual: not through the every-season half any more, which now asks only that the resolved
+  seasons agree, but because 42% of weekly frames have no resolved season at all (SHOW, "0
+  resolved of 4, 4 abstained") and the interval half pools them anyway.
+- **(C) does not make either gate powerful.** 0.08 at k = 4 is nowhere near `POWER` = 0.80;
+  at weekly δ=0.5 it reaches 0.49 only at k = 8. It makes the Gate able to adopt (0.083 against
+  0.0008, a factor of about 100 on the weekly path) and no more. Where a Gate stays unable to
+  reach a verdict, the printed "0 resolved of k" says so rather than a bare SHOW.
+- **More rows help the draft path's null and power together and the weekly path's barely:** the
+  draft null climbs 0.029 → 0.032 → 0.035 across 20 / 40 / 80 rooms while power climbs 0.083 → 0.096
+  → 0.097 and the interval-alone ceiling is 0.098, so (C) is at the interval's limit by 80 rooms.
+- **Sensitivity.** #388's τ sensitivity table bounds this one from above: (C) cannot exceed the
+  interval alone on either null or power (a per-frame inclusion, control 2 below), and #388's
+  interval-alone null was at most 0.035 at 0× and 2× τ. So no τ in that range takes (C)'s null
+  past 0.05; this was not re-simulated.
+
+### The four controls: all pass
+
+1. **(A) reproduces #388's shipped column.** Weekly k = 4, 260 rows: null 3 of 40,000 against
+   #388's 0.0000 (at most 2); δ=0.3 **0.0008** (32) against **0.0007** (28), difference 4 counts
+   against a SE of 7.7 (0.5 SE); δ=0.5 **0.0039** (155) against **0.0043** (172), 17 counts against
+   18 (0.9 SE). Draft k = 4, 20 rooms: null **0.0014** (55) against 0.0014; δ=2.0 **0.0077** (307)
+   against **0.0076** (304). All inside 1 SE.
+2. **Inclusions, per frame, over all 38 cells:** frames on which (A) adopts or removes and (C) does
+   not: **0**. Frames on which (C) adopts or removes and the interval half alone does not: **0**.
+   Frames on which `gate`'s own verdict is neither rule's: **0**; and the shipped verdict equalled
+   (A) on every one (the `ship` and `abstain` counters agree cell by cell, e.g. 3 / 32 / 155 weekly).
+3. **Planted δ.** Weekly δ = 20 at k = 4 and 8, draft δ = 60 at k = 8: (C) ADOPT **1.00000** (40,000
+   of 40,000) in all three, NOT-RUNNABLE 0.
+4. **The paired difference is real.** At weekly k = 4, δ = 0.5 (C) exceeds (A) by 0.1964 (7,858
+   discordant frames, SE of the difference 0.0022), 89 SEs, against the pre-registered 4.
+
+### Where the design was hard to honour
+
+- The (A) column is the same rule as #388's but not the same draws (the cell indices differ), so
+  control 1 compares two independent runs and is stated in counts and SEs; it is not a bitwise
+  reproduction.
+- The harness reads (C) from `gate`'s own summary and seasons rather than from a `gate` that
+  implements it, because `gate` was not to change before this section. The inclusion control and
+  the `ship` column are what hold the harness's conjunction to the code that lands.

@@ -212,6 +212,38 @@ def test_a_ledger_entry_with_no_seasons_frame_carries_no_seasons_field(tmp_path)
     assert "seasons" not in entries[-1]
 
 
+def test_a_ledger_entry_round_trips_the_abstention_count(tmp_path):
+    """#381 (C): a verdict read over fewer seasons than were run says so in the record, as
+    numbers beside the verdict -- `resolved` and `abstained` survive the write and the read."""
+    path = tmp_path / "gate-width.json"
+    ledger = Ledger(path)
+    got = ledger.record(_entry(name="weekly", width=1.1, lo=-1.6, hi=-0.5, seasons=_SEASONS_RECORDS,
+                               resolved=3, abstained=1))
+    assert (got.entry.resolved, got.entry.abstained) == (3, 1)
+    on_disk = json.loads(path.read_text())["entries"][-1]
+    assert (on_disk["resolved"], on_disk["abstained"]) == (3, 1)
+    # and a second write rereads the first without dropping or inventing either number
+    ledger.record(_entry(name="weekly", width=1.2, lo=-1.7, hi=-0.5))
+    first, second = json.loads(path.read_text())["entries"]
+    assert (first["resolved"], first["abstained"]) == (3, 1)
+    assert "resolved" not in second and "abstained" not in second
+
+
+def test_a_row_with_no_abstention_count_reads_as_unrecorded_not_zero(tmp_path):
+    """Every entry before #381 carries neither key, and `0 abstained` would be a claim about
+    them. `None` stays `None` through a rewrite; a non-integer on disk reads as `None` too."""
+    path = tmp_path / "gate-width.json"
+    path.write_text(json.dumps({"entries": [
+        {"gate": "weekly", "config_digest": "c", "data_digest": "d", "width": 1.0, "clusters": 4,
+         "lo": -1.0, "hi": 0.0, "verdict": "SHOW", "recipe": None},
+        {"gate": "weekly", "config_digest": "c", "data_digest": "d", "width": 1.0, "clusters": 4,
+         "lo": -1.0, "hi": 0.0, "verdict": "SHOW", "recipe": None, "resolved": "3",
+         "abstained": True}]}))
+    entries = Ledger(path)._read()
+    assert entries is not None
+    assert all(e.resolved is None and e.abstained is None for e in entries)
+
+
 # --- the in-memory adapter is a real adapter, not a stub -----------------------------------
 
 

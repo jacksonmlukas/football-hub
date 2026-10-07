@@ -274,3 +274,18 @@ accurate enough to beat following consensus and filling your starting slots.
 > rehabilitation, and not a re-run of the published recipe (that is #311's list); the first
 > published removal to weaken under the fixed gate, arriving on the row with the most seasons
 > and the most attention, which is where S1's cost was always going to land first.
+
+> **Restated 2026-10-06 (#381, rule 13; the box above is kept, not edited): the verdict word
+> returns, the decision is unchanged.** *Prior value: SHOW (won 0, tied 1, lost 3 of 4).* **Now:
+> REMOVE on 3 resolved of 4, 1 abstained.** ADR-0019's 2026-10-06 amendment reads a Gate's verdict
+> over its resolved seasons and prints the abstention count; under it 2024's −5.99, which does not
+> clear its own noise, is an Abstention that votes for nobody and no longer vetoes REMOVE. The three
+> resolved seasons are losses and the t interval excludes zero. The same recipe re-run today
+> (`--seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling`) is **not bit-for-bit the run
+> above**: 2022 −15.35, 2023 −8.41 and 2024 −5.99 are identical, 2025 is **−14.34 where the run
+> above has −19.86**, so the mean is −11.02, t interval **[−17.22, −4.82]**, MDE **7.84** against
+> 11.01 (ceiling +21.90 either way); the move is flagged in `docs/gate-power.md` and not
+> attributed. "Worse in most, and the instrument cannot resolve the rest" reads, on these four
+> seasons, "worse in every resolved season, and one season unresolved" -- 2024's SE (3.75) is the
+> widest of the four, so this Abstention is partly the season and partly the small gain
+> (ADR-0019, the 2024 sub-question). The action this ADR took stands, as it did under SHOW.

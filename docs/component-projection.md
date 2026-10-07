@@ -265,6 +265,14 @@ components has to beat a measured null rather than an intuition.
 > future proposal to beat. The conclusion is robust to the ceiling's construction — no
 > calibration could earn the +0.170 the design would need — so a future proposal needs more
 > held-out seasons, not a better ceiling.
+>
+> > **Restated 2026-10-06 (#381, re-run; the verdict is kept).** *Prior value: NOT-RUNNABLE,
+> > "tied 3 of 3".* **Now: NOT-RUNNABLE, with all three seasons abstaining (0 resolved of 3, 3
+> > abstained in the ledger entry).** (C) does not touch this verdict: NOT-RUNNABLE is the
+> > design-cannot-reach-its-effect branch and is read ahead of the every-season half, so its
+> > sentence says no count; zero resolved seasons is a different verdict (SHOW) and is not this
+> > one. Re-run `--run`, figures identical to the digit (MDE +0.170 against +0.019). Ledger:
+> > `component_calibration`, 2026-10-06, `resolved: 0, abstained: 3`.
 
 ### What this does and does not license
 

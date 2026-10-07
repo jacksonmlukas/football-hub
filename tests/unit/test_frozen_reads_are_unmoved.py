@@ -33,8 +33,16 @@ from hub.models import injury, margin, spread
 EXPECTED = {
     "spread": "de9caff2d777c279",
     "injury": "dccb614ad4ab1bd8",
-    "margin": "9630773a09e5aa01",
+    "margin": "8558d7dc99e33da8",
 }
+# **Re-measured 2026-10-06 for #381 -- `margin` only, and why.** `margin` was "9630773a09e5aa01"
+# over the whole of its output. #381 (C) puts the abstention count into the Gate's verdict
+# sentence ("10 resolved of 10, 0 abstained"), and `margin`'s shape verdict prints that sentence
+# whole, so the digest moves by exactly that phrase. Checked, not argued: with the one
+# `N resolved of K, A abstained` phrase the new code prints removed from the output, the digest
+# is "9630773a09e5aa01" again -- the same bytes as before -- so no number, no status (`SHOW`,
+# `KEEP`) and no row of the written frame moved. `spread` and `injury` cut above the Gate's
+# report and do not see the phrase.
 # **Re-measured 2026-10-06 for #343, and why.** `spread` and `injury` were "b68617dd0a7e3896" and
 # "88007c4ee7b94143" over the whole of their output, which ended with the hand-built verdict
 # line. #343 replaces that line with the Gate's report and verdict, on purpose, so those two

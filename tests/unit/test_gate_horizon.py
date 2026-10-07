@@ -65,8 +65,8 @@ def test_the_pre_335_reading_never_sees_a_tie_and_the_shipped_one_does(gh):
     only adopt where the shipped rule does and more. #335's prediction, as an inclusion per frame."""
     res = _run(gh, gh.weekly_cell(4, 13, 0.3), 200)
     assert res["tot"].get("ties", 0) > 0
-    assert res["violations"] == 0
-    assert res["sign"].get("ADOPT", 0) >= res["ship"].get("ADOPT", 0)
+    assert res["violations"] == 0          # stated of (A), the rule #335 adopted
+    assert res["sign"].get("ADOPT", 0) >= res["abstain"].get("ADOPT", 0)
 
 
 def test_the_sign_only_reading_is_what_the_floor_override_gives(gh):
@@ -154,3 +154,54 @@ def test_the_rule16_ladder_renders_and_its_null_stays_under_alpha(gh, monkeypatc
     big = gh.run_chunk(gh.Cell("weekly:big", ((40, 1),) * 6, 20.0, 1.0, 200),
                        procs["weekly:1 rule-16 process, bootstrap 200"], 20, np.random.SeedSequence(3))
     assert big["ship"].get("ADOPT", 0) / big["n"] > 0.9
+
+
+# --- #381: (C) beside (A), read off the same `gate` run ---------------------------------------
+
+def _recs(*disps):
+    return [{"season": 2022 + i, "gain": 0.0, "se": 1.0, "m": 20, "disposition": d}
+            for i, d in enumerate(disps)]
+
+
+def test_the_two_rules_read_a_resolved_unanimous_frame_with_one_abstention_differently(gh):
+    """Rule 18 for the harness's two columns: plant the one case they exist to tell apart. Three
+    wins and a tie with an interval above zero is SHOW to (A) and ADOPT to (C); mirrored for
+    REMOVE; and the interval half vetoes both."""
+    up, down = {"t_lo": 0.5, "t_hi": 2.0}, {"t_lo": -2.0, "t_hi": -0.5}
+    straddle = {"t_lo": -0.5, "t_hi": 2.0}
+    wwwt, llltt = _recs("win", "win", "win", "tie"), _recs("loss", "loss", "loss", "tie")
+    assert gh.verdict_abstain(up, wwwt) == "SHOW" and gh.verdict_resolved(up, wwwt) == "ADOPT"
+    assert gh.verdict_abstain(down, llltt) == "SHOW" and gh.verdict_resolved(down, llltt) == "REMOVE"
+    assert gh.verdict_resolved(straddle, wwwt) == "SHOW"          # the interval half still vetoes
+    assert gh.verdict_resolved(up, _recs("win", "win", "loss", "tie")) == "SHOW"
+    # no resolved season: "every resolved season wins" is vacuous, and must not adopt
+    assert gh.verdict_resolved(up, _recs("tie", "tie", "tie", "tie")) == "SHOW"
+    assert gh.verdict_resolved(down, _recs("tie", "tie")) == "SHOW"
+    assert gh.verdict_resolved(up, _recs("win", "tie", "tie", "tie")) == "ADOPT"   # one is enough
+
+
+def test_gate_reads_the_same_verdict_as_the_rule_the_harness_says_is_landed(gh):
+    """The harness's "ship" column is `gate`'s own verdict. Per frame it must be one of the two
+    functions above, and over a planted-effect run where (A) and (C) differ it must be the same
+    one every time -- the landed rule -- or the harness is reading one rule and reporting another."""
+    rng = np.random.default_rng(11)
+    proc = gh.estimates()["weekly"]
+    outs = [gh._read(gh._frame(rng, proc, ((20, 13),) * 4, 0.9), i) for i in range(60)]
+    assert all(o["ship"] in (o["abstain"], o["resolved"]) for o in outs)
+    assert any(o["abstain"] != o["resolved"] for o in outs)      # the plant: the rules do differ
+    assert all(o["ship"] == o["resolved"] for o in outs)         # LANDED: (C), since #381
+    assert any(o["ship"] != o["abstain"] for o in outs)          # and (A) is no longer what ships
+
+
+def test_c_adopts_wherever_a_does_and_never_beyond_the_interval_alone(gh):
+    res = _run(gh, gh.weekly_cell(4, 13, 0.9), 120)
+    assert res["tot"].get("c_not_superset_of_a", 0) == 0
+    assert res["tot"].get("c_beyond_interval", 0) == 0
+    assert res["resolved"].get("ADOPT", 0) > res["abstain"].get("ADOPT", 0)
+
+
+def test_the_rule_c_render_reads_every_cell_its_grid_asks_for(gh, monkeypatch):
+    monkeypatch.setattr(gh, "CHUNK", 2)
+    res = gh.run_cells(gh.rule_c_cells(), gh.estimates(), trials=2, workers=1)
+    text = gh.render_rule_c(res)
+    assert "null (C)" in text and "Per-frame inclusions" in text

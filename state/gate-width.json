@@ -257,6 +257,270 @@
       "timestamp": "2026-10-06T19:46:01+00:00",
       "verdict": "NOT-RUNNABLE",
       "width": 0.12836374783724436
+    },
+    {
+      "abstained": 5,
+      "clusters": 5.0,
+      "config_digest": "c4606f91",
+      "data_digest": "fa2e6f6c",
+      "gate": "player_spread",
+      "hi": 0.009019843882678876,
+      "lo": 0.004017979895119336,
+      "recipe": "candidate=own_k,seasons=2019+2020+2021+2022+2023+2024+2025",
+      "resolved": 0,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": 0.0033731669761571056,
+          "m": 207,
+          "se": 0.004753345169939487,
+          "season": 2021
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.008125402822358,
+          "m": 216,
+          "se": 0.005142871229010978,
+          "season": 2022
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.007750774768849501,
+          "m": 206,
+          "se": 0.009701502339810519,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.010548819499914439,
+          "m": 205,
+          "se": 0.009713176104736236,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.002863776559027191,
+          "m": 205,
+          "se": 0.009620187113791935,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:02:25+00:00",
+      "verdict": "SHOW",
+      "width": 0.00500186398755954
+    },
+    {
+      "abstained": 5,
+      "clusters": 5.0,
+      "config_digest": "c4606f91",
+      "data_digest": "fa2e6f6c",
+      "gate": "player_spread",
+      "hi": 0.024345761289127334,
+      "lo": -0.02330822250785779,
+      "recipe": "candidate=usage,seasons=2019+2020+2021+2022+2023+2024+2025",
+      "resolved": 0,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": -0.023778321823379814,
+          "m": 207,
+          "se": 0.030118564859021243,
+          "season": 2021
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.04338450491303014,
+          "m": 216,
+          "se": 0.025502666585194882,
+          "season": 2022
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.015353613529926072,
+          "m": 206,
+          "se": 0.027775018896235182,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.00931970317732761,
+          "m": 205,
+          "se": 0.028040886421775765,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.029832382857600852,
+          "m": 205,
+          "se": 0.02508860168799746,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:02:25+00:00",
+      "verdict": "SHOW",
+      "width": 0.04765398379698513
+    },
+    {
+      "abstained": 0,
+      "clusters": 3.0,
+      "config_digest": "c4606f91",
+      "data_digest": "3028f320",
+      "gate": "injury_type",
+      "hi": 0.06020965372850832,
+      "lo": -0.014998221561763314,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "resolved": 3,
+      "seasons": [
+        {
+          "disposition": "win",
+          "gain": 0.050687769884607804,
+          "m": 1,
+          "se": NaN,
+          "season": 2023
+        },
+        {
+          "disposition": "win",
+          "gain": 0.060209653728508325,
+          "m": 1,
+          "se": NaN,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.014998221561763331,
+          "m": 1,
+          "se": NaN,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:02:34+00:00",
+      "verdict": "SHOW",
+      "width": 0.07520787529027163
+    },
+    {
+      "abstained": 3,
+      "clusters": 3.0,
+      "config_digest": "c4606f91",
+      "data_digest": "558884e4",
+      "gate": "component_calibration",
+      "hi": 0.08081335324959421,
+      "lo": -0.04755039458765171,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "resolved": 0,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": 0.08081335324959421,
+          "m": 292,
+          "se": 0.05125824709734989,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.03448406309755786,
+          "m": 308,
+          "se": 0.05015756197257451,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.04755039458765171,
+          "m": 294,
+          "se": 0.05017383908306722,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:02:41+00:00",
+      "verdict": "NOT-RUNNABLE",
+      "width": 0.1283637478372459
+    },
+    {
+      "abstained": 1,
+      "clusters": 4.0,
+      "config_digest": "c4606f91",
+      "data_digest": "unpinned",
+      "gate": "weekly",
+      "hi": -0.5560262237762241,
+      "lo": -1.604653846153846,
+      "recipe": "ceiling=yes,churn=no,drafts=20,expected=no,holdout=no,lcb=0,open_pool=no,seasons=2021+2022+2023+2024+2025,seed=0,shrink=none,unrestricted=no",
+      "resolved": 3,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -1.119769230769231,
+          "m": 20,
+          "se": 0.4088479112937116,
+          "season": 2022
+        },
+        {
+          "disposition": "loss",
+          "gain": -1.447923076923076,
+          "m": 20,
+          "se": 0.44738202810661887,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.2587272727272733,
+          "m": 20,
+          "se": 0.5428066491511976,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -1.7613846153846153,
+          "m": 20,
+          "se": 0.5456916529523149,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:03:04+00:00",
+      "verdict": "REMOVE",
+      "width": 1.0486276223776219
+    },
+    {
+      "abstained": 1,
+      "clusters": 4.0,
+      "config_digest": "c4606f91",
+      "data_digest": "unpinned",
+      "gate": "draft",
+      "hi": -7.198857142857143,
+      "lo": -14.843142857142858,
+      "recipe": "ceiling=yes,draft_sims=12,drafts=20,holdout=no,rounds=14,season_sims=250,seasons=2022+2023+2024+2025,seed=0",
+      "resolved": 3,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -15.345571428571429,
+          "m": 20,
+          "se": 3.3076881831199225,
+          "season": 2022
+        },
+        {
+          "disposition": "loss",
+          "gain": -8.41021428571429,
+          "m": 20,
+          "se": 3.1085957287079515,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -5.987499999999998,
+          "m": 20,
+          "se": 3.754078439683241,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -14.340714285714288,
+          "m": 20,
+          "se": 2.032648861605044,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-06T23:48:37+00:00",
+      "verdict": "REMOVE",
+      "width": 7.644285714285715
     }
   ]
 }

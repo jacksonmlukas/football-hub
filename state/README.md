@@ -72,6 +72,15 @@ What this repo has spent against two metered third-party accounts:
   Ledger without one) simply carries no `seasons` key, and the pre-#362 dict-shape read is
   unaffected either way.
 
+  **`resolved` and `abstained`, since #381 (C).** A Gate's verdict is read over its *resolved*
+  seasons (a win or a loss; CONTEXT.md, **Disposition**), so an entry written from a run records
+  the two counts beside the verdict: `resolved` seasons and `abstained` seasons (**Abstention**),
+  summing to the seasons run. A verdict of `ADOPT` with `resolved: 3, abstained: 1` is "ADOPT on 3
+  resolved of 4, 1 abstained"; `resolved: 0` is a SHOW that could be nothing else. Optional and
+  additive like `seasons`: an entry written before #381 has neither key, and that is *unrecorded*,
+  not zero (`0 abstained` would be a claim about a run that never counted). The `seasons` records
+  say which seasons abstained; these two say how many without a reader counting.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362

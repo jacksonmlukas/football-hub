@@ -938,6 +938,11 @@ season since #45. The "3/4 seasons" is the pre-#335 sign count. Under the tie-aw
 gate's recorded run (the ledger, 2026-09-21, #378) is **won 0, tied 1, lost 3 of 4**, 2024 a tie,
 verdict SHOW; [weekly-blend-gate.md](weekly-blend-gate.md).)*
 
+*(Restated 2026-10-06, #381, re-run: that same recorded run, read under (C) -- the verdict over its
+resolved seasons -- is **REMOVE on 3 resolved of 4, 1 abstained** (2024 the Abstention; t interval
+[−2.032, −0.262]). The prior value, SHOW, was (A)'s: one Abstention vetoed both directions. See
+[gate-power.md](gate-power.md), the #378 box.)*
+
 ### 21. The Artifact was a concept with no module — DONE 2026-09-04
 
 `CLAUDE.md`'s degradation rule — *a panel whose data is missing says so and keeps rendering* —
