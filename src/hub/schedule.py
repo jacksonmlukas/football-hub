@@ -324,13 +324,14 @@ def by_source(games: pl.DataFrame) -> dict[str, int]:
 
 
 def dead_poller(games: pl.DataFrame) -> str | None:
-    """Why the snapshot poller looks dead, or None if some game is priced from a live capture.
+    """Why the snapshot poller looks dead, or None if some game is priced from a live snapshot.
 
-    The agreement checks only compare `live` rows, so a poller that stopped leaves them
-    nothing to compare and they skip (#443). This is the check that fails in their place:
-    no live row means no capture within `STALE_AFTER_DAYS` of the as-of moment. Replayed at
-    the moment of the red CI run (2026-10-07 16:16 UTC, before that day's poll) it reports
-    live 0 / stale 179.
+    Dead means: no game priced from a live snapshot (none captured within `STALE_AFTER_DAYS`
+    of the as-of moment). The agreement checks only compare `live` rows, so a poller that
+    stopped leaves them nothing to compare (#443); this is what reports it instead. Two
+    readers: `hub.models.ratings.fit` prints it as a warning line, and the golden coverage
+    test fails on it. Replayed at the moment of the red CI run (2026-10-07 16:16 UTC, before
+    that day's poll) it reports live 0 / stale 179.
     """
     live = int((games["price_source"] == "live").sum())
     if live:

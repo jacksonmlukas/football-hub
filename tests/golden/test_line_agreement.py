@@ -55,7 +55,9 @@ from hub.config import SEASON_AHEAD
 # design here. Replaying `priced_games` at the CI run's moment (2026-10-07 16:16 UTC) gives
 # 93 games, mean 2.325 (CI 2.336, the residual being nflverse updating since) and 5 flips,
 # with 0 live rows; the local 1.344 / 1 was the same store after that day's 17:40 poll.
-# Scoping to live rows would hide a dead poller, so `test_the_coverage_report...` fails on it.
+# Scoping to live rows would hide a dead poller, so `test_the_coverage_report...` fails on it
+# (its own fixture skips only on a fresh clone). Residual, deliberately not floored: a poller
+# that is alive but leaves fewer than 10 comparable live games still skips the two line tests.
 MEAN_TOLERANCE = 0.5
 MAX_TOLERANCE = 5.0
 
@@ -118,25 +120,38 @@ def test_the_moving_field_alone_would_leave_far_weeks_unpriced(priced):
     assert late["close_spread"].null_count() < late["schedule_spread"].null_count()
 
 
-@pytest.mark.golden
-def test_the_coverage_report_accounts_for_every_game(priced):
-    """The number reported each fit is the one a dead poller shows up in, so it has to be
-    exhaustive rather than indicative."""
-    games, _ = priced
+@pytest.fixture(scope="module")
+def has_lines():
+    """The coverage test's own gate: skip only on a fresh clone with no `lines` table. It
+    must NOT skip on the live-row count -- a dead poller has none, and that is its subject."""
+    if "lines" not in store.tables():
+        pytest.skip("no local store of dated lines; run `hub.fetch.odds --snapshot` first")
+
+
+def _coverage_check(games):
+    """The body of the coverage test, so the control can drive the same path."""
     cov = schedule.by_source(games)
     assert sum(cov.values()) == games.height
     assert schedule.dead_poller(games) is None, schedule.dead_poller(games)
 
 
 @pytest.mark.golden
-def test_control_a_store_whose_newest_capture_is_old_is_a_dead_poller():
-    """Rule 18: the same real store read a fortnight after its newest capture must trip
-    `dead_poller`, and read now it must not."""
+def test_the_coverage_report_accounts_for_every_game(has_lines):
+    """The number reported each fit is the one a dead poller shows up in, so it has to be
+    exhaustive rather than indicative. It fails, not skips, when nothing is live."""
+    _coverage_check(schedule.priced_games(SEASON_AHEAD))
+
+
+@pytest.mark.golden
+def test_control_zero_live_rows_make_the_coverage_test_fail(has_lines):
+    """Rule 18, at the golden level: the real store read 14 days on has no live row, and the
+    coverage check run on it must raise rather than pass or skip."""
     from datetime import UTC, datetime, timedelta
-    now = datetime.now(UTC).replace(tzinfo=None)
-    assert schedule.dead_poller(schedule.priced_games(SEASON_AHEAD, at=now)) is None
-    later = schedule.priced_games(SEASON_AHEAD, at=now + timedelta(days=14))
-    assert schedule.dead_poller(later) is not None
+    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=14)
+    games = schedule.priced_games(SEASON_AHEAD, at=later)
+    assert schedule.by_source(games)["live"] == 0
+    with pytest.raises(AssertionError, match="no game is priced from a live snapshot"):
+        _coverage_check(games)
 
 
 @pytest.mark.golden

@@ -411,3 +411,14 @@ def test_the_seam_is_the_priced_slate_in_the_slates_own_order(sched, tmp_path):
     assert games.equals(priced)
     assert games["game_id"].to_list() == ["w1", "w2"]
     assert games["close_spread"].to_list() == [3.0, 3.0]
+
+
+def test_the_fit_warns_when_no_game_is_priced_from_a_live_snapshot(sched, tmp_path, capsys):
+    """#443: the dead poller is said on the run line; a live capture does not trigger it."""
+    sched([("a", 1, 3.0, 7), ("b", 2, 3.0, None), ("c", 2, 3.0, None)])
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 8, 20))
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12), base=tmp_path, cache=tmp_path / "cache")
+    assert "WARNING: no game is priced from a live snapshot" in capsys.readouterr().out
+    _snap(tmp_path, 2026, 2, [("b", 3.0)], dt.datetime(2026, 9, 11))
+    ratings.fit(2026, 2, at=dt.datetime(2026, 9, 12), base=tmp_path, cache=tmp_path / "cache")
+    assert "WARNING" not in capsys.readouterr().out
