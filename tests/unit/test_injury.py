@@ -421,7 +421,28 @@ def test_the_fit_path_runs_offline(monkeypatch, capsys, tmp_path):
                        ledger=Ledger(path=None)) == 0
     text = capsys.readouterr().out
     assert "designated player-weeks" in text
+    assert "=== retention against out_zero ===" in text
     assert out.exists()
+
+
+def test_a_single_season_has_nothing_held_out_and_the_fit_says_so(capsys):
+    """No earlier season to fit on means no held-out row, no walk-forward frame and no Gate
+    run: the command reports nothing measured rather than a verdict from nothing."""
+    rows_st, rows_inj = [], []
+    for pid in ("a", "b", "c"):
+        for w in range(1, 9):
+            rows_st.append((2024, w, pid, "WR", 10.0))
+        for w in range(9, 15):
+            rows_inj.append((2024, w, pid, "WR", "Questionable", "Limited"))
+            rows_st.append((2024, w, pid, "WR", 4.0))
+    obs = injury.observations(_inj(rows_inj), _stats(rows_st))
+    assert injury.walk_forward_rows(obs).is_empty()
+    assert injury.walk_forward(obs).is_empty()
+    serve(injuries=_inj(rows_inj).with_columns(
+              team=pl.lit("AAA"), game_type=pl.lit("REG"), full_name=pl.col("gsis_id")),
+          player_stats=_stats(rows_st))
+    assert injury.main(["--fit", "--seasons", "2024"], ledger=Ledger(path=None)) == 0
+    assert "nothing measured" in capsys.readouterr().out
 
 
 # --- does what is wrong with him add anything? ------------------------------
