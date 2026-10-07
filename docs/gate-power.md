@@ -450,6 +450,50 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > > 2024's is the widest, which ADR-0019's 2026-10-06 amendment reads for the 2024 sub-question.
 > > Ledger entry: `state/gate-width.json`, `draft`, 2026-10-06, `resolved: 3, abstained: 1`.
 >
+> > **The draft re-run, attributed (2026-10-06, #429, rule 13; the box above is kept as written).**
+> > *Prior value: "does not attribute it".* **Attributed to inputs the run did not record, not to
+> > code, seeds or ordering; the run that stands is today's** (−11.02, t [−17.22, −4.82], MDE
+> > 7.84, REMOVE on 3 resolved of 4, 1 abstained), **and the verdict word does not change.**
+> > Evidence, in the order it was gathered:
+> >
+> > 1. **Code is exonerated by a bisect.** #376's own commit (`8418380`) checked out in a temporary
+> >    worktree and run on today's `data/` with the same recipe (`--seasons 2022,2023,2024,2025
+> >    --drafts 20 --seed 0 --ceiling`) returns **−11.02, MDE 7.84, ceiling +21.90, t [−17.22,
+> >    −4.82]**, the same to the cent as the tree at the tip of #381. So nothing between 2026-09-21
+> >    and today (#384, #311's sort, #343, #392/#393, #398's nflverse seam, the Ledger) moved this
+> >    number, and neither did the hold-out set (neither recipe passes `--holdout`; the 11.10 of the
+> >    2026-09-16 hold-out run is a different recipe, #376's own diagnosis).
+> > 2. **Seeds and worker order are exonerated.** The gate is a single process at `--seed 0`, and
+> >    two different trees on one data directory agree to the cent; a third replay (the tip, with the
+> >    new input record below) agrees again. Three replays, one answer.
+> > 3. **The difference is in the inputs, and only 2025's.** 2022, 2023 and 2024 are identical to
+> >    the cent between #376's record and today (−15.35 / −8.41 / −5.99) and so is the foresight
+> >    ceiling (+21.90), which reads the realised seasons; only 2025's *optimizer − market* moved
+> >    (−19.86 → −14.34). That fits an input to the 2025 board or season simulation, not to
+> >    realised outcomes.
+> > 4. **The inputs cannot be recovered, and the reason is the finding.** #376 ran in an agent
+> >    worktree with its own copy of `data/`, recorded no digest (its ledger write was reverted),
+> >    and the draft gate's `data_digest` is `unpinned` in every run. The 36 reads of today's run,
+> >    now recorded one by one (below), include **12 `player_stats` cache entries with no pin
+> >    sidecar** (written 2026-08-23 to 08-29, unchanged since; they are the same files on the
+> >    primary checkout before and after 2026-09-21): bytes this run cannot name, and `player_stats`
+> >    is the source nflverse revises in place (`nflverse._write_by_week`). One unpinned read turns
+> >    the whole `data_digest` into `unpinned`, so the digest could not discriminate between #376's
+> >    data and today's. **Which of those twelve differed in #376's worktree is not knowable now.**
+> >    This is attribution by elimination plus a named class of unrecorded input, not a named
+> >    changed file, and it is stated as that.
+> >
+> > **What changed so the next replay can be checked.** `WidthEntry` carries `inputs`: every source
+> > the run read as `{source, as_of, digest}`, `unpinned` where a read has no pin
+> > (`state/gate-width.json`, `state/README.md`; tests in `test_gate_run.py` and `test_ledger.py`).
+> > Today's draft entry records them: 36 reads, 12 of them the unpinned `player_stats` entries,
+> > the rest pinned (`ff_rankings` as-of 2021-2025, `ff_opportunity`, `schedules`, four pinned
+> > `player_stats`). A later replay that moves will show, source by source, which pin moved or
+> > that an unpinned one is still in the set. No rule, constant or verdict changes.
+> > What stands where it was published: the REMOVE restated in ADR-0009, `README.md` row 1,
+> > `docs/method.md` row 6 and `docs/audits/README.md` rests on today's run, which is the
+> > reproducible one; #376's −12.40 / 11.01 stays as the record of what that run printed.
+>
 > **This run's own verdict is not the published one and is not read as such** -- the same
 > caveat the weekly half carried. `n_drafts=20`, no `--shrink` (there is none to give): this
 > run's per-season gains (2022 −15.35, 2023 −8.41, 2024 −5.99, 2025 −19.86) read **SHOW** under

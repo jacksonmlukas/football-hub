@@ -81,6 +81,13 @@ What this repo has spent against two metered third-party accounts:
   not zero (`0 abstained` would be a claim about a run that never counted). The `seasons` records
   say which seasons abstained; these two say how many without a reader counting.
 
+  **`inputs`, since #429.** Every entry written from a gate run records what the run read, one
+  `{source, as_of, digest}` per source, `digest` being `unpinned` for a read with no pin sidecar.
+  `data_digest` folds the run's pins into one string and is `unpinned` as soon as one is, so on its
+  own it cannot say *which* read could not be named; this can. It is what let #429 say that the
+  draft gate reads twelve unpinned `player_stats` cache entries, and what a replay is diffed
+  against. Optional and additive: absent on an older entry, which is unrecorded, not empty.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362
