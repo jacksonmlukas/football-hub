@@ -127,3 +127,35 @@ stated in the file rather than discovered later:
   `roster.json` at six slate commits.
 - Whether any 2026 in-season starter change has happened is not established. V2 is that the
   study's inputs cannot show one either way.
+
+## 2026-10-06 Week-4 instrument check (#389) -- no verdict
+
+`uv run python -m hub.instrument_check --week 4 --from 2026-09-30T00:00 --until 2026-10-06T00:00`
+(`src/hub/instrument_check.py`). It checks the instrument and **produces no ADOPT, REMOVE or SHOW**;
+no published number moves, so rule 13 is not engaged and the #326 freeze is not crossed. The reason
+for the check is the k argument in #389: four scored weeks add no cluster, so a verdict then would
+read SHOW whatever is true.
+
+What ran on 2026-10-06, from a fixtures-and-HEAD checkout with no `data/`:
+
+- **Criterion 2, persistence: FAIL for week 4, and it cannot be repaired.** The six polls
+  scheduled in week 4's window (Wed 09-30 11:00Z through Mon 10-05 11:00Z) have no committed
+  capture in a fresh clone of `HEAD`. #383 landed 2026-10-06 19:24Z; nothing scheduled before it was
+  ever committed, and a market price cannot be re-captured. `state/odds/2026/` holds only #428's
+  back-fill (8 polls, 2026-08-25 to 09-06, all 18 weeks, 1,834 rows), which the same run confirms
+  reads from a fresh clone with the clone's own `hub.store`. So the reading **is unavailable for
+  weeks 1 to 4 beyond that back-fill**, and that is the finding #389 said a failure would be. The slots are
+  *scheduled* instants, not proof a run fired; the check cannot tell a lost run from an undelivered
+  one, and for this window the difference does not change what is readable.
+- **Positive control (rule 18)**, `tests/unit/test_instrument_check.py`: one capture removed from a
+  committed archive turns criterion 2 red; so does one left untracked in the working tree. A
+  window with no poll past its grace is `NOT-YET`, never `PASS`.
+  `tests/contracts/test_odds_archive_reads_from_a_fresh_checkout.py` holds the back-fill's readability
+  as a standing check.
+
+**Not yet established, and what remains.** Criteria 1, 3 and 4 read the stamped paired parquet of a
+gate run over real 2026 rows (`weekly_gate --run --out`, then `--paired`), which needs the pinned
+nflverse data and was not run here: no `data/` exists in this worktree. They are `NOT-YET`, not
+`PASS`, and the check exits 3 until they are supplied. The first in-season capture that persists is
+the 2026-10-07 11:00Z slate run; after it, `--from 2026-10-07T00:00 --until <later>` is the first
+window where criterion 2 can pass. Criterion 4's k is not yet reported for a real run.
