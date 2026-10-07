@@ -73,6 +73,13 @@ from hub.names import practice_key
 # good game defines the level everything else is measured against.
 MIN_HEALTHY_WEEKS = 6
 
+# The version of the baseline every gate here is measured on, carried in the ledger's recipe
+# (#436) so a width on the strictly-prior baseline never compares against one on the
+# within-season lookahead (#361): the config and data digests are the same under both, since
+# neither sees the code. The systemic fix -- a code digest in the key -- is #435's; until it
+# lands, CHANGE THIS STRING whenever `observations` changes what a baseline is.
+BASELINE = "strictly-prior"
+
 # Cells thinner than this are folded into their status's pooled value rather than reported.
 MIN_CELL = 60
 
@@ -380,7 +387,7 @@ def type_run(errs: pl.DataFrame, *, publish: bool = False, seasons: Sequence[int
     paired = type_frame(errs)
     if publish:
         return harness.run(paired, seed=seed, ledger=ledger,
-                           recipe=recipe(seasons=list(seasons)))
+                           recipe=recipe(baseline=BASELINE, seasons=list(seasons)))
     return harness.decide(paired, seed=seed)
 
 
