@@ -320,8 +320,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--now", type=_iso, default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(list(argv) if argv is not None else None)
     now = a.now or datetime.now(UTC)
-    results = run(a.repo, a.season, a.week, a.start, a.until, paired_path=a.paired, now=now,
-                  gate=a.gate)
+    try:
+        results = run(a.repo, a.season, a.week, a.start, a.until, paired_path=a.paired,
+                      now=now, gate=a.gate)
+    except (subprocess.CalledProcessError, RuntimeError, OSError, pl.exceptions.PolarsError) as e:
+        # An input that could not be read is not a criterion that failed: say which, exit
+        # non-zero, no traceback (`tests/contracts/test_cli_surface.py`).
+        from hub.cli import unavailable
+        return unavailable("hub.instrument_check", "the repository or the paired run", e)
     print(f"instrument check, {a.season} week {a.week} -- no verdict is produced")
     for c in results:
         print(c.line())
