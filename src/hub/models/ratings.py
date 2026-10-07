@@ -220,6 +220,8 @@ def fit(season: int = SEASON_AHEAD, week: int | None = None, *, cache: Path | No
     print(f"    {slate.height - cov['unpriced']} of {slate.height} games priced: "
           f"{cov['live']} from a live snapshot, {cov['stale']} from a stale one, "
           f"{cov['schedule']} from the moving field, {cov['unpriced']} unpriced")
+    if (dead := schedule.dead_poller(slate)) is not None:
+        print(f"    WARNING: {dead}")
     # Read off the fitted object rather than off a class name, so the line says what ran
     # and not what this module used to import.
     print(f"    model={model.name} version={model.version}"

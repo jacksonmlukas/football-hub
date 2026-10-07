@@ -26,7 +26,6 @@ a missing local store must not block a docs commit.
 
     uv run pytest -m golden -k line_agreement
 """
-import numpy as np
 import polars as pl
 import pytest
 
@@ -38,6 +37,27 @@ from hub.config import SEASON_AHEAD
 # this repo's snapshot is a median across the books the pull returned. Observed 2026-09-04
 # over 112 games carrying both: mean absolute difference 0.159, worst 3.0. Set with headroom
 # so ordinary movement does not trip it and an inverted sign does.
+#
+# Restated 2026-10-07 (#440, rule 13; the paragraph above is kept as written). The figure
+# was measured when every snapshot was days old and it was then applied to *every* game
+# carrying both, however old its last poll. From week 2 that pairs a month-old lookahead
+# quote with a line that has since moved: 93 games, mean 1.344 here and 2.336 on the CI run,
+# split 0.138 on the 29 games with a poll inside `STALE_AFTER_DAYS` and 1.891 on the 64
+# without, growing by week (wk1 0.63 ... wk4 2.63), signed mean ~0 -- movement, not a sign
+# convention. The tolerance is NOT loosened: the comparison is scoped to `live` rows
+# (`schedule.comparable_quotes`), the only ones where both sources are the same quote at the
+# same time, and 0.138 sits under 0.5 as 0.159 did.
+#
+# Stale quotes are UNVALIDATED, not shown to be movement (#443). 2026_04_ARI_NYG reads +7.0
+# at every poll from 08-25 to 09-06 against -2.5 now: twelve identical days looks like a
+# frozen or placeholder lookahead quote as much as a market that moved. Stale snapshots price
+# nothing (`price_source` yields to the moving field), so their correctness is unchecked by
+# design here. Replaying `priced_games` at the CI run's moment (2026-10-07 16:16 UTC) gives
+# 93 games, mean 2.325 (CI 2.336, the residual being nflverse updating since) and 5 flips,
+# with 0 live rows; the local 1.344 / 1 was the same store after that day's 17:40 poll.
+# Scoping to live rows would hide a dead poller, so `test_the_coverage_report...` fails on it
+# (its own fixture skips only on a fresh clone). Residual, deliberately not floored: a poller
+# that is alive but leaves fewer than 10 comparable live games still skips the two line tests.
 MEAN_TOLERANCE = 0.5
 MAX_TOLERANCE = 5.0
 
@@ -57,23 +77,22 @@ def priced():
     # the morning's snapshots -- which it did, until the coverage it reported disagreed with
     # the store.
     games = schedule.priced_games(SEASON_AHEAD)
-    both = games.filter(pl.col("snapshot_spread").is_not_null()
-                        & pl.col("schedule_spread").is_not_null())
+    both = schedule.comparable_quotes(games)
     if both.height < 10:
-        pytest.skip(f"only {both.height} games carry both sources; too few to compare")
+        pytest.skip(f"only {both.height} games carry both sources from a live snapshot; "
+                    f"too few to compare")
     return games, both
 
 
 @pytest.mark.golden
 def test_the_two_sources_agree_where_both_exist(priced):
     _, both = priced
-    diff = (both["snapshot_spread"] - both["schedule_spread"]).to_numpy()
-    assert float(np.abs(diff).mean()) < MEAN_TOLERANCE, (
+    got = schedule.line_agreement(both, PICK_EM)
+    assert got.mean_abs < MEAN_TOLERANCE, (
         f"the dated snapshot and the moving field disagree by "
-        f"{np.abs(diff).mean():.3f} points a game over {both.height} games. A flipped sign "
+        f"{got.mean_abs:.3f} points a game over {got.n} live games. A flipped sign "
         f"convention in `hub.fetch.odds` is the first thing to check.")
-    assert float(np.abs(diff).max()) < MAX_TOLERANCE, (
-        f"worst game differs by {np.abs(diff).max():.1f} points")
+    assert got.max_abs < MAX_TOLERANCE, f"worst game differs by {got.max_abs:.1f} points"
 
 
 @pytest.mark.golden
@@ -81,15 +100,11 @@ def test_they_agree_on_which_side_is_favoured(priced):
     """The disagreement a tolerance on magnitude would not catch. An inverted home/away
     mapping moves a near-pick-em game barely at all and reverses the prediction."""
     _, both = priced
-    a = both["snapshot_spread"].to_numpy()
-    b = both["schedule_spread"].to_numpy()
-    clear = (np.abs(a) >= PICK_EM) & (np.abs(b) >= PICK_EM)
-    assert clear.sum() >= 10, f"only {clear.sum()} games are priced away from pick-em"
-    flipped = np.sign(a) * np.sign(b) < 0
-    bad = both.filter(pl.Series(flipped & clear))
-    assert bad.is_empty(), (
-        f"{bad.height} games have the favourite on opposite sides: "
-        f"{bad['game_id'].to_list()[:5]}")
+    clear = both.filter((pl.col("snapshot_spread").abs() >= PICK_EM)
+                        & (pl.col("schedule_spread").abs() >= PICK_EM))
+    assert clear.height >= 10, f"only {clear.height} games are priced away from pick-em"
+    bad = schedule.line_agreement(both, PICK_EM).flipped
+    assert not bad, f"{len(bad)} games have the favourite on opposite sides: {bad[:5]}"
 
 
 @pytest.mark.golden
@@ -105,15 +120,38 @@ def test_the_moving_field_alone_would_leave_far_weeks_unpriced(priced):
     assert late["close_spread"].null_count() < late["schedule_spread"].null_count()
 
 
-@pytest.mark.golden
-def test_the_coverage_report_accounts_for_every_game(priced):
-    """The number reported each fit is the one a dead poller shows up in, so it has to be
-    exhaustive rather than indicative."""
-    games, _ = priced
+@pytest.fixture(scope="module")
+def has_lines():
+    """The coverage test's own gate: skip only on a fresh clone with no `lines` table. It
+    must NOT skip on the live-row count -- a dead poller has none, and that is its subject."""
+    if "lines" not in store.tables():
+        pytest.skip("no local store of dated lines; run `hub.fetch.odds --snapshot` first")
+
+
+def _coverage_check(games):
+    """The body of the coverage test, so the control can drive the same path."""
     cov = schedule.by_source(games)
     assert sum(cov.values()) == games.height
-    assert cov["live"] or cov["stale"], (
-        "no game priced from a snapshot; the store or the as-of moment")
+    assert schedule.dead_poller(games) is None, schedule.dead_poller(games)
+
+
+@pytest.mark.golden
+def test_the_coverage_report_accounts_for_every_game(has_lines):
+    """The number reported each fit is the one a dead poller shows up in, so it has to be
+    exhaustive rather than indicative. It fails, not skips, when nothing is live."""
+    _coverage_check(schedule.priced_games(SEASON_AHEAD))
+
+
+@pytest.mark.golden
+def test_control_zero_live_rows_make_the_coverage_test_fail(has_lines):
+    """Rule 18, at the golden level: the real store read 14 days on has no live row, and the
+    coverage check run on it must raise rather than pass or skip."""
+    from datetime import UTC, datetime, timedelta
+    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=14)
+    games = schedule.priced_games(SEASON_AHEAD, at=later)
+    assert schedule.by_source(games)["live"] == 0
+    with pytest.raises(AssertionError, match="no game is priced from a live snapshot"):
+        _coverage_check(games)
 
 
 @pytest.mark.golden
