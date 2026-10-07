@@ -169,6 +169,47 @@ Better in **all three** held-out seasons. Paired across 3,687 held-out player-we
 > > kept. The run now prints "3 earlier run(s) of this gate at another recipe ... not compared".
 > > A code digest in the key is #435's.
 
+### Pre-registration, 2026-10-07 (#360): retention against `out_zero`, through the Gate
+
+**Written and committed before the gate is run for a number (method.md rule 1).** The decision
+that adopted `retention` was `injury.verdict`, an argmin over four candidates with no interval
+and no every-season half; this section replaces it with the Gate every other comparison reads
+(`experiment.run_gate`, ADR-0019). Decided by the maintainer in session on 2026-10-07 on #360.
+
+* **Arms: two.** `retention` (arm A, the fitted multiplicative table of `retention_table`)
+  against `out_zero` (arm B, the incumbent: bench anyone Out or Doubtful, otherwise ignore the
+  report). `table` and `baseline` are diagnostics: still measured and printed, never gated.
+* **Paired unit.** One row per held-out designated player-week; `diff` is `out_zero`'s absolute
+  error minus `retention`'s, positive when retention helps. Walk-forward over
+  `expanding_seasons`, fitting on strictly earlier seasons only (unchanged).
+* **Baseline.** Stays within-season: the strictly-prior expanding mean of #361
+  (`injury.BASELINE = "strictly-prior"`). Carrying the previous season over is not chosen here.
+* **Ceiling.** In-sample per-cell retention: per held-out season, the (status, practice)
+  retention table fitted on that season's own designated rows (same `MIN_CELL`, thin cells folded
+  to that season's pooled ratio) and scored on the same rows. `ceiling_diff` is `out_zero`'s
+  error minus this arm's. Flattered by construction, which is what a ceiling is: a bound on the
+  functional form, never read off an outcome the rule then judges.
+* **Within-season unit.** `gsis_id`, the player (rule 3; #335). This also replaces the declared
+  no-op (`season`) on the type comparison's `injury.HARNESS`, discharging the ADR-0019 note.
+* **Actions, in the gate's own words.**
+  ADOPT: *Retention is the availability model the product wires in place of zeroing a
+  designated player.* REMOVE: *Retention is worse than zeroing a designated player; it is
+  dropped from the model surface.* SHOW: *Retention is kept as a measurement and not wired; the
+  product keeps ESPN's availability.*
+* **Power, stated before the run (rule 16).** The #361 re-run's pooled standard error was 0.0588
+  on 3 held-out seasons (2 df), so the gate's MDE is about (4.303 + 0.842) x 0.0588 = 0.30 MAE
+  points against a realised gain of +0.062. Whether the gate can run depends on the in-sample
+  ceiling, which is not known until it is run: if the ceiling is below the MDE the branch is
+  **NOT-RUNNABLE**, and that is named here as reachable and, on these figures, plausible. It is
+  then an exemption and not a null: it decides neither ADOPT nor REMOVE, `retention` stays
+  unwired as it is today (`roster.availability` reads ESPN), and what the page says is "the
+  design cannot resolve this", with the MDE. Four seasons of nflverse injury reports exist; a
+  fourth held-out season does not until 2026 completes.
+* **The gate's abstentions** are read as #381 (C) reads them: the verdict is over resolved
+  seasons and prints "N resolved of K, A abstained".
+* **What this lane does not do.** A non-ADOPT verdict is restated here and not acted on: nothing
+  about what the product wires changes; that action is the maintainer's.
+
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
 The table above prices a designation by `report_status` × `practice_status` and ignores
