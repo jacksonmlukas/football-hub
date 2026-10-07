@@ -978,7 +978,9 @@ ACTIONS = Actions(
 # carries the *arms'* diff under the same name -- so a caller always hands `HARNESS.ceiling`
 # that separate frame (`top`, below) rather than `paired` itself.
 HARNESS = Harness(name="draft", arm_a="optimizer", arm_b="market", within=WITHIN,
-                  ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff")
+                  ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff",
+                  arm_modules=("hub.draft.backtest", "hub.draft.board", "hub.draft.cohort",
+                               "hub.draft.optimize", "hub.draft.season", "hub.draft.state"))
 
 
 def run_recipe(*, seasons: Sequence[int], drafts: int, rounds: int, draft_sims: int,

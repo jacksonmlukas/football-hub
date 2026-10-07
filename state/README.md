@@ -94,6 +94,28 @@ What this repo has spent against two metered third-party accounts:
   draft gate reads twelve unpinned `player_stats` cache entries, and what a replay is diffed
   against. Optional and additive: absent on an older entry, which is unrecorded, not empty.
 
+  **`code_digest`, since #435 (2026-10-07).** The key above is `(name, recipe, config_digest,
+  data_digest)` and `config_digest` hashes the config and the fitted constants, **not code**, so a
+  change to a gate's arms with config and data unchanged produced an entry the ledger took as
+  comparable to the ones before it: #361 swapped the injury retention baseline from a
+  within-season lookahead to a strictly prior expanding mean, and the new `injury_type` interval
+  ([-0.0041, +0.0867]) sat at the same `c4606f91`/`3028f320` as the old one ([-0.0150,
+  +0.0602]). The key is now `(name, recipe, config_digest, data_digest, code_digest)`:
+  `code_digest` is 8 hex characters of a SHA-256 over the name and source bytes of the modules
+  the gate declares in `Harness.arm_modules` (`hub.ledger.code_digest`; a contract holds every
+  harness to naming its own module and to every name resolving). It is raw source: a comment
+  edit moves it, which errs toward *not compared*. It deliberately leaves out `hub.models.
+  experiment` -- the shared rule, which every gate runs -- since naming it would end every
+  gate's history on any edit there; a change to the rule is a change the repository's tests and
+  `docs/method.md` have to catch, not this key. **An entry with no `"code_digest"` key** -- every
+  one written before this note, whatever its recipe -- reads as *of unknown code*: named
+  (`earlier run(s) of this gate of unknown code`), never compared, not even against a run that
+  declares no modules (`"code_digest": null`, "no modules declared", which compares equal to
+  another `null` as `"recipe": null` does), and written back without a `code_digest` key so a
+  rewrite of the file does not turn it into one. A changed source is named apart
+  (`on other arm source`). **The first run of each gate after this has nothing to compare
+  against**, by design, as after #384; none of the existing rows is rewritten.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362

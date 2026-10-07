@@ -20,6 +20,13 @@ reserved for an entry read off disk with no `"recipe"` key in it at all -- every
 written before this module existed -- and a `known=False` entry never compares, not even
 against another one: `state/README.md` says why.
 
+**The key carries code since #435.** `config_digest` hashes the config and the fitted constants,
+not the code that produced a run, so an arm edited with config and data untouched compared as
+if nothing had changed (#361's retention baseline). `WidthEntry.key` ends in `code_digest`,
+`code_digest(modules)` hashes the source of the modules a `Harness` declares in `arm_modules`,
+and an entry read off disk with no `"code_digest"` key is of *unknown code*: named, never
+compared (`WidthEntry.code_known`, the same shape as `known` for the recipe).
+
 **What the Ledger owns.** The equality on `key` that decides comparability; the append; the
 atomic write (`hub.atomic`, so a killed process leaves the previous file exactly as it was);
 the refusal to write over a file that is present but does not parse (CLAUDE.md's degradation
@@ -36,7 +43,10 @@ to keep a leaf a leaf while still sharing one sentence.
 """
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
@@ -97,11 +107,22 @@ class WidthEntry:
     # the whole of it into `unpinned` if any one is, which is why the draft gate's entry could
     # not say what its re-run read differently from #376's. Beside the digest, never in the key.
     inputs: list[dict] | None = None
-
+    # #435: a hash of the source of the modules the run's arms read (`code_digest`, declared per
+    # `Harness.arm_modules`). `config_digest` hashes the config and the fitted constants and
+    # not code, so a change to an arm with config and data untouched produced an entry the key
+    # could not tell from the ones before it (#361: the injury retention baseline). `None` with
+    # `code_known=True` is "no modules declared" -- known, compares equal to another `None`,
+    # the way `recipe=None` does. `code_known=False` is only ever an entry read off disk with
+    # no `"code_digest"` key: **unknown code**, named and never compared, as `known=False` is
+    # for an unknown recipe.
+    code_digest: str | None = None
+    code_known: bool = True
     @property
-    def key(self) -> tuple[str, str | None, str, str]:
-        """`(name, recipe, config_digest, data_digest)` -- #385's key, #384's `recipe` in it."""
-        return (self.name, self.recipe, self.config_digest, self.data_digest)
+    def key(self) -> tuple[str, str | None, str, str, str | None]:
+        """`(name, recipe, config_digest, data_digest, code_digest)` -- #385's key, #384's
+        `recipe` in it, #435's `code_digest` at the end."""
+        return (self.name, self.recipe, self.config_digest, self.data_digest,
+                self.code_digest)
 
     def comparable(self, other: WidthEntry) -> bool:
         """Two entries compare iff their keys are equal and both recipes are known.
@@ -110,9 +131,11 @@ class WidthEntry:
         checks on two different histories; here they are the one line above, because both are
         the same fact -- a width measured under a different key is a width measured on a
         different question, and a width whose key nobody recorded is a width nobody can say
-        that about either way.
+        that about either way. The code term (#435) is the same fact once more: a width from
+        other arm source is a width from a different instrument.
         """
-        return self.known and other.known and self.key == other.key
+        return (self.known and other.known and self.code_known and other.code_known
+                and self.key == other.key)
 
     def _as_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -136,6 +159,8 @@ class WidthEntry:
             out["resolved"] = self.resolved
         if self.abstained is not None:
             out["abstained"] = self.abstained
+        if self.code_known:
+            out["code_digest"] = self.code_digest
         if self.inputs is not None:
             out["inputs"] = self.inputs
         return out
@@ -170,6 +195,8 @@ class WidthEntry:
             resolved=_count(d.get("resolved")),
             abstained=_count(d.get("abstained")),
             inputs=_inputs(d.get("inputs")),
+            code_digest=d["code_digest"] if isinstance(d.get("code_digest"), str) else None,
+            code_known="code_digest" in d,
         )
 
 
@@ -202,6 +229,27 @@ def recipe(**arm: object) -> str:
     recipe at all, which is `None` -- "no arm declared" -- rather than `""`.
     """
     return ",".join(f"{k}={_spell(v)}" for k, v in sorted(arm.items()))
+
+
+def code_digest(modules: Iterable[str]) -> str:
+    """Stable 8-char hash of the source of `modules` (dotted names), for the ledger key (#435).
+
+    Name and bytes of each, sorted by name so the order a gate declares them in is not part of
+    the answer. Raw source bytes: a comment edit moves it, which errs toward "not compared" --
+    the direction this ledger always errs. Plain modules only: a package's `__init__` is not
+    its code, so a package name raises rather than hashing the wrong file. Raises on a name
+    that does not resolve to a source file; the contract `test_every_gate_declares_the_code_it_runs`
+    holds every `Harness.arm_modules` to resolving, so a run never meets it.
+    """
+    h = hashlib.sha256()
+    for name in sorted(set(modules)):
+        spec = importlib.util.find_spec(name)
+        if spec is None or spec.origin is None or not spec.origin.endswith(".py"):
+            raise ValueError(f"{name!r} is not a module with a source file")
+        if spec.submodule_search_locations is not None:
+            raise ValueError(f"{name!r} is a package; name the modules whose code the arms run")
+        h.update(name.encode() + b"\0" + Path(spec.origin).read_bytes() + b"\0")
+    return h.hexdigest()[:8]
 
 
 def _num(v: object, missing: float = float("nan")) -> float:
@@ -310,6 +358,8 @@ class Ledger:
         elsewhere = 0
         unknown = 0
         rerecipe = 0
+        uncoded = 0
+        recoded = 0
         for e in reversed(entries):
             if e.name != stamped.name:
                 continue
@@ -325,13 +375,20 @@ class Ledger:
             # Known, same digests, another arm: #384's case, named as such rather than as a
             # digest difference, which it is not.
             rerecipe += e.known and same_digests and e.recipe != stamped.recipe
+            # Same digests and recipe, and the code is what differs (#435): either nobody
+            # recorded it (a row written before the key carried it) or its source changed.
+            if e.known and same_digests and e.recipe == stamped.recipe:
+                uncoded += not (e.code_known and stamped.code_known)
+                recoded += (e.code_known and stamped.code_known
+                            and e.code_digest != stamped.code_digest)
 
         said = narrowing(stamped.width, previous.width if previous is not None else None,
                          places=self.places)
         lines = list(said.lines)
-        if previous is None and elsewhere - unknown - rerecipe:
+        other = elsewhere - unknown - rerecipe - uncoded - recoded
+        if previous is None and other:
             lines.append(f"  interval width {stamped.width:.{self.places}f}; "
-                         f"{elsewhere - unknown - rerecipe} "
+                         f"{other} "
                          f"earlier run(s) of this gate at another config or data digest, "
                          f"not compared -- two runs are comparable only at an identical "
                          f"digest (docs/gate-power.md)")
@@ -346,6 +403,16 @@ class Ledger:
             lines.append(f"  interval width {stamped.width:.{self.places}f}; {rerecipe} "
                          f"earlier run(s) of this gate at another recipe (a different arm "
                          f"of the same gate), not compared -- state/README.md")
+
+        if previous is None and uncoded:
+            lines.append(f"  interval width {stamped.width:.{self.places}f}; {uncoded} "
+                         f"earlier run(s) of this gate of unknown code (written before the "
+                         f"ledger key carried it), not compared -- state/README.md")
+
+        if previous is None and recoded:
+            lines.append(f"  interval width {stamped.width:.{self.places}f}; {recoded} "
+                         f"earlier run(s) of this gate on other arm source (the code its arms "
+                         f"run changed since), not compared -- state/README.md")
 
         if self.write:
             entries.append(stamped)

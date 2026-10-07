@@ -307,7 +307,8 @@ ACTIONS = Actions(
 # `HARNESS._replace(ceiling_arm=...)` rather than a fifth `Ceiling(...)` construction.
 HARNESS = Harness(name="lineup", arm_a="optimiser", arm_b="projections", within=WITHIN,
                   ceiling_arm=CEILING_ARM_NAMES[DECLARED_CEILING_ARM], actions=ACTIONS,
-                  unit=UNIT)
+                  unit=UNIT,
+                  arm_modules=("hub.season.lineup_gate", "hub.draft.board", "hub.league"))
 
 
 def run_recipe(*, seasons: Sequence[int], drafts: int, seed: int, ceiling_arm: str | None,

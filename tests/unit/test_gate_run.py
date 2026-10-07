@@ -291,6 +291,32 @@ def test_the_ledger_entry_names_each_source_the_run_read_even_when_the_digest_is
         {"source": "player_stats", "as_of": None, "digest": "unpinned"}]
 
 
+def test_a_run_records_the_digest_of_the_modules_it_was_given_and_a_changed_one_does_not_compare(
+        tmp_path, monkeypatch):
+    """#435 end to end: `run_gate(code_modules=...)` puts the arm modules' digest in the entry,
+    and editing one of them between two otherwise identical runs leaves the second with nothing
+    to compare against (planted: a real module on disk, rewritten between the runs)."""
+    import importlib
+    import sys
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / "planted435_gate_arm.py").write_text("BASE = 'within-season'\n")
+    importlib.invalidate_caches()
+    sys.modules.pop("planted435_gate_arm", None)
+    ledger = Ledger(path=None)
+    first = _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    entries = ledger._read()
+    assert entries is not None and entries[0].code_digest == entries[1].code_digest
+    assert entries[0].code_digest is not None and len(entries[0].code_digest) == 8
+    assert entries[1].comparable(entries[0]), "unchanged source still compares"
+    (tmp_path / "planted435_gate_arm.py").write_text("BASE = 'strictly prior'\n")
+    _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    entries = ledger._read()
+    assert entries is not None
+    assert not entries[2].comparable(entries[1]) and not entries[2].comparable(entries[0])
+    assert first.verdict[0]
+
+
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
     """The weekly gate's `compare` returns a frame with no rows and no columns when nothing
     is covered. The run must still answer rather than fall over on a season column that is
