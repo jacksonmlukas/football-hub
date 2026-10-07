@@ -182,6 +182,14 @@ still 2/3 seasons, still losing 2025.
 > adjustment recovers +0.032 of a +0.264 flattering in-sample bound: 12%.
 > **Statistic restatement only:** `injury.verdict` (the argmin that picked `retention`) is #360's
 > and untouched, and the within-season unit stays the declared no-op until #360 chooses one.
+>
+> > **Restated 2026-10-06 (#381, re-run; the verdict is kept).** *Prior value: SHOW — KEEP
+> > `retention`, "won 2, tied 0, lost 1".* **Now: SHOW — KEEP `retention`, on 3 resolved of 3, 0
+> > abstained** (won 2, lost 1, the interval containing zero). Nothing moves: no season
+> > abstains here (the within-season unit is the declared no-op, so each season reads on its sign),
+> > so (C) reads the same three seasons (A) did, and the sentence now says so. Re-run
+> > `--fit --seasons 2022,2023,2024,2025`, figures identical to the digit. Ledger:
+> > `injury_type`, 2026-10-06, `resolved: 3, abstained: 0`.
 
 Stating the obvious risk plainly, because this was the second run of one hypothesis: had the
 answer flipped, it would have been much weaker evidence than a single pre-registered run, and

@@ -85,6 +85,19 @@ matched through the `pfr_id`→`gsis_id` crosswalk on 99.8%.
 > The `wins 5/5` and `wins 2/5` above were already superseded by #335's tie-aware rule before
 > this ticket; they are restated here, with their prior values kept, because #335's own comment
 > on #311 lists this page.
+>
+> > **Restated 2026-10-06 (#381, re-run; the paragraph above is kept).** *Prior value, both
+> > candidates: SHOW — KEEP `positional`, "the tie blocks ADOPT".* **Now: SHOW — KEEP
+> > `positional` for both, on "0 resolved of 5, 5 abstained".** The verdict does not move; what
+> > blocks it does. Under (C) (#381, ADOPTED the same day) a tie no longer blocks anything by
+> > itself: ADOPT needs a resolved season and every resolved season a win, and here **no season
+> > resolves**: all five Abstain (`own_k`'s each gain inside 2 × its own se; `usage`'s likewise),
+> > so the Gate can neither adopt nor remove. Without that guard `own_k`'s pooled interval
+> > (t = +4.93, [+0.0029, +0.0102]) would have adopted on "every resolved season won" over zero
+> > seasons; it is the case the zero-resolved rule exists for. Re-run
+> > `--fit --seasons 2019,…,2025`: gains, SEs and intervals identical to the digit. The verdict
+> > sentences now read "0 resolved of 5, 5 abstained (won 0, tied 5, lost 0 of 5 seasons)".
+> > Ledger: `player_spread`, both candidates, 2026-10-06, `resolved: 0, abstained: 5`.
 
 ## The part that actually closes the question
 

@@ -383,6 +383,20 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > `docs/weekly-blend-gate.md`'s published −1.004 REMOVE, which this ticket does not re-run and
 > does not move.
 >
+> > **Restated 2026-10-06 (#381, rule 13; the verdict above is kept, not edited).** *Prior value:
+> > SHOW (won 0, tied 1, lost 3 of 4).* **Now: REMOVE on 3 resolved of 4, 1 abstained.** The same
+> > recipe re-run through `gate` under (C) (`uv run python -m hub.season.weekly_gate --run
+> > --ceiling`; the per-season table is the same to the digit: 2022 −1.120, 2023 −1.448, 2024
+> > −0.259 an Abstention, 2025 −1.761; t interval [−2.032, −0.262], excluding zero). Under (A) the
+> > one Abstention vetoed REMOVE; under (C) every resolved season is a loss, the pooled interval
+> > excludes zero, and the verdict sentence says three of the four resolved. Nothing about the
+> > design moved: MDE +1.119 against a ceiling of +10.873 (9.7x), as above. The number that
+> > changed is the reading of 2024, whose |−0.259| sits below every season's 2·SE (the narrowest
+> > is 0.82): an Abstention about the effect, not the season (ADR-0019, 2026-10-06). This is the
+> > ceiling-recipe run, not the published gate's `--shrink mae-market --drafts 40`, so
+> > `docs/weekly-blend-gate.md`'s own REMOVE is unchanged. Ledger entry: `state/gate-width.json`,
+> > `weekly`, 2026-10-06, `resolved: 3, abstained: 1`.
+>
 > `state/gate-width.json` is restored after this run the same way #376's was:
 > `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
 > evidence is untouched by this ticket either.
@@ -417,6 +431,24 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > #363 (S6) amendment named NOT-RUNNABLE pending this ticket now carry a measured ceiling, and
 > neither MDE exceeds it. That is what #376 asks this ticket to end for the draft half, the same
 > way the note above ended it for the weekly half.
+>
+> > **Restated 2026-10-06 (#381, rule 13; the table above is kept, not edited).** *Prior value:
+> > SHOW (won 0, tied 1, lost 3 of 4 seasons).* **Now: REMOVE on 3 resolved of 4, 1 abstained.**
+> > Under (C) the one Abstention (2024) no longer vetoes REMOVE: the three resolved seasons are
+> > losses and the pooled interval excludes zero. The same recipe re-run today
+> > (`hub.draft.backtest --seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling`, about 45
+> > minutes) **is not a bit-for-bit re-reading of the run above, and the difference is flagged
+> > rather than argued away**: 2022 −15.35, 2023 −8.41 and 2024 −5.99 are identical, 2025 is
+> > **−14.34 where this run recorded −19.86**, so the mean is **−11.02 [−14.84, −7.20]** (percentile;
+> > t [−17.22, −4.82]) against −12.40 [−17.60, −7.20] (t [−21.11, −3.69]), and the season-clustered
+> > MDE is **7.84 against 11.01** (ceiling +21.90 either way, so ceiling / MDE is 2.8x against
+> > 1.99x). Something between 2026-09-21 and today moved 2025's replay (the run's own join-failure
+> > line reads optimizer 0.6% of 1,120 drafted names); this restatement does not attribute it and
+> > reads the verdict off today's run. On #376's own recorded numbers (the table above) the (C)
+> > reading is REMOVE as well (three losses, one Abstention, t interval excluding zero). The run's per-season
+> > SEs, the first the draft gate has recorded: 3.31 / 3.11 / **3.75** / 2.03 (m = 20 each);
+> > 2024's is the widest, which ADR-0019's 2026-10-06 amendment reads for the 2024 sub-question.
+> > Ledger entry: `state/gate-width.json`, `draft`, 2026-10-06, `resolved: 3, abstained: 1`.
 >
 > **This run's own verdict is not the published one and is not read as such** -- the same
 > caveat the weekly half carried. `n_drafts=20`, no `--shrink` (there is none to give): this
