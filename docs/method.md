@@ -115,6 +115,13 @@ different quantities. Corrected over the seasons
 against passing attempts, published as a null at 1.9 se, is a **broken pre-stated null** at
 2.7 se across 5/5 seasons.
 
+> **Restated 2026-10-07 (#312), prior wording kept above.** That status was read off a flat
+> 2.0 se, which on five seasons is a two-sided p of 0.116. At the screen's own degrees of
+> freedom the same cell is +2.71 se, **p 0.054** — above 0.05 — and the pre-stated null
+> **holds**: broken → clears, the one Usage status of that feature that moves
+> ([weekly-screen.md](weekly-screen.md), "Restated 2026-10-07"). The rule above is unchanged:
+> the unit is the season, and so is the reference distribution.
+
 **The rule cuts both ways, which is the part worth keeping.** The correction *narrowed* five of
 the nine intervals rather than widening them, because for these features the week-to-week
 scatter inside a season is large and averages out while the between-season scatter is small.
@@ -441,6 +448,31 @@ than what it printed.
 > purpose: a score that decides one pre-registered question is a gate input there and a
 > diagnostic everywhere else, and a blanket promotion would be rule 1's incident -- the
 > scoring rule chosen after the verdicts it would re-score were known.
+
+> **Restated 2026-10-07 (#312); the wording above is kept as published.** Three things in this
+> rule moved.
+>
+> **The rule's bar is a p, not a t.** "The season-clustered *t* clearing `MIN_SE`" is now "the
+> two-sided p of that *t*, on `seasons − 1` degrees of freedom, below `ALPHA` (0.05)" —
+> a *t* of 2.776 at five seasons and 3.182 at four. The arithmetic sentence above ("at five
+> seasons the bar of 2 se is a two-sided p of 0.116 … a feature at exactly the bar is one the
+> rule clears and the threshold never does") described the defect and is superseded by its
+> repair: the rule's bar is now stricter than the threshold's `q`, so a feature the rule clears
+> can still sit above the threshold in a large family but no longer by construction.
+>
+> **The family is counted across what was run.** `with_family` still counts the rows one call
+> was handed and each per-anchor line still says so; the run now ends with one family over
+> every distinct alone test across anchors and bases — **48** (3 bases × (6 anchor-invariant
+> features + 2 trends × 5 anchors)), from 120 printed rows. Threshold 0.0361, 18 below it. The
+> tally table below is the per-call count and is unchanged.
+>
+> **The re-scoring at q = 0.10 above is re-read.** Its four positives still stand alone on the
+> settled basis (t and p unchanged). In the joint family, **injury severity falls**: −2.70 se,
+> p 0.054, 5/5 seasons, killed at every anchor; the independent set is {implied team total,
+> defence vs position}. "Nothing falls, so nothing is restated" held under the flat bar and does
+> not hold under the p. The two-part rule's joint size, from the permutation harness, is about
+> **0.02** (0.017 to 0.0225 across four features) against 0.025 to 0.034 under the old bar.
+> [weekly-screen.md](weekly-screen.md) carries the tables.
 
 ### 15. A fixture that sets the condition under which the estimator is trivially correct is not a test of the estimator
 

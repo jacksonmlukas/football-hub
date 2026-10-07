@@ -204,6 +204,9 @@ Against **points**, beyond season-to-date PPG and that week's consensus ECR:
 
 **Nothing clears either half of the bar**, and the default screen is untouched — the
 independent signals are still snap_trend, dvp, inj_sev and td_rate_prior.
+*(Restated 2026-10-07, #312: on the settled basis and the corrected bar the independent signals
+are `dvp` and `implied_total`; `snap_trend` is unlicensed, `td_rate_prior` is a held null and
+`inj_sev` clears alone and not jointly -- `docs/weekly-screen.md`.)*
 
 Against **volume**, which is the framing this item itself proposed as the more promising one:
 **one cell of fifteen** clears — `pass_rate_trend` against pass attempts, **−0.0324 at −2.61
