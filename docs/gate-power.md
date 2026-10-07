@@ -2217,6 +2217,29 @@ re-printed at the same run so a reader sees the diagnostic and the corrected rul
 >   tests, since an anchor-invariant feature is one test printed five times. Threshold 0.0361,
 >   18 below it. `weekly-screen.md`, "Restated 2026-10-07", carries every figure.
 
+> **Dated 2026-10-07: the family definition is a choice made after the draft (#312); the draft
+> text above is kept.** The draft's third measurement says the family should count "everything
+> actually run in one report". The implementation counts something narrower in two ways, and
+> neither was pre-registered:
+>
+> * **Alone tests only.** The joint-screen rows (survivors re-screened with the others as
+>   controls) are not in the run family. They re-test features already in it, so adding them is
+>   a different family question (`with_family`'s own: the alone and joint screens ask different
+>   questions of different rows), and the per-anchor joint lines still print their own count.
+> * **Distinct tests, not printed rows.** A feature whose rows do not depend on the anchor
+>   prints the same p at all five, so 120 printed rows are 48 distinct tests. Counting the copies
+>   puts five identical p-values into the ranking.
+>
+> **Direction, stated plainly: the definition lowers m from 120 to 48, which is the liberal
+> direction for m.** It is not the liberal choice overall, because the duplicates also occupy
+> ranks and BH's step-up then rejects against a ranked list with copies in it. Measured on the
+> same run, counting all 120 gives threshold **0.0477** and 75 rows below it (the 18 distinct
+> rejections at 48, repeated, plus one more); the 48-test family gives **0.0361** and 18.
+> **Counting 120 changes exactly one BH decision**: `snap_trend` on the settled basis at week
+> ≥ 10 (p 0.0477, adjusted 0.076 at 48) is rejected at 120 and not at 48. The snap-share trend
+> is unlicensed (#233) and the diagnostic decides nothing (#274), so no verdict or licence moves
+> either way. The choice was made because it counts hypotheses, not printing.
+
 # Pre-registered 2026-09-21 — PROPOSED: four arithmetic items that move published numbers
 (#315)
 
