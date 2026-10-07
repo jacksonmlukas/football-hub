@@ -149,3 +149,11 @@ accounts; `tests/contracts/test_quota_state_survives_a_runner.py` holds that lin
 > season's pre-#383 polls survived, by `hub.store.write_snapshot` keyed on each poll's own
 > `captured_at`. They predate #211, so they carry `close_spread` only; every other snapshot
 > column reads null.
+>
+> **Basis, checked 2026-10-07:** The Odds API's terms (https://the-odds-api.com/terms-and-conditions.html)
+> list "storing our data and retaining it indefinitely" and "calculating and displaying values you
+> derive from our data" as permitted uses, and prohibit redistributing the data "as a standalone
+> data product". `odds/` holds derived values (medians across books) in a private repository. The
+> terms are silent on private storage specifically and do not differ by plan. **If this repository
+> is ever made public, re-examine `odds/` first**: a public archive of these medians starts to read
+> as a data product.

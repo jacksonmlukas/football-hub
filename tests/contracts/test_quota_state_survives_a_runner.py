@@ -98,7 +98,13 @@ LEDGER_CAPS = {"state/gate-width.json": 262144}
 
 def test_the_state_directory_carries_no_third_party_payload():
     """The reason `data/raw/` is excluded still applies to whatever replaces it. Counters
-    and balances are ours; a cached response is not."""
+    and balances are ours; a cached response is not.
+
+    One adopted exception (#383, restated 2026-10-06/07): `state/odds/` holds the betting
+    market's per-game median spread, derived from The Odds API. Their terms permit "storing
+    our data and retaining it indefinitely" and "calculating and displaying values you derive
+    from our data", and prohibit redistribution "as a standalone data product"; this repo is
+    private. What this test holds is the mechanical line: small JSON records, nothing else."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
                              capture_output=True, text=True).stdout.split()
     assert tracked, "state/ is not tracked, so a runner still starts with no record"
