@@ -1,0 +1,99 @@
+name: llm-forecast
+# The LLM-forecaster study's daily run (docs/prereg/llm-forecasters.md, "Forecast procedure").
+#
+# **Switched off until `prereg-llm-v0` is tagged.** The job runs only when the repository
+# variable LLM_FORECASTS_ENABLED is 'true'; it is unset, so every trigger is a skipped job. The
+# schedule stays live rather than commented out -- a commented-out schedule is what
+# `scripts/preflight_public.sh` warns about, and `tests/contracts/test_forecast_workflow.py`
+# reads the crons. Enabling is setting the variable, after the tag (build step 7).
+#
+# **Why fifteen triggers for one run.** GitHub schedules in UTC and delays or drops scheduled
+# runs under load. Every 15 minutes 13:30-16:30 UTC covers 09:30-11:30 ET under daylight (UTC-4)
+# and standard (UTC-5) time; each trigger asks `should-run`, which converts to ET in code and
+# says no outside the window or once the day is marked done. The list is
+# `hub.forecasters.days.CRON_TRIGGERS_UTC`, and the contract test holds the two to each other.
+#
+# **Where output goes.** Saved as a workflow artifact first, then committed to the `forecasts`
+# branch, which only this workflow writes, so a code push never conflicts with it and a
+# commit's author is this workflow. Nothing is committed to main. Partial output from a failed
+# run is still saved and committed (every record is complete on its own); the day is marked
+# done only after `run` succeeds, so the next trigger fills the gaps.
+#
+# **Failure.** A failed run emails the repository owner through GitHub's own workflow-failure
+# notification; the Tuesday scoring job lists any completed game with no forecast.
+
+on:
+  schedule:
+    - cron: "30,45 13 * * *"
+    - cron: "*/15 14-15 * * *"
+    - cron: "0,15,30 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: llm-forecast
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    if: vars.LLM_FORECASTS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # A run must finish within 30 minutes for the 60-minute-before-kickoff rule to cut nothing
+    # (the prereg's arithmetic); this bounds a wedged run a little beyond that.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check out the forecasts branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin forecasts:forecasts; then
+            git worktree add forecasts-branch forecasts
+          else
+            git worktree add --orphan -b forecasts forecasts-branch
+          fi
+
+      - name: Gate on the 09:30-11:30 ET window and an unfinished day
+        id: gate
+        run: uv run python -m hub.forecasters.cli should-run --out forecasts-branch >> "$GITHUB_OUTPUT"
+
+      - name: Forecast the day's games
+        if: steps.gate.outputs.run == 'true'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          # The four model providers' keys are added here at v0, each as `${{ secrets.NAME }}`.
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: uv run python -m hub.forecasters.cli run --out forecasts-branch --day "${{ steps.gate.outputs.day }}"
+
+      - name: Mark the day done
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python -m hub.forecasters.cli mark-done --out forecasts-branch --day "${{ steps.gate.outputs.day }}"
+
+      - name: Save the output as an artifact
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecasts-${{ steps.gate.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: forecasts-branch/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Commit to the forecasts branch
+        if: always() && steps.gate.outputs.run == 'true'
+        run: |
+          git -C forecasts-branch add -A
+          if git -C forecasts-branch diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git -C forecasts-branch commit -m "forecasts ${{ steps.gate.outputs.day }} (run ${{ github.run_id }})"
+          for attempt in 1 2 3; do
+            if git -C forecasts-branch push origin forecasts; then exit 0; fi
+            git -C forecasts-branch pull --rebase origin forecasts
+          done
+          echo "::error::could not push to the forecasts branch after three attempts"
+          exit 1
