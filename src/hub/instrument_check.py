@@ -48,6 +48,7 @@ from pathlib import Path
 
 import polars as pl
 
+from hub.config import SEASON_AHEAD
 from hub.fetch.odds import POLL_SCHEDULE
 from hub.ledger import WIDTH_STATE, Ledger, WidthEntry
 from hub.paths import ROOT
@@ -307,7 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="hub.instrument_check",
         description="Week-4 instrument check (#389). Produces no verdict.")
-    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     ap.add_argument("--week", type=int, required=True)
     ap.add_argument("--from", dest="start", required=True, type=_iso,
                     help="start of the window the week's polls are expected in (UTC)")
