@@ -160,6 +160,14 @@ Better in **all three** held-out seasons. Paired across 3,687 held-out player-we
 > > (2023 −0.0041, 2024 +0.0867, 2025 +0.0370)**; MDE +0.1111 against a declared ceiling of
 > > +0.3852 (was +0.0974 against +0.2641), so the design still runs. **SHOW — KEEP `retention`,
 > > unchanged.**
+> >
+> > **Ledger (#436):** the first post-#361 `injury_type` entry (2026-10-07T12:51Z) shares
+> > `config_digest`/`data_digest` (`c4606f91`/`3028f320`) with the lookahead-baseline entries,
+> > because neither digest sees code. The recipe now carries `baseline=strictly-prior`
+> > (`injury.BASELINE`); a corrected entry (2026-10-07T13:43Z, recipe
+> > `baseline=strictly-prior,seasons=2022+2023+2024+2025`) was appended and the earlier ones
+> > kept. The run now prints "3 earlier run(s) of this gate at another recipe ... not compared".
+> > A code digest in the key is #435's.
 
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
