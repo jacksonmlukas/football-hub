@@ -35,7 +35,9 @@ Makefile passed `--week` only when a human had set `WEEK` in the environment, an
 job set none, so `make slate` ran the fetcher with no week every Wednesday and Saturday and the
 leading `-` swallowed the refusal. Nothing spent quota and nothing said so.
 
-**The week is counted from `CFB_WEEK_ONE`** — the date of the college season's first game, set
+**The week is counted from `CFB_WEEK_ONE`** — the date of **week 1's** first game, not Week 0's
+(ESPN numbers the Week-0 games, 2026-08-29, and the 09-03/09-05 games alike as week 1; anchored on
+the Week-0 date the count runs a week ahead all season, so 2026 is `2026-09-03`), set
 once in `.env` locally and as a repository variable in Actions. `hub.fetch.cfbd.configured_week`
 snaps that date back to the Tuesday its week opens (which is where CFBD's own week numbers change
 over) and counts seven-day blocks from there. The argument for a *date* rather than a week number
@@ -45,7 +47,9 @@ cache and record a successful refresh. A start date stated once in August stays 
 January.
 
 Unset, unparseable, before the first game, or past week 15, no week is fetched and the run says
-so. `--week N` overrides everything, and is how a backfill or a rerun asks for one week.
+so. The slate's warning for that **escalates to a red run** once the record has been unfetched for
+more than seven days inside the regular-season window (`cfbd.json` carries `unfetched_since` and
+`escalate`; #424) — a warning that repeats for four weeks is not being read. `--week N` overrides everything, and is how a backfill or a rerun asks for one week.
 
 **Every run leaves a record in `site/data/cfbd.json`**, in the three states `hub.publish` uses for
 every other producer:
