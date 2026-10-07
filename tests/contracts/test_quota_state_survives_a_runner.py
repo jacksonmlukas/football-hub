@@ -93,7 +93,15 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # should decide what to do with the history. (An earlier 64 KiB here claimed the same figure and
 # held about 80; the cap and its reasoning now agree.) A counter's cap stays as it was, and this
 # is the only file with its own.
-LEDGER_CAPS = {"state/gate-width.json": 262144}
+#
+# The coverage measurement has its own budget since #309. It is a *summary of one run*, rewritten
+# in place (not appended), and it grew from 3.2 KB to 8.5 KB when every group row began carrying
+# its `position`, `n`, `n_cal`, deviation, sigma and the named cells that fell back to pooled
+# calibration, beside the parametric table it replaced (the prior values, kept in the file).
+# **Sized from the measured file**: 8,544 bytes serialised, so 16 KiB is about twice today's,
+# room for a longer window or a sixth season without being room for a payload. Still no third
+# party's data in it -- coverage rates of this repo's own interval.
+LEDGER_CAPS = {"state/gate-width.json": 262144, "state/interval_coverage.json": 16384}
 
 
 def test_the_state_directory_carries_no_third_party_payload():

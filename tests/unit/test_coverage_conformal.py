@@ -15,7 +15,6 @@ import pytest
 from hub.models import conformal, coverage, predict
 
 
-
 def _stats(rows):
     """nflverse-shaped weekly stats: what `player_weeks` is handed."""
     return pl.DataFrame(rows, schema={
@@ -196,8 +195,8 @@ def test_a_shift_the_window_has_not_seen_is_a_miss_not_a_pass():
     a = _drawn(n_players=250, weeks=17, seasons=(2023,), seed=5)
     b = _drawn(n_players=250, weeks=17, spread=1.6, seasons=(2024,), seed=6)
     got = coverage.measure(pl.concat([a, b]), "prior", claim=0.80)
-    s2024 = [r for r in got["by_position"] if r["group"] == "all"][0]
-    assert s2024["cov80"] < 0.78
+    pool = next(r for r in got["by_position"] if r["group"] == "all")
+    assert pool["cov80"] < 0.78
     assert got["verdict"] == "UNDER-COVERS"
 
 
