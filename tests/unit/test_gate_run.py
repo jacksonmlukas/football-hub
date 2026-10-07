@@ -291,6 +291,56 @@ def test_the_ledger_entry_names_each_source_the_run_read_even_when_the_digest_is
         {"source": "player_stats", "as_of": None, "digest": "unpinned"}]
 
 
+def test_a_run_records_the_digest_of_the_modules_it_was_given_and_a_changed_one_does_not_compare(
+        tmp_path, monkeypatch):
+    """#435 end to end: `run_gate(code_modules=...)` puts the arm modules' digest in the entry,
+    and editing one of them between two otherwise identical runs leaves the second with nothing
+    to compare against (planted: a real module on disk, rewritten between the runs)."""
+    import importlib
+    import sys
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / "planted435_gate_arm.py").write_text("BASE = 'within-season'\n")
+    importlib.invalidate_caches()
+    sys.modules.pop("planted435_gate_arm", None)
+    ledger = Ledger(path=None)
+    first = _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    entries = ledger._read()
+    assert entries is not None and entries[0].code_digest == entries[1].code_digest
+    assert entries[0].code_digest is not None and len(entries[0].code_digest) == 8
+    assert entries[1].comparable(entries[0]), "unchanged source still compares"
+    (tmp_path / "planted435_gate_arm.py").write_text("BASE = 'strictly prior'\n")
+    _run(_paired(), ledger=ledger, code_modules=("planted435_gate_arm",))
+    entries = ledger._read()
+    assert entries is not None
+    assert not entries[2].comparable(entries[1]) and not entries[2].comparable(entries[0])
+    assert first.verdict[0]
+
+
+def test_a_direct_call_that_declares_no_code_is_of_unknown_code_and_never_compared(tmp_path):
+    """#439: `run_gate(code_modules=())` used to record `code_digest=None`, a *known* "no modules
+    declared" that compares equal to another such run -- the hole #435 closed, reopened by saying
+    nothing. It is now an undeclared run: unknown code, written with no `code_digest` key, named
+    and compared with nothing, not even with itself. Declaring modules makes the same two runs
+    compare (the flip)."""
+    import json
+    path = tmp_path / "gate-width.json"
+    led = Ledger(path)
+    _run(_paired(), ledger=led)
+    second = _run(_paired(), ledger=led)
+    rows = json.loads(path.read_text())["entries"]
+    assert all("code_digest" not in r for r in rows), "undeclared must not be written as known"
+    assert any("unknown code" in ln for ln in second.lines)
+    entries = led._read()
+    assert entries is not None and not entries[1].comparable(entries[0])
+
+    declared = Ledger(tmp_path / "declared.json")
+    _run(_paired(), ledger=declared, code_modules=("hub.ledger",))
+    _run(_paired(), ledger=declared, code_modules=("hub.ledger",))
+    got = declared._read()
+    assert got is not None and got[1].comparable(got[0])
+
+
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
     """The weekly gate's `compare` returns a frame with no rows and no columns when nothing
     is covered. The run must still answer rather than fall over on a season column that is
