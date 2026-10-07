@@ -85,8 +85,9 @@ jobs:
       # until then every capture a runner made was discarded with the runner, and the only
       # lines archive was whatever the maintainer's own machine had run. `hub.store.connect`
       # unions that committed tree under `lines`, so a fresh checkout reads every capture.
-      # `CFB_WEEK_ONE` is a repository *variable* and not a secret: it is the date of the
-      # college season's first game, which is public and is the whole of what this job needs
+      # `CFB_WEEK_ONE` is a repository *variable* and not a secret: it is the date of
+      # week 1's first game -- not Week 0's, because ESPN numbers the 08-29 Week-0 games as week 1
+      # too (#424; 2026-09-03 for 2026) -- which is public and is the whole of what this job needs
       # in order to know which college week to fetch. Set once in August; `hub.fetch.cfbd`
       # counts the week from it, so nothing here has to be bumped weekly. Unset, the fetcher
       # records that it fetched nothing and the slate carries on -- which is the behaviour
@@ -229,6 +230,24 @@ jobs:
       # so the slate still lands; the run goes red and stays red until #289 is decided.
       - name: Gate the interval against its band
         run: uv run python -m hub.models.coverage --gate
+
+      # The CFBD warning above, escalated (#424). `fetched: false` is a warning by design -- an
+      # optional source must not fail a Sunday -- but the same warning repeated on every slate
+      # run for four weeks (`CFB_WEEK_ONE` unset) and nobody read it. `hub.fetch.cfbd` carries
+      # `unfetched_since` forward from the previous committed record and sets `escalate` only
+      # when that is more than a week ago *and* the regular season is on, so the offseason and
+      # the postseason (where nothing is fetched by design) stay quiet. Last, and `always()`,
+      # so it runs after the publish has landed and whether or not the gate above is red: the
+      # slate still publishes and the run goes red with the cause in its title.
+      - name: Escalate a CFBD source that has stayed unfetched
+        if: always()
+        run: |
+          CFBD=site/data/cfbd.json
+          [ -f "$CFBD" ] || exit 0
+          if [ "$(jq -r '.escalate // false' "$CFBD")" = "true" ]; then
+            echo "::error::CFBD has fetched nothing since $(jq -r '.unfetched_since' "$CFBD"), more than a week into the college season. $(jq -r '.reason' "$CFBD")"
+            exit 1
+          fi
 
   # #370 (S12): the four extra polls a week. This is not a second `refresh` -- it spends one
   # odds credit and nothing else: no nflverse refresh, no CFBD call, no roster pull, no
