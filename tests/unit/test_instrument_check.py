@@ -261,3 +261,45 @@ def test_the_module_produces_no_verdict_word_and_imports_no_gate():
     text = Path(ic.__file__).read_text()
     assert "hub.models.experiment" not in text and "hub.season.weekly_gate" not in text
     assert "import experiment" not in text
+
+
+@pytest.mark.parametrize("boom", [
+    subprocess.TimeoutExpired(["git", "clone"], 120),
+    json.JSONDecodeError("Expecting value", "", 0),
+], ids=["clone-timeout", "unparseable-reader-output"])
+def test_an_unreadable_checkout_is_a_named_refusal_not_a_traceback(wired, monkeypatch, capsys, boom):
+    """#433: a stuck clone or a reader that printed non-JSON used to escape `main`'s except
+    tuple as a traceback. Each is reported by `hub.cli.unavailable` and exits non-zero."""
+    args, _ = wired
+
+    def fail(*_a, **_k):
+        raise boom
+    monkeypatch.setattr(ic, "read_from_fresh_checkout", fail)
+    rc = ic.main(args)
+    err = capsys.readouterr().err
+    assert rc not in (0, 3) and "hub.instrument_check" in err and "Traceback" not in err
+
+
+def test_one_clone_serves_both_readings(wired, monkeypatch):
+    args, paired = wired
+    real, calls = ic.read_from_fresh_checkout, []
+
+    def counting(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+    monkeypatch.setattr(ic, "read_from_fresh_checkout", counting)
+    ic.main([*args, "--paired", str(paired)])
+    assert len(calls) == 1
+
+
+def test_the_clone_has_a_timeout(monkeypatch, repo):
+    seen = {}
+    real = subprocess.run
+
+    def spy(cmd, *a, **k):
+        if cmd[:2] == ["git", "clone"]:
+            seen["t"] = k.get("timeout")
+        return real(cmd, *a, **k)
+    monkeypatch.setattr(ic.subprocess, "run", spy)
+    ic.read_from_fresh_checkout(repo, 2026)
+    assert seen["t"] == ic.CLONE_TIMEOUT

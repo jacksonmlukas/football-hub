@@ -103,16 +103,25 @@ CFB_WEEK_ONE_ENV = "CFB_WEEK_ONE"
 # same warning sat on every slate run for four weeks: an annotation that repeats is not read.
 ESCALATE_AFTER_DAYS = 7
 
-# The regular season as a calendar fact, (month, day) inclusive: late August's Week 0 through
-# the conference championships, which end before mid-December. After that `configured_week`
-# legitimately fetches nothing (week 16 on is a seasonType, not a week), so an unfetched
-# record in the postseason or the summer is the design and never escalates.
-SEASON_WINDOW = ((8, 24), (12, 10))
+# The in-season window is derived from the one anchor, `week_one_opens()` (CFB_WEEK_ONE), and
+# is not a second hand-kept calendar (#433): it opens on the Tuesday week 1 opens and closes
+# when the regular season's last week ends. Before that is summer or the Week-0 weekend, and
+# after it `configured_week` legitimately fetches nothing, so an unfetched record outside the
+# window is the design and never escalates. With no usable anchor the window is unknowable and
+# nothing is called out of season: an unset anchor is itself reported as the reason.
+def season_window() -> tuple[date, date] | None:
+    """(first day, last day) of the regular season, or None when the anchor is unusable."""
+    _, opens, _ = week_one_opens()
+    if opens is None:
+        return None
+    return opens, opens + timedelta(weeks=REGULAR_SEASON_WEEKS) - timedelta(days=1)
 
 
 def season_in_progress(today: date) -> bool:
-    """Whether `today` falls in the regular-season window above."""
-    return SEASON_WINDOW[0] <= (today.month, today.day) <= SEASON_WINDOW[1]
+    """Whether `today` falls inside the window `season_window` derives from week 1."""
+    win = season_window()
+    return bool(win and win[0] <= today <= win[1])
+
 
 # The last college week that is a *week*. Weeks 1-15 are the regular season through the
 # conference championships; past that is the postseason, which CFBD asks for as a
@@ -702,8 +711,13 @@ def record_run(season: int, week_no: int | None, *,
     # Escalation (#424): decided here, in the module that owns the calendar, because a workflow
     # cannot read a window out of a sentence. `escalate` is true only for a source that has
     # been unfetched for more than a week *while the season is on*.
-    escalate = bool(since and season_in_progress(at.date())
-                    and (at.date() - date.fromisoformat(since)).days > ESCALATE_AFTER_DAYS)
+    # The streak counts from the season's start, not from `since`: summer's records are
+    # unfetched by design, so a streak carried in from June is months old on the first run of
+    # the season and would be red until week 1 (#433). `since` still records the truth.
+    win = season_window()
+    counted = max(date.fromisoformat(since), win[0]) if (since and win) else None
+    escalate = bool(counted and season_in_progress(at.date())
+                    and (at.date() - counted).days > ESCALATE_AFTER_DAYS)
     # Through `jsonio.summary`, which stamps `shape: "summary"`. This envelope reports what
     # was fetched without carrying it -- `rows_by_endpoint` is counts, not rows -- and saying
     # so here is what #227 replaced `NOT_ROW_SHAPED` with. The first publish of this file, by

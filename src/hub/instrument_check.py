@@ -112,6 +112,9 @@ print(json.dumps({"rows": store.lines(season).height, "has_data_dir": had_data})
 """
 
 
+CLONE_TIMEOUT = 120  # seconds; a stuck clone is a named refusal (#433), not a hang
+
+
 def read_from_fresh_checkout(repo: Path, season: int) -> dict[str, object]:
     """Clone `repo`'s committed HEAD into a scratch directory and read the odds archive there.
 
@@ -124,7 +127,7 @@ def read_from_fresh_checkout(repo: Path, season: int) -> dict[str, object]:
     try:
         clone = Path(tmp) / "checkout"
         subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{repo}", str(clone)],
-                       check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True, timeout=CLONE_TIMEOUT)
         got = subprocess.run(
             [sys.executable, "-c", _READER, str(season)], cwd=clone, capture_output=True,
             text=True, env={**os.environ, "PYTHONPATH": str(clone / "src")}, timeout=300)
@@ -147,7 +150,8 @@ def _stamp(s: str) -> datetime:
 
 
 def persistence(repo: Path, season: int, week: int, start: datetime, until: datetime,
-                *, now: datetime, grace: timedelta = GRACE) -> Criterion:
+                *, now: datetime, grace: timedelta = GRACE,
+                fresh: dict[str, object] | None = None) -> Criterion:
     """Criterion 2: every scheduled poll in `[start, until]` has its capture in the committed
     archive for `week`, as read from a fresh checkout.
 
@@ -157,7 +161,7 @@ def persistence(repo: Path, season: int, week: int, start: datetime, until: date
     Slots before `PERSISTENCE_BEGINS` are named in the detail as unrecoverable-by-construction
     when missing: nothing was committed before #383 and a market price cannot be re-captured.
     """
-    fresh = read_from_fresh_checkout(repo, season)
+    fresh = fresh if fresh is not None else read_from_fresh_checkout(repo, season)
     stamps = [_stamp(s) for s in fresh["captures"].get(week, [])]  # type: ignore[attr-defined]
     slots = expected_polls(start, until)
     checkable = [s for s in slots if s + grace <= now]
@@ -190,11 +194,12 @@ def persistence(repo: Path, season: int, week: int, start: datetime, until: date
                      f"(week {week}, {fresh['rows']:,} season rows read by its own reader)", facts)
 
 
-def backfill_readable(repo: Path, season: int) -> Criterion:
+def backfill_readable(repo: Path, season: int, *,
+                      fresh: dict[str, object] | None = None) -> Criterion:
     """The #428 back-fill, asserted separately: every one of its 8 polls in all 18 weeks, from a
     fresh checkout. Reported beside criterion 2, not part of it -- these are the only
     pre-persistence captures there are."""
-    fresh = read_from_fresh_checkout(repo, season)
+    fresh = fresh if fresh is not None else read_from_fresh_checkout(repo, season)
     caps: dict[int, list[str]] = fresh["captures"]  # type: ignore[assignment]
     lacking = [(w, s) for w in range(1, BACKFILL_WEEKS + 1) for s in BACKFILLED
                if s not in caps.get(w, [])]
@@ -291,11 +296,12 @@ def k_report(paired: pl.DataFrame | None, season: int) -> Criterion:
 def run(repo: Path, season: int, week: int, start: datetime, until: datetime, *,
         paired_path: Path | None, now: datetime, gate: str = "weekly") -> list[Criterion]:
     paired = pl.read_parquet(paired_path) if paired_path else None
+    fresh = read_from_fresh_checkout(repo, season)  # one clone serves both readings
     return [pipeline(paired, season),
-            persistence(repo, season, week, start, until, now=now),
+            persistence(repo, season, week, start, until, now=now, fresh=fresh),
             ledger(paired, gate),
             k_report(paired, season),
-            backfill_readable(repo, season)]
+            backfill_readable(repo, season, fresh=fresh)]
 
 
 def _iso(s: str) -> datetime:
@@ -323,7 +329,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         results = run(a.repo, a.season, a.week, a.start, a.until, paired_path=a.paired,
                       now=now, gate=a.gate)
-    except (subprocess.CalledProcessError, RuntimeError, OSError, pl.exceptions.PolarsError) as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError,
+            RuntimeError, OSError, pl.exceptions.PolarsError) as e:
         # An input that could not be read is not a criterion that failed: say which, exit
         # non-zero, no traceback (`tests/contracts/test_cli_surface.py`).
         from hub.cli import unavailable

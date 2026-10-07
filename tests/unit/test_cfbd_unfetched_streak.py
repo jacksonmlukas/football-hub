@@ -20,6 +20,13 @@ def env(monkeypatch):
     return values
 
 
+@pytest.fixture(autouse=True)
+def _anchor(env):
+    """The in-season window is derived from week 1 (#433), so every run here has an anchor:
+    week 1's first game on 2026-09-03, its week opening Tuesday 2026-09-01."""
+    env[cfbd.CFB_WEEK_ONE_ENV] = "2026-09-03"
+
+
 @pytest.fixture
 def quota(tmp_path):
     return tmp_path / "quota.json"
@@ -90,3 +97,30 @@ def test_the_anchor_is_week_ones_first_game_not_week_zeros(env):
     assert cfbd.configured_week(at).week == 6
     env[cfbd.CFB_WEEK_ONE_ENV] = "2026-08-29"
     assert cfbd.configured_week(at).week == 7
+
+
+def test_a_summer_streak_does_not_escalate_before_week_one_opens(tmp_path, quota):
+    """Rule-18 control for #433. Summer records are unfetched by design, so on the first runs
+    of the season the carried streak is months old. Counted from `unfetched_since` that is
+    red from Aug 24 (the old hand-kept window) until week 1 opens; counted from the season's
+    start it is green here and turns red only a week after week 1 opened (Tue 09-01)."""
+    p = tmp_path / "cfbd.json"
+    _ran(p, quota, (6, 1))
+    for day in ((8, 24), (8, 28), (8, 31)):
+        got = _ran(p, quota, day)
+        assert got["unfetched_since"] == "2026-06-01", "the record still tells the truth"
+        assert got["escalate"] is False, f"false red on {day}, before week 1 opened"
+    assert _ran(p, quota, (9, 8))["escalate"] is False, "exactly seven days into the season"
+    assert _ran(p, quota, (9, 9))["escalate"] is True, "the first day past a week of season"
+
+
+def test_the_window_is_derived_from_the_week_one_anchor(env):
+    """One anchor, not two calendars: moving CFB_WEEK_ONE moves the window with it."""
+    from datetime import date
+    assert cfbd.season_window() == (date(2026, 9, 1), date(2026, 12, 14))
+    env[cfbd.CFB_WEEK_ONE_ENV] = "2027-09-02"
+    assert cfbd.season_window() == (date(2027, 8, 31), date(2027, 12, 13))
+    assert not cfbd.season_in_progress(date(2027, 8, 30))
+    assert cfbd.season_in_progress(date(2027, 8, 31))
+    env[cfbd.CFB_WEEK_ONE_ENV] = ""
+    assert cfbd.season_window() is None and not cfbd.season_in_progress(date(2026, 10, 6))
