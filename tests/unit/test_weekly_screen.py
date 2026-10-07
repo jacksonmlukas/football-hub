@@ -1243,3 +1243,168 @@ def test_the_sweep_carries_each_screen_s_family_and_adjusted_p():
     printed = {ln.split()[0]: float(ln.split()[5]) for ln in lines[4:]}
     assert printed["flat"] == pytest.approx(by["flat"]["joint_p_adj"], abs=5e-4)
     assert printed["late_trend"] == pytest.approx(by["late_trend"]["joint_p_adj"], abs=5e-4)
+
+
+# --- #312: the verdict reads the p it computes -----------------------------------------------
+#
+# Method rule 18: each of these plants the condition the bar exists to detect and asserts the
+# verdict moves with it. The planted value sits **between the old bar and the new one** -- past
+# a flat 2.0 se, short of the t quantile at the run's degrees of freedom -- because that is the
+# only band where the two rules disagree, and a control outside it passes under both.
+
+
+def _all_positive(per_t_target_lo=2.0, per_t_target_hi=2.776):
+    """Five season means, all positive, whose clustered t falls between the two bars."""
+    per = dict(zip(range(2021, 2026), [0.001, 0.015, 0.04, 0.06, 0.09], strict=True))
+    v = np.array(list(per.values()))
+    t = v.mean() / (v.std(ddof=1) / np.sqrt(len(v)))
+    assert per_t_target_lo < t < per_t_target_hi, t
+    return per, float(t)
+
+
+def test_a_t_past_two_and_short_of_the_quantile_no_longer_clears():
+    """The defect, planted: five seasons, every one on the right side, t = 2.58. A flat 2.0 se
+    cleared this; two-sided p on four degrees of freedom is 0.061 and does not."""
+    per, t = _all_positive()
+    s = {"r": float(np.mean(list(per.values()))), "t": t, "per_season": per}
+    status, note = ws.verdict(s, "+")
+    assert status == ws.KILLED
+    assert f"p {experiment.two_sided_p(t, 4):.3f}" in note and "5/5 seasons" in note
+    assert experiment.two_sided_p(t, 4) > experiment.ALPHA
+
+
+def test_the_bar_is_the_t_quantile_at_the_runs_own_degrees_of_freedom():
+    """The ticket allows either phrasing, so they are held equal: for every season count the
+    verdict flips exactly at `t_quantile(1 - alpha/2, seasons - 1)`, which is 3.182 on three
+    degrees of freedom and 2.776 on four -- not at 2.0 for either."""
+    for seasons in range(3, 9):
+        crit = experiment.t_quantile(1 - experiment.ALPHA / 2, seasons - 1)
+        per = dict.fromkeys(range(2000, 2000 + seasons), 0.05)
+        below = ws.verdict({"r": 0.05, "t": crit - 0.01, "per_season": per}, "+")[0]
+        above = ws.verdict({"r": 0.05, "t": crit + 0.01, "per_season": per}, "+")[0]
+        assert (below, above) == (ws.KILLED, ws.CLEARS), (seasons, crit)
+        assert crit > 2.0
+    assert experiment.t_quantile(0.975, 3) == pytest.approx(3.182, abs=1e-3)
+    assert experiment.t_quantile(0.975, 4) == pytest.approx(2.776, abs=1e-3)
+
+
+def test_the_headline_pre_stated_null_reads_as_null_under_the_p_bar():
+    """`td_rate_prior`'s own figure, -2.49 se over five seasons, every season the same side
+    (the pooled-basis shape): the flat bar read it as a broken pre-stated null; its two-sided
+    p is 0.068, so the null stands. A t of -3.2 over the same seasons still breaks it, so the
+    planted control is not a verdict that never fires."""
+    per = dict.fromkeys(range(2021, 2026), -0.012)
+    assert ws.verdict({"r": -0.012, "t": -2.49, "per_season": per}, "0")[0] == ws.CLEARS
+    assert ws.verdict({"r": -0.012, "t": -3.2, "per_season": per}, "0")[0] == ws.NULL_BROKEN
+
+
+def test_one_season_has_no_p_and_so_clears_nothing():
+    """No degrees of freedom, no reference distribution: not significant, and the note says
+    there is no p rather than printing a NaN or clearing a feature on one number."""
+    status, note = ws.verdict({"r": 0.3, "t": 0.0, "per_season": {2025: 0.3}}, "+")
+    assert status == ws.KILLED and "no p" in note
+    assert ws.verdict({"r": 0.3, "t": 0.0, "per_season": {2025: 0.3}}, "0")[0] == ws.CLEARS
+
+
+def test_screen_reports_the_status_the_p_bar_gives(monkeypatch):
+    """`screen` is the disposition the weekly run prints: it must carry `verdict`'s answer for
+    the planted band, not a second reading of the t."""
+    per, t = _all_positive()
+    cells = pl.DataFrame({"season": list(per), "week": [1] * len(per),
+                          "r": list(per.values()), "n": [100] * len(per)})
+    monkeypatch.setattr(ws, "cell_correlations", lambda *a, **k: cells)
+    out = ws.screen(pl.DataFrame({"x": [0]}), [ws.Feature("f", "+", 1)]).to_dicts()[0]
+    assert out["status"] == ws.KILLED
+    assert out["t"] == pytest.approx(t) and 0.05 < out["p"] < 0.08
+
+
+# --- #312: the joint size of the two-part rule --------------------------------------------------
+
+
+def _null_means(k, draws=40_000, seed=0):
+    return np.random.default_rng(seed).normal(size=(draws, k)) * 0.06
+
+
+def test_the_joint_size_is_below_both_halves_and_above_their_independent_product():
+    """On iid-normal season means the p half alone is the nominal 0.05, the conjunction is far
+    below it -- every season on one side makes the mean large against the spread -- and the
+    two halves are *not* independent, which the printed product would otherwise hide."""
+    got = ws.joint_size(_null_means(5), want=1.0)
+    assert got["p_t_clears"] == pytest.approx(0.05, abs=0.006), "the t reading is calibrated"
+    assert got["p_joint"] < got["p_t_clears"]
+    assert got["p_joint"] > 5 * got["p_independent"], "positively dependent, not independent"
+    assert got["p_joint"] == pytest.approx(0.0235, abs=0.006)
+    assert got["p_joint_flat_bar"] > got["p_joint"], "the old bar over-rejected"
+
+
+def test_the_flat_bar_size_is_what_makes_the_ticket_s_claim_checkable():
+    """Planted: the old bar's p half alone at five seasons is the 0.116 the ticket names."""
+    means = _null_means(5, seed=1)
+    sd = means.std(axis=1, ddof=1)
+    t = means.mean(axis=1) / (sd / np.sqrt(5))
+    assert (np.abs(t) >= 2.0).mean() == pytest.approx(0.116, abs=0.008)
+
+
+def test_a_planted_always_clearing_effect_has_joint_size_one_and_the_wrong_sign_zero():
+    """The control that can fail: means well inside the sign and far from zero relative to
+    spread clear in every draw, and the same draws read against the opposite sign never do."""
+    rng = np.random.default_rng(2)
+    means = 0.5 + rng.normal(size=(2000, 5)) * 0.01
+    assert ws.joint_size(means, want=1.0)["p_joint"] == 1.0
+    assert ws.joint_size(means, want=-1.0)["p_joint"] == 0.0
+
+
+def test_the_joint_size_is_nan_below_two_seasons():
+    got = ws.joint_size(np.ones((10, 1)), want=1.0)
+    assert all(np.isnan(v) for v in got.values())
+
+
+def test_the_permutation_harness_returns_the_joint_size_and_prints_it():
+    n = ws.every_season_null(_sweep_panel(), ws.Feature("dud", "+", 1), draws=400, seed=4)
+    assert 0.0 <= n["p_joint"] <= min(n["p_every_season"], n["p_t_clears"]) + 1e-12
+    assert n["p_joint_flat_bar"] >= n["p_joint"]
+    text = "\n".join(ws.null_report("dud", 8, n))
+    assert "two-part rule's size" in text and "flat 2 se bar" in text
+
+
+# --- #312: the family counts what was run ---------------------------------------------------------
+
+
+_TRENDS = ("t0", "t1")
+
+
+def _frame(anchors, features, p):
+    """A sweep's alone columns: a trend feature is measured on rows that move with the anchor
+    (`min_week` is the anchor), every other feature on the same rows at all of them."""
+    return pl.DataFrame([{"anchor": a, "feature": f, "alone_p": p[f],
+                          "min_week": a if f in _TRENDS else 1}
+                         for a in anchors for f in features])
+
+
+def test_the_run_family_counts_what_was_run_across_anchors_and_bases():
+    """Eight features, five anchors, three bases print 120 rows; one printing saw eight. The
+    distinct tests are 3 bases x (6 features the anchor does not touch + 2 trends x 5 anchors)
+    = 48. A p of 0.012 is below q in a family of eight (0.0125 at rank one of eight) and is not
+    in a family of 48 -- the planted case where the per-call count and the run's count
+    disagree -- and counting the anchor-invariant rows five times would not have changed the
+    answer's direction but would have changed the count, which is what is asserted."""
+    p = {"hit": 0.012, **{f"f{i}": 0.5 for i in range(5)}, "t0": 0.5, "t1": 0.5}
+    one_call = experiment.false_discovery(list(p.values()))
+    assert one_call.tests == 8 and one_call.rejected[0]
+    # The one hit is measured once per basis and the other two bases saw nothing there.
+    null = {**p, "hit": 0.5}
+    hit = _frame(range(4, 14, 2), list(p), p)
+    flat = _frame(range(4, 14, 2), list(p), null)
+    rows, fd = ws.run_family({"yardage": hit, "pooled": flat, "decomposed": flat})
+    assert fd.tests == 48 == len(rows)
+    assert not any(fd.rejected), "past the threshold only because the whole family is counted"
+    lines = "\n".join(ws.run_family_report({"yardage": hit}))
+    assert "16 distinct tests over 1 basis (yardage) and 5 anchors, from 40 printed" in lines
+    assert "1 of the 3 bases" in lines
+
+
+def test_the_run_family_keeps_a_strong_result_below_the_threshold():
+    p = {"hit": 1e-6, **{f"f{i}": 0.5 for i in range(7)}}
+    rows, fd = ws.run_family({"yardage": _frame((8,), list(p), p)})
+    assert sum(fd.rejected) == 1
+    assert next(r for r in rows if r["feature"] == "hit")["p_adj"] < experiment.FDR_Q

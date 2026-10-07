@@ -150,6 +150,18 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_position_below_the_minimum_gets_no_verdict_only_its_deviation_and_sigma",
         "test_a_position_at_the_minimum_does_return_a_verdict_at_root_two_binomial_se",
     )),
+    # #312: the verdict reads the two-sided p at the run's degrees of freedom. Each control
+    # plants a t between the old flat 2.0 and the t quantile -- the only band where the two
+    # rules disagree -- and the headline pre-stated null from the ticket's own figures.
+    "hub.models.weekly_screen.verdict": ("tests/unit/test_weekly_screen.py", (
+        "test_a_t_past_two_and_short_of_the_quantile_no_longer_clears",
+        "test_the_bar_is_the_t_quantile_at_the_runs_own_degrees_of_freedom",
+        "test_the_headline_pre_stated_null_reads_as_null_under_the_p_bar",
+        "test_one_season_has_no_p_and_so_clears_nothing",
+    )),
+    "hub.models.weekly_screen.screen": ("tests/unit/test_weekly_screen.py", (
+        "test_screen_reports_the_status_the_p_bar_gives",
+    )),
     "hub.draft.adherence.verdict": ("tests/unit/test_adherence.py", (
         "test_twelve_of_sixteen_meets_it",
         "test_eleven_of_sixteen_misses_it",
@@ -157,13 +169,7 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 # module.function -> the ticket that gives it a control. Nothing else belongs here.
-OWED: dict[str, str] = {
-    "hub.models.weekly_screen.verdict": (
-        "#312: the screen's verdict does not read the p it computes, so a planted effect "
-        "cannot be asserted to fire on the number the screen reports until it does"),
-    "hub.models.weekly_screen.screen": (
-        "#312: same instrument; its per-feature disposition is `verdict`'s"),
-}
+OWED: dict[str, str] = {}
 
 
 def _decisions(src: Path) -> dict[str, Path]:
