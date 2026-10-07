@@ -500,6 +500,43 @@ def test_writing_a_later_look_leaves_the_earlier_one_byte_for_byte(world):
     assert [r["look"] for r in after] == [1, 2] and after[0] == before
 
 
+# --- the seams that say no ---------------------------------------------------------------
+
+
+def test_an_open_span_has_no_key_and_a_half_written_file_is_not_read_back(world):
+    """The survivor key is None for a span holding the current season; a file whose key matches
+    but which carries no backtest rows is a miss, never a read of nothing."""
+    assert coverage.survivor_key([2024, 2025]) is None
+    assert coverage.survivor_key([2023, 2024]) is not None
+    key = coverage.backtest_key([2023, 2024])
+    world.path.write_text(json.dumps({"name": "interval_coverage", "backtest_key": key}))
+    assert coverage.read_back_backtest(key, world.path) is None
+
+
+def test_a_schedule_with_no_week_14_refuses_look_2_by_name(world, monkeypatch, capsys):
+    short = _schedule(weeks=10)
+    monkeypatch.setattr(coverage, "_schedules", lambda seasons, cache: short)
+    assert coverage.main(["--audit", "--look", "2", "--as-of", _after(18)]) == 2
+    assert "has no week 14" in capsys.readouterr().err
+
+
+def test_look_2_with_unreachable_stats_is_a_sentence_and_spends_nothing(world, monkeypatch,
+                                                                       capsys):
+    def _down(seasons, cache):
+        raise OSError("nflverse is down")
+
+    monkeypatch.setattr(coverage, "_stats", _down)
+    assert coverage.main(["--audit", "--look", "2", "--write", "--as-of", _after(14)]) != 0
+    assert not world.path.exists()
+
+
+def test_look_2_with_no_player_weeks_at_all_is_an_error_not_a_look(world, monkeypatch, capsys):
+    world.frame = world.frame.clear()
+    assert coverage.main(["--audit", "--look", "2", "--write", "--as-of", _after(14)]) == 1
+    assert "no player-week survived" in capsys.readouterr().err
+    assert not world.path.exists()
+
+
 # --- an unmeasurable row is a failed run that loses nothing --------------------------------
 
 
