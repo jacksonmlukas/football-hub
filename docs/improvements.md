@@ -248,6 +248,8 @@ scores exactly zero and no additive penalty can say so. A multiplicative retenti
 declared before being run, wins at **4.059**, better in all three held-out seasons and by 0.170
 MAE at 3.8 se across 3,687 player-weeks.
 
+> *(Restated 2026-10-07, #361: the +0.170 / 3.8 se baseline was a within-season lookahead. Strictly-prior it is +0.0623 MAE (se 0.0588, t = +1.06 on 2 df, p = 0.40, interval [-0.1909, +0.3155]), won 2 of 3 seasons with 2024 at -0.0529; usable designated weeks 4,939 -> 2,581, and about 0.011 of the drop is the lookahead itself, the rest the early-season rows no longer scorable. Prior value kept above; see weekly-injury.md.)*
+
 ### Original text
 
 **Model.** `INJURY_BETA` prices OUT, DOUBTFUL and INJURY_RESERVE at the same −1.631 ppg, and

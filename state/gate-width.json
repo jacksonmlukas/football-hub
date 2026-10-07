@@ -747,6 +747,55 @@
       "timestamp": "2026-10-07T02:53:44+00:00",
       "verdict": "REMOVE",
       "width": 7.644285714285715
+    },
+    {
+      "abstained": 0,
+      "clusters": 3.0,
+      "config_digest": "c4606f91",
+      "data_digest": "3028f320",
+      "gate": "injury_type",
+      "hi": 0.08665836860038005,
+      "inputs": [
+        {
+          "as_of": null,
+          "digest": "9f2912bc",
+          "source": "injuries"
+        },
+        {
+          "as_of": null,
+          "digest": "9f2bc034",
+          "source": "player_stats"
+        }
+      ],
+      "lo": -0.0041085874263040965,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "resolved": 3,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -0.0041085874263040965,
+          "m": 1,
+          "se": NaN,
+          "season": 2023
+        },
+        {
+          "disposition": "win",
+          "gain": 0.08665836860038005,
+          "m": 1,
+          "se": NaN,
+          "season": 2024
+        },
+        {
+          "disposition": "win",
+          "gain": 0.03704941970172647,
+          "m": 1,
+          "se": NaN,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-07T12:51:51+00:00",
+      "verdict": "SHOW",
+      "width": 0.09076695602668415
     }
   ]
 }

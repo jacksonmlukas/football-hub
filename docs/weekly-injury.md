@@ -45,6 +45,10 @@ player-weeks with at least six healthy weeks to form a baseline:
 | (none) | limited | 308 | 87.9% |
 | (none) | full | 2154 | 92.5% |
 
+> *Restated 2026-10-07 (#361): this table's baseline was a within-season lookahead; the cells
+> on the strictly-prior baseline are in the box under "The gate" below, and its prior values
+> are the ones printed here.*
+
 **Monotone in both dimensions, independently.** A Questionable player who did not practise
 keeps 41%; one who practised fully keeps 72%. `INJURY_BETA` prices QUESTIONABLE at zero — right
 for a preseason board, where the Questionable group is far healthier, and clearly wrong in
@@ -97,6 +101,65 @@ Better in **all three** held-out seasons. Paired across 3,687 held-out player-we
 > ([ADR-0019](adr/0019-a-gate-requires-every-season.md), the S1 t interval) it would not clear
 > the pooled half. Named, not resolved: the figure moves, the module's decision stays frozen
 > behind #360.
+>
+> > **Restated 2026-10-07 — #361 (S4): the baseline every figure on this page is measured
+> > against was a within-season lookahead ([method.md](method.md) rule 2; the figures above stand
+> > as published).** `observations` took a designated week's baseline as the player's mean over
+> > the healthy weeks of the **whole season**, so a week-9 designation was scored against weeks
+> > 10-18: the held-out arm was handed the player's realised in-season level, a column no Sunday
+> > has. The baseline is now the **expanding mean of his strictly earlier healthy weeks of that
+> > season**, and the six-healthy-weeks floor is on that *prior* count. Re-run
+> > `--fit --seasons 2022,2023,2024,2025` (planted-leak control first: a baseline that moves
+> > when only later weeks move now fails a test, and the old code fails it).
+> >
+> > | | before (lookahead baseline; re-run 2026-10-07 at `9fc1a3a`, matches the published figures to rounding) | now (strictly prior) |
+> > |---|---|---|
+> > | designated player-weeks with a usable baseline | 4,939 | **2,581** (the first six healthy weeks of a season can no longer be scored: early-season designations drop out) |
+> > | held-out rows, 2023-25 | 3,687 | **1,963** |
+> > | held-out MAE, `retention` | 4.0576 | **4.2444** |
+> > | held-out MAE, `out_zero` | 4.2276 | **4.3067** |
+> > | retention vs `out_zero`, mean gain | +0.1700 (t = +4.19 on 2 df, p = 0.053, per #311) | **+0.0623** (equal-season weighted; se 0.0588, **t = +1.06 on 2 df, p = 0.40**; t interval [−0.1909, +0.3155]) |
+> > | seasons | +0.2325, +0.0727, +0.2047: all three | **+0.0441, −0.0529, +0.1957: won 2, lost 1** (2024 reverses) |
+> >
+> > **The gain falls by about two thirds and the sign no longer holds in every season.** Roughly
+> > **0.011 of the 0.108 lost is the lookahead itself**; the rest is the population. Scoring the
+> > *same* 1,963 held-out rows with the old, whole-season baseline gives +0.0729 (+0.0475,
+> > −0.0330, +0.2043), against +0.0623 honestly: a lookahead worth about one hundredth of a point
+> > here, and the other ~0.097 is the population: the early-season designations the strictly-prior
+> > rule can no longer score were rows where `retention` won by more (the training windows
+> > shrink too). Both are named because the
+> > ticket asked for the first and the second came with it: a designation in weeks 1-6 has no six
+> > weeks of its own history, and carrying the previous season over is a different baseline this
+> > ticket does not choose.
+> >
+> > The retention cells move with it (n, keeps; 2022-25, 2,581 rows): Out / did not participate
+> > 440, **0.0%**; Questionable / DNP 128, **41.1%**; (none) / DNP 77, 46.6%; Questionable /
+> > limited 404, **64.3%**; Questionable / full 127, **79.8%**; (none) / limited 165, 91.3%;
+> > (none) / full 1,104, **92.1%**. The Doubtful cell (98) is now below `MIN_CELL` and is folded
+> > into the pooled value. Monotone in both dimensions still stands; Out keeps exactly nothing
+> > still stands.
+> >
+> > **What this page does not decide.** `injury.verdict` is still the argmin that adopted
+> > `retention`, and *whether the one adopted model stays adopted is #360's decision and the
+> > maintainer's*, not this restatement's. Read through the Gate's own half-rules (the sign in
+> > every resolved season, and a pooled interval excluding zero), retention vs `out_zero` would
+> > fail both on these figures; nothing about the module's product role changes here.
+> >
+> > **What production would use instead of this column.** On a Sunday there is no in-season
+> > healthy mean: `roster.availability` (`src/hub/season/roster.py`) reads ESPN's
+> > `projected_total / projected_avg` ratio, a season-level figure that says nothing about
+> > which games are missed, and `grep` finds no caller of `retention_table` or
+> > `predict_retention` outside `injury.py`, so the adopted model is not in the lineup path at
+> > all. The deployable form of this baseline is the strictly-prior expanding mean built here,
+> > which is also what a live lineup call could compute from the weeks already played; it is
+> > not wired to anything, and wiring it is a separate decision.
+> >
+> > **The type comparison, same re-run (ledger `injury_type`, 2026-10-07, `resolved: 3,
+> > abstained: 0`, recipe `seasons=2022+2023+2024+2025`):** published +0.0320 (t = +1.69 on
+> > 2 df, p = 0.23, won 2 lost 1) → **+0.0399, t interval [−0.0531, +0.1328], won 2 lost 1
+> > (2023 −0.0041, 2024 +0.0867, 2025 +0.0370)**; MDE +0.1111 against a declared ceiling of
+> > +0.3852 (was +0.0974 against +0.2641), so the design still runs. **SHOW — KEEP `retention`,
+> > unchanged.**
 
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
