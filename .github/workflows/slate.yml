@@ -224,11 +224,14 @@ jobs:
           git pull --rebase origin main
           git push
 
-      # The gate, last (#273). `--gate` exits non-zero when the shipped weekly interval leaves
-      # its pre-registered band, and it does so today (#289) -- which is the point: a gate
-      # that is red, unrun and unwired is not a gate. It runs after the publish is committed
-      # so the slate still lands; the run goes red and stays red until #289 is decided.
-      - name: Gate the interval against its band
+      # The smoke alarm, last (#273, #310). `--gate` no longer reads a verdict: a verdict read
+      # weekly on accumulating rows is a sequential test, so the weekly run reports and never
+      # gates, and the binding verdict is taken at audits (`--audit --look k`, three looks per
+      # claim-life; docs/weekly-coverage.md). What stays here is the alarm: it fails the run only
+      # when marginal coverage is more than ten points from the claim or a group scored nothing
+      # -- a broken pipeline, which drift and noise cannot reach. It runs after the publish is
+      # committed so the slate still lands, and it is not soft-failed: a red step is the alarm.
+      - name: Smoke alarm on the interval's coverage (reports, never gates)
         run: uv run python -m hub.models.coverage --gate
 
       # The CFBD warning above, escalated (#424). `fetched: false` is a warning by design -- an

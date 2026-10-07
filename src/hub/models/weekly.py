@@ -585,10 +585,22 @@ def _what_the_coverage_measurement_says() -> list[str]:
     # as the claim for an artifact written before the claim was carried.
     label = 0.80
     claim = got["gate_claim"]
+    # What population the figure is over (#309): the whole scored board since the gate stopped
+    # leaving out the clipped weeks, said with its clipped share and the rows it could not
+    # score; an artifact from before that is still the unclipped weeks, and says so.
+    if got.get("gate_subset") == "all":
+        clipped = got.get("gate_clipped_share")
+        left = got.get("n_uncalibrated")
+        weeks = (f"{got['gate_n']:,} scored player-weeks"
+                 + (f", {clipped:.1%} of them clipped" if clipped is not None else "")
+                 + (f", {left:,} of the board not scored for want of a calibration"
+                    if left else ""))
+    else:
+        weeks = f"{got['gate_n']:,} {got['gate_subset']} weeks"
     return [f"  The published interval, measured on a centre that cannot see the week it "
             f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against the claimed "
-            f"{claim:.0%} (labelled {label:.0%}) over {got['gate_n']:,} {got['gate_subset']} "
-            f"weeks (+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what "
+            f"{claim:.0%} (labelled {label:.0%}) over {weeks} (+/- {got['band']:.0%}), "
+            f"measured\n  {got['generated_at']}. That is what "
             f"the gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
 
 

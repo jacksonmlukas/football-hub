@@ -29,6 +29,12 @@ What this repo has spent against two metered third-party accounts:
   gate's *most recent comparable* previous entry by more than the interval could honestly
   narrow (#45's clustering argument predicts widening).
 
+  **Order is append order, not time order (#438).** When two lanes append in parallel, a merge
+  resolves the conflict by keeping main's rows and re-appending the other lane's, so an entry can
+  sit after one stamped later than it -- `interval_shape` of 2026-10-07T01:37 sits after
+  entries stamped the same day later. Read `timestamp`, never position, for when a run was made;
+  no row is rewritten or dropped to straighten it.
+
   **The key, since #385.** Two entries compare iff `(name, recipe, config_digest,
   data_digest)` are equal *and* both carry a known `recipe` -- `WidthEntry.comparable`, one
   line answering both the digest condition (2026-09-21) and #384 (a recipe carries the run's
@@ -131,7 +137,9 @@ What this repo has spent against two metered third-party accounts:
 - `interval_coverage.json` — what `hub.models.coverage --measure --survivor --write` last
   measured: whether the weekly player interval covers at nominal, and the survivor
   favourite's price. `hub.publish` carries it into `track_record.json` and the slate commits
-  it before gating on it (#273).
+  it before gating on it (#273). Since #309 the graded interval is the conformalised one over
+  the whole scored board; each group row carries its `position`, `n`, `n_cal`, deviation and
+  sigma, and the parametric interval it replaced is kept under `parametric`.
 
 **Committed on purpose.** Both lived under `data/raw/`, which `.gitignore` excludes as
 redistributed third-party data — correct for a cached payload and fatal for a counter. Every

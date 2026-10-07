@@ -275,9 +275,23 @@ function trackRecordBody(tr) {
 function intervalCoverageBody(ic) {
   if (!ic) return "";
   const weeks = (ic.gate_n ?? 0).toLocaleString();
+  // What population the figure is over (#309). The gate grades the whole scored board since it
+  // stopped leaving the clipped weeks out, and says how much of the board that is; an artifact
+  // from before that is the unclipped weeks and is worded as it always was.
+  const whole = ic.gate_subset === "all";
+  const pop = whole
+    ? weeks + " scored player-weeks" +
+      (ic.gate_clipped_share != null ? ", " + pct(ic.gate_clipped_share) + " of them clipped at zero" : "") +
+      (ic.n_uncalibrated ? ", " + Number(ic.n_uncalibrated).toLocaleString() + " more not scored for want of a calibration" : "")
+    : weeks + " unclipped player-weeks";
+  // The weekly figure is a report, never a gate (#310): the binding verdict is taken at audits,
+  // three looks per claim-life, and the page says which look the last one was, or that none was.
+  const auditNote = ic.audit
+    ? " Audit look " + ic.audit.look + " of " + ic.audit.looks + ": " + ic.audit.marginal + "."
+    : " The binding verdict is taken at audits; none has been taken yet.";
   const weekly = `<p class="legend">Weekly interval, labelled 80%: covers ${esc(pct(ic.gate_cov80))}
-    of ${esc(weeks)} unclipped player-weeks against the claimed ${esc(pct(ic.gate_claim))}
-    (±${esc(pct(ic.band))}) — ${esc(ic.verdict)}, measured ${esc(ic.generated_at)}.</p>`;
+    of ${esc(pop)} against the claimed ${esc(pct(ic.gate_claim))}
+    (±${esc(pct(ic.band))}) — this week's read ${esc(ic.verdict)}, measured ${esc(ic.generated_at)}.${esc(auditNote)}</p>`;
   const s = ic.survivor;
   if (!s) return weekly;
   const floor = s.min_bucket ?? 50;

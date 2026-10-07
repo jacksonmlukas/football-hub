@@ -160,6 +160,16 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_the_verdict_reads_the_pre_registered_band",
         "test_the_gate_refuses_when_the_interval_leaves_the_band",
     )),
+    # #310: the audit-time verdict and its per-position reading. The plants are a marginal
+    # outside 80 +/- 2 (fails), a position below N = 8,377 (no verdict) and one at it (rules).
+    "hub.models.coverage.audit_verdict": ("tests/unit/test_coverage_audit.py", (
+        "test_a_marginal_outside_eighty_plus_or_minus_two_fails_the_audit",
+        "test_a_position_below_the_minimum_gets_no_verdict_only_its_deviation_and_sigma",
+    )),
+    "hub.models.coverage.group_verdict": ("tests/unit/test_coverage_audit.py", (
+        "test_a_position_below_the_minimum_gets_no_verdict_only_its_deviation_and_sigma",
+        "test_a_position_at_the_minimum_does_return_a_verdict_at_root_two_binomial_se",
+    )),
     "hub.draft.adherence.verdict": ("tests/unit/test_adherence.py", (
         "test_twelve_of_sixteen_meets_it",
         "test_eleven_of_sixteen_misses_it",
