@@ -230,6 +230,24 @@ decision pre-registered before the number existed. A dry-run audit (`--audit --l
 The clipped (86.8%) and strictly-positive (77.4%, -4.8 sigma) split of #309 is printed with
 them as a diagnostic and decides nothing.
 
+**Pre-registered 2026-10-07, before any look was taken: what each of the three looks reads**
+(maintainer, in session). The measurement above reads a fixed 2021-2025 backtest
+(`coverage.SEASONS`; #423 / Audit V's V5), and the 2026 weeks never enter it. A calendar of looks
+over that data would read the same figure three times. So the three looks are split by what can
+still change:
+
+- **Look 1: the 2021-2025 backtest, taken now.** It is the claim's one reading of the data the
+  construction was built on, and it can never move, so it is spent once and recorded under
+  `audit_looks`.
+- **Looks 2 and 3: the 2026 out-of-sample row that #423 adds** (the current season's completed
+  weeks, labelled, not pooled into the backtest). Look 2 is taken after week 14 and look 3 after
+  week 18. The bar is the same marginal 80 +/- 2 at alpha 0.0167 a look (z = 2.394). Per position
+  the row stays NOT-RUNNABLE below N = 8,377, which every position will be in one season (QB
+  about 600 player-weeks by week 18). The MDE is printed and the row is not gated.
+- **#423's row carries these two looks and no other verdict.** A miss at look 2 or 3 is evidence
+  about 2026's shift before it is evidence about the construction (the paragraph below), and a
+  claim that outlives its three looks is a restatement trigger.
+
 **Still true, said once more.** A miss at an audit is evidence about the shift (injuries, role
 changes, a season unlike the last) before it is evidence about the construction; and a position
 on pooled calibration for part of its window is not testing the conditional claim for those weeks.
