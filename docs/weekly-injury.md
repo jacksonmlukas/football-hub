@@ -4,6 +4,13 @@
 one now, and unlike championship equity, VOR ordering, `edge` and the lineup optimiser, it
 **beat the simple rule it was gated against**.
 
+> **Restated 2026-10-07 — #360 ([method.md](method.md) rule 13; the two claims above stand as
+> published).** "The first model to clear its gate" and "beat the simple rule it was gated
+> against" described an argmin (`injury.verdict` took the lowest of four mean MAEs), not a Gate.
+> Run through the shared Gate, the comparison is **NOT-RUNNABLE** (3 seasons, MDE +0.300 against
+> a ceiling of +0.120; 1 resolved of 3, 2 abstained). Result and pre-registration in "The gate",
+> below: *Restated 2026-10-07 — #360*.
+
 ## This is not `INJURY_BETA`
 
 `hub.draft.durability.INJURY_BETA` prices OUT/DOUBTFUL/IR at −1.631 and applies it to
@@ -209,6 +216,54 @@ and no every-season half; this section replaces it with the Gate every other com
   seasons and prints "N resolved of K, A abstained".
 * **What this lane does not do.** A non-ADOPT verdict is restated here and not acted on: nothing
   about what the product wires changes; that action is the maintainer's.
+
+> **Restated 2026-10-07 — #360: `retention` against `out_zero` through the Gate, run once
+> against the pre-registration above ([method.md](method.md) rule 13; every figure on this page
+> above stands as published).** `--fit --seasons 2022,2023,2024,2025`, ledger `injury_retention`
+> (`baseline=strictly-prior,seasons=2022+2023+2024+2025`), `resolved: 1, abstained: 2`.
+>
+> | | published (argmin, 2026-08-25) | #361 restatement (t interval) | now (the Gate, player-clustered within season) |
+> |---|---|---|---|
+> | held-out player-weeks | 3,687 | 1,963 | **1,963** |
+> | retention vs `out_zero`, mean gain | +0.170 at 3.8 se | +0.0623, t = +1.06 on 2 df, p = 0.40 | **+0.0623**, t interval **[−0.1889, +0.3135]** (percentile [−0.0529, +0.1957]) |
+> | seasons (2023 / 2024 / 2025) | all three won, on the argmin's mean | +0.0441, −0.0529, +0.1957 | same gains; **2023 tie (se 0.1323), 2024 tie (se 0.1298), 2025 win (se 0.0846)** over 241 / 229 / 245 players; **1 resolved of 3, 2 abstained** |
+> | MDE at 80% power | not computed | not computed | **+0.3004** |
+> | declared ceiling (in-sample per-cell retention, minus `out_zero`) | none | none | **+0.1202** |
+> | verdict | ADOPT (argmin) | n/a | **NOT-RUNNABLE** |
+>
+> **Verdict, verbatim:** `NOT RUNNABLE: the smallest effect this gate could resolve at 80% power
+> is +0.300, against a ceiling of +0.120 -- the largest effect there was to find. Over 3
+> independent clusters this design cannot tell a real effect from a perfect one, so no verdict
+> below is reported.`
+>
+> **What that means, and does not.** It is the branch the pre-registration named as reachable
+> and plausible (it predicted an MDE of about 0.30 from #361's standard error, and the ceiling
+> is 0.12, so the prediction held). It is not a null and not a loss: the arm did not lose, the
+> question cannot be answered on three held-out seasons. Even a perfect per-cell retention,
+> fitted on the season it is scored on, gains only +0.120 over benching the ruled-out, and the
+> noise of three seasons is two and a half times that. Per rule 16 it is an exemption and it is
+> named as one: it decides neither ADOPT nor REMOVE. What the page can no longer say is that
+> `retention` cleared a gate: **the one adopted model in the repo never faced one, and facing
+> one today it cannot be resolved.** Three observations are worth keeping beside it. Retention
+> wins the largest season over `out_zero` (2025, +0.1957, a win at 2 se), and 2024 reverses (−0.0529) as #361 found; the four diagnostics
+> still read `baseline` 6.2024, `table` 5.1901, `out_zero` 4.3067, `retention` 4.2444 (mean
+> held-out MAE, 2023-25), so the additive table's failure against `out_zero` stands and is
+> not gated. A fourth held-out season (2026, once the injury reports exist for it) lowers the MDE
+> by about a third at the same noise (to roughly 0.20); it does not by itself reach 0.12.
+>
+> **What moves and what does not.** Nothing about what the product wires moves: `retention` is
+> not in the lineup path (`roster.availability` reads ESPN, #361's finding) and stays out of it.
+> The action sentences pre-registered for the three verdicts that *can* be reached (ADOPT, REMOVE,
+> SHOW) are not triggered; the call on the model surface (keep it as a measurement, or drop it)
+> is the maintainer's.
+>
+> **The type comparison, same run (ledger `injury_type`, `resolved: 1, abstained: 2`).** Its
+> within-season unit is now the player (`gsis_id`), where #343 declared a no-op (ADR-0019,
+> amendment of 2026-10-07). The pooled figures do not move: **+0.0399, t interval
+> [−0.0531, +0.1328], MDE +0.1111 against the ceiling +0.3852**. The seasons' reading does:
+> *prior: "won 2, lost 1" (3 resolved, 0 abstained, on the sign alone)* **now: 2023 −0.0041
+> tie (se 0.0250), 2024 +0.0867 win (se 0.0222), 2025 +0.0370 tie (se 0.0264), won 1, tied 2,
+> lost 0: 1 resolved of 3, 2 abstained.** **SHOW — KEEP `retention`, unchanged.**
 
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 

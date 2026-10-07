@@ -896,6 +896,84 @@
       "timestamp": "2026-10-07T01:37:39+00:00",
       "verdict": "NOT-RUNNABLE",
       "width": 0.012719790043098096
+    },
+    {
+      "abstained": 2,
+      "clusters": 3.0,
+      "code_digest": "3390259a",
+      "config_digest": "c4606f91",
+      "data_digest": "3028f320",
+      "gate": "injury_retention",
+      "hi": 0.19572629223704627,
+      "inputs_digest": "a2dabc67ba7b3fe8",
+      "lo": -0.05292925665748482,
+      "recipe": "baseline=strictly-prior,seasons=2022+2023+2024+2025",
+      "resolved": 1,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": 0.044117879888339435,
+          "m": 241,
+          "se": 0.1322561435822826,
+          "season": 2023
+        },
+        {
+          "disposition": "tie",
+          "gain": -0.05292925665748489,
+          "m": 229,
+          "se": 0.12975453853352675,
+          "season": 2024
+        },
+        {
+          "disposition": "win",
+          "gain": 0.1957262922370463,
+          "m": 245,
+          "se": 0.08456568875178543,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-07T19:49:05+00:00",
+      "verdict": "NOT-RUNNABLE",
+      "width": 0.2486555488945311
+    },
+    {
+      "abstained": 2,
+      "clusters": 3.0,
+      "code_digest": "3390259a",
+      "config_digest": "c4606f91",
+      "data_digest": "3028f320",
+      "gate": "injury_type",
+      "hi": 0.08665836860037972,
+      "inputs_digest": "a2dabc67ba7b3fe8",
+      "lo": -0.00410858742630411,
+      "recipe": "baseline=strictly-prior,seasons=2022+2023+2024+2025",
+      "resolved": 1,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": -0.00410858742630411,
+          "m": 241,
+          "se": 0.025005186623334473,
+          "season": 2023
+        },
+        {
+          "disposition": "win",
+          "gain": 0.08665836860037975,
+          "m": 229,
+          "se": 0.02222340224839669,
+          "season": 2024
+        },
+        {
+          "disposition": "tie",
+          "gain": 0.03704941970172693,
+          "m": 245,
+          "se": 0.026376602019355103,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-07T19:49:05+00:00",
+      "verdict": "SHOW",
+      "width": 0.09076695602668383
     }
   ]
 }
