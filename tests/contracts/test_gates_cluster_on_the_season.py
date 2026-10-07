@@ -137,7 +137,7 @@ def test_season_cluster_is_declared_once():
 # from, and until #311 it computed its standard error over the row with no cluster argument at
 # all -- the one function in the repo making the claim "each row is independent", which is the
 # claim this file exists to keep any harness from making. #343 routed `spread` and `injury`
-# through `Harness.run` (which reads `SEASON_CLUSTER` itself), so `hub.models.weekly`'s
+# through `Harness.run` (which reads `SEASON_CLUSTER` itself), so `hub.exhibits.weekly_projection`'s
 # diagnostic contrast is the one call site left today; this holds every call site there is
 # or will be, not the one that happens to exist.
 

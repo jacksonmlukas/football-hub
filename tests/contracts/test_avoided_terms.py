@@ -238,6 +238,9 @@ CHECKED: dict[str, Rule] = {
     "the book": Rule("phrase", "sportsbook prices are the Betting market; no book is read "
                                "anywhere in this repo"),
     "vegas": Rule("phrase", "a proper noun for the Betting market and nothing else"),
+    "shipped quantiles": Rule("phrase", "the Shipped interval is the conformalised one the "
+                                        "page publishes; the projection's own is its "
+                                        "`parametric_quantiles` (#430 renamed it)"),
     "hunch": Rule("phrase", "the entry's point is that a Provisional rule is pre-registered "
                             "and logged; nothing here is a hunch on purpose"),
     # The Quarterback adjustment's two neighbours (#218). Both are proper names for other
@@ -263,8 +266,6 @@ CHECKED: dict[str, Rule] = {
 }
 
 UNCHECKED: dict[str, str] = {
-    "shipped quantiles": "`hub.models.weekly.shipped_quantiles` carries the name until #430 "
-                         "renames it when the Weekly projection becomes an exhibit",
     "tie": "a tied game (`DROP_TIES`, `n_tied`) and the Gate's `ties` counter are real and "
            "correctly named; the entry forbids the word only for a season's disposition",
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "
@@ -553,7 +554,7 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/draft/optimize.py", "the market"): (7, _BULK),
     ("src/hub/draft/report.py", "the market"): (5, _BULK),
     ("src/hub/models/volume.py", "the market"): (5, _BULK),
-    ("src/hub/models/weekly.py", "the market"): (5, _BETTING),
+    ("src/hub/exhibits/weekly_projection.py", "the market"): (5, _BETTING),
     ("src/hub/draft/durability.py", "the market"): (4, _BULK),
     ("src/hub/draft/calibrate.py", "the market"): (3, _BULK),
     ("src/hub/models/predict.py", "the market"): (3, _BULK),

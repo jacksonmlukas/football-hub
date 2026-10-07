@@ -55,12 +55,14 @@ SEASON = 2026
 STATS_COLS = PLAYER_STATS_COLS
 DESIGN = "docs/weekly-forward.md"
 
-# The arm the design pinned: the blob of `hub/models/weekly.py` at the commit that
+# The arm the design pinned: the blob of `hub/exhibits/weekly_projection.py` at the commit that
 # pre-registered it (`docs/weekly-forward.md`, *The design*). A run whose arm is any other blob
 # refuses to read a verdict -- a change to what the projection computes is a new arm and needs a
 # new pre-registration, and a pure move that edits the file gets the same refusal until the
-# document is amended, dated, with the new blob, before any admitted outcome is read.
-PINNED_ARM_BLOB = "f6de17b2ca26a6dbaa2e606f567f8227456bc015"
+# document is amended, dated, with the new blob, before any admitted outcome is read. #430 was
+# that move: `hub/models/weekly.py` at f6de17b2 became `hub/exhibits/weekly_projection.py`
+# at the blob below, amended in `docs/weekly-forward.md`, *The design*.
+PINNED_ARM_BLOB = "96114791e9ba5492d92e996c1ad5f302fca5169a"
 
 # The last week the measurement reads: the fantasy regular season's, `GATE_WEEKS`' own (15-17
 # are reported apart by the gate and are not read here).

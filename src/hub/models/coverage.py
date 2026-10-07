@@ -921,11 +921,11 @@ def shape_scores(g: pl.DataFrame) -> pl.DataFrame:
     """CRPS of the deployed distribution and of the same function without its skew, per row.
 
     Arm B is `predict.skewed(mu, sd, skew, z)` on the graded moments at the CRPS quantile
-    grid, clip included, which is the path `hub.models.weekly.shipped_quantiles` takes. Arm A
-    is the same call with the skew zeroed -- which `skewed` floors at `MIN_SKEW`, so the arm
-    is exactly what would be served with `WEEKLY_SKEW` removed, floor and all, and not a
-    normal written out beside it. `diff` is deployed minus skew-free: positive when the
-    skew-free arm scores lower, which is the sign `experiment.gate` adopts on.
+    grid, clip included, which is the path `hub.exhibits.weekly_projection.parametric_quantiles`
+    takes. Arm A is the same call with the skew zeroed -- which `skewed` floors at `MIN_SKEW`, so
+    the arm is exactly what would be served with `WEEKLY_SKEW` removed, floor and all, and not a
+    normal written out beside it. `diff` is deployed minus skew-free: positive when the skew-free
+    arm scores lower, which is the sign `experiment.gate` adopts on.
 
     `ceiling_diff` is deployed minus the oracle -- the best per-position skew on these rows,
     `CEILING_ARM` -- and `best_skew` says which skew that was, so a reader can see how far

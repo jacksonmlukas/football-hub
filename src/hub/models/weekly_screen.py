@@ -59,7 +59,7 @@ snap-share trend is +0.014 at permutation p 0.24 at the published anchor and cle
 Usage multiplier. It stays in `FEATURES`, screened and reported at every anchor, because this
 module is the record of what was tried and why it lost (ADR-0007); `UNLICENSED` names it, and
 every line it prints on says so, so a `clears` in the verdict column at one anchor cannot be
-read as the licence coming back. `hub.models.weekly` applies no multiplier.
+read as the licence coming back. `hub.exhibits.weekly_projection` applies no multiplier.
 
 THE CONFOUND, which the first run found and which no available data removes: `weekly-op` is
 FantasyPros' Monday ranking, scraped a median of six days before kickoff. Any feature carrying

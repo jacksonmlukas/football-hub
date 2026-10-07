@@ -1,6 +1,8 @@
 # The Weekly projection
 
-**Built 2026-08-27.** `hub.models.weekly` is the week-specific layer: everything else in this
+**Built 2026-08-27.** `hub.models.weekly` *(moved 2026-10-07, #430, to
+`hub.exhibits.weekly_projection`: an Exhibit since the weekly gate's REMOVE, ADR-0016; the
+arithmetic is unchanged)* is the week-specific layer: everything else in this
 repo projects one season-long per-game mean and applies it flat to all seventeen weeks.
 
 Its shape was fixed by measurement rather than chosen. See
@@ -131,8 +133,8 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > the construction `summarise` uses for every gate that goes through `run_gate`. So the `t`
 > below is a *t on 3 degrees of freedom*, `mean` is the mean of the four season gains
 > (equal-season weighted), and the every-season half counts wins, ties and losses under #335's
-> within-season rule (`within` = week). Re-run today with `uv run python -m hub.models.weekly
-> --fit`, the same panel as the table (11,667 held-out player-weeks, 2022–25). The week and
+> within-season rule (`within` = week). Re-run today with `uv run python -m
+> hub.exhibits.weekly_projection --fit`, the same panel as the table (11,667 held-out player-weeks, 2022–25). The week and
 > both-together arms were removed in #248, so they were rebuilt from the module as it stood the
 > commit before, on today's panel; the rebuild arm is the same arm in both modules (checked: it
 > reproduces to the digit).
@@ -261,5 +263,5 @@ quietly fitted here later.
 ## Reproduce
 
 ```bash
-uv run python -m hub.models.weekly --fit
+uv run python -m hub.exhibits.weekly_projection --fit
 ```
