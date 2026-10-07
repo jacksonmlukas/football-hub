@@ -34,7 +34,7 @@ on:
   # `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
   #
   # Six polls a week is twelve odds credits (two markets x one region a poll), about 52 a
-  # month against 500 -- `hub.fetch.odds` refuses below a floor of 50 before spending one, so
+  # month against 500 -- `hub.fetch.odds` refuses below a floor of 75 before spending one, so
   # an over-eager cadence cannot drain the month. The maintainer approved the spend.
   schedule:
     - cron: "0 11 * * 3"

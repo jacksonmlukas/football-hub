@@ -115,8 +115,12 @@ REGIONS = (REGION,)
 OVER = "Over"
 
 # Refuse the next pull below this. Sized to leave room for a full week of Sunday-morning
-# snapshots after the balance is noticed, rather than stopping dead at zero.
-CREDIT_FLOOR = 50
+# snapshots after the balance is noticed, rather than stopping dead at zero -- and, since
+# 2026-10-06, to reserve the LLM-forecaster study's moneyline pulls on the same key
+# (`docs/prereg/llm-forecasters.md`): its forecast and closing-line jobs need about 61
+# credits in a worst-case month and keep their own floor near 10, so the hub's polls must
+# stop first. 75 is that reserve plus that floor, rounded up. The maintainer approved it.
+CREDIT_FLOOR = 75
 
 
 @dataclass(frozen=True)
@@ -148,7 +152,7 @@ class Poll:
 #
 # Cost is `len(MARKETS) * len(REGIONS)` a poll -- two credits today -- so six polls is 12 a
 # week, and a year runs 52.18 weeks to twelve months: 12 x 52.18 / 12 is about 52 credits a
-# month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 50
+# month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 75
 # regardless of how it got there. The maintainer approved the spend. `tests/contracts/
 # test_odds_schedule.py` holds `slate.yml`'s odds-polling crons to exactly this tuple, the
 # way `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.

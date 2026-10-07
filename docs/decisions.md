@@ -1038,6 +1038,15 @@ pre-kickoff *forecast* as the free replacement. Not built tonight -- it is a new
 (a weather API, not another nflverse table) and out of this ticket's scope, which was the
 four pieces already on disk under `hub.fetch.nflverse` and `hub.store`.
 
+**Odds credit floor raised 50 -> 75 (2026-10-06, maintainer).** The LLM-forecaster study
+(`docs/prereg/llm-forecasters.md`) pulls moneylines (`h2h`, one region, 1 credit a call) on the
+same Odds API key: one snapshot per forecast-run day and one per distinct kickoff time for the
+closing line, about 10-14 credits a week, 45-61 a month. The maintainer's rule is that the
+hub's polls hit their floor before those jobs do, so `CREDIT_FLOOR` is the study's worst-case
+month (61) plus its own floor (~10), rounded up. Combined spend is about 100-115 of 500 a month,
+so at normal cadence neither floor binds; the ordering matters only if something burns credits.
+The two entries above that cite a floor of 50 are left as written: they were true on their date.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
