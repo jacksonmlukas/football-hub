@@ -213,3 +213,16 @@ def test_the_clip_split_is_a_diagnostic_beside_the_verdict_and_not_a_claim():
     assert coverage.audit_verdict(got["by_position"] + skewed_split) == base, (
         "a clip-conditional miss must not move the adopted verdict")
     assert got["diagnostics"] == ["floor_split", "by_prior"]
+
+
+def test_a_board_with_no_scored_week_has_no_season_coverage():
+    assert coverage._season_coverage(pl.DataFrame({"scored": [False], "season": [2024]})) is None
+
+
+def test_the_published_summary_carries_the_audit_block_the_page_reads(tmp_path):
+    import json
+    p = tmp_path / "ic.json"
+    p.write_text(json.dumps({"verdict": "COVERS", "gate_cov80": 0.80,
+                             "audit": {"look": 1, "looks": 3, "marginal": "COVERS"}}))
+    got = coverage.published_summary(p)
+    assert got is not None and got["audit"]["look"] == 1
