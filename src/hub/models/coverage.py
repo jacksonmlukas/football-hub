@@ -909,7 +909,12 @@ SHAPE_ACTIONS = Actions(
 # unlike `margin`'s two verdicts, this is one gate run a caller publishes.
 SHAPE_HARNESS = Harness(name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
                         within=WITHIN, ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
-                        unit="CRPS points per player-week", places=4)
+                        unit="CRPS points per player-week", places=4,
+                        arm_modules=("hub.models.base", "hub.models.components",
+                                     "hub.models.conformal", "hub.models.coverage",
+                                     "hub.models.margin", "hub.models.market",
+                                     "hub.models.predict", "hub.models.scoring_rules",
+                                     "hub.models.volume"))
 
 
 def shape_scores(g: pl.DataFrame) -> pl.DataFrame:

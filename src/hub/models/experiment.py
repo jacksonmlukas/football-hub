@@ -56,7 +56,12 @@ from hub.config import (
     resolved_config,
 )
 from hub.declare import chosen, not_an_input
-from hub.ledger import WIDTH_STATE, Ledger, WidthEntry  # noqa: F401 -- re-exported; see below
+from hub.ledger import (  # noqa: F401 -- re-exported; see below
+    WIDTH_STATE,
+    Ledger,
+    WidthEntry,
+    code_digest,
+)
 from hub.names import player_key
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
@@ -1462,7 +1467,8 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
              unit: str = "points per team game", places: int = 2, show_n: bool = True,
              void: str | None = None, ceiling: Ceiling | None = None, seed: int = 0,
              bootstrap: int = BOOTSTRAP, boards: Mapping[int, ReportedFrame] | None = None,
-             ledger: Ledger | None = None, recipe: str | None = None) -> GateRun:
+             ledger: Ledger | None = None, recipe: str | None = None,
+             code_modules: Sequence[str] = ()) -> GateRun:
     """One gate run: summarise, break out by season, take the verdict, render, stamp.
 
     **`cluster` has no default, and that is the most important line of the signature.**
@@ -1487,6 +1493,15 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     against its first) or a file-backed one with `write=False`. `recipe` is #384's arm string,
     folded into the ledger's key; `None`, its default and today's only value anywhere in this
     repo, compares the way `review_width` always did -- on name and digests alone.
+
+    **`code_modules` (#435)** names the modules whose source the run's arms execute, and
+    `hub.ledger.code_digest` hashes them into the ledger key: `config_digest` hashes config and
+    fitted constants, not code, so a change to an arm with both unchanged read as comparable to
+    the runs before it (#361). `Harness.run` passes its declared `arm_modules`; empty, the
+    default, is an *undeclared* run (#439): the entry is of unknown code, written with no
+    `code_digest` key, named and never compared -- a direct caller cannot reopen the hole by
+    saying nothing. The gate rule in this module is deliberately not among them: it is shared
+    by every gate, so naming it would end every gate's history on any edit here.
 
     `void` is the caller's precondition, already phrased -- the weekly gate voids above a
     join-failure share, and since #46 so does the draft gate. `gate` honours it ahead of every
@@ -1530,7 +1545,9 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
                        hi=float(summary.get("hi", float("nan"))),
                        verdict=verdict[0], seasons=_season_records(seasons),
                        resolved=core.resolved, abstained=core.abstained,
-                       inputs=_inputs_read())
+                       inputs=_inputs_read(),
+                       code_digest=code_digest(code_modules) if code_modules else None,
+                       code_known=bool(code_modules))
     comparison = writer.record(entry)
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
@@ -1598,6 +1615,12 @@ class Harness(NamedTuple):
     # in-memory one with `HARNESS._replace(ledger=Ledger(path=None))` -- the declaration,
     # not a monkeypatch of the function it feeds.
     ledger: Ledger | None = None
+    # #435: the modules whose source this gate's arms run, dotted names, hashed into the ledger
+    # key by `hub.ledger.code_digest` so a change to an arm cannot be compared against the runs
+    # before it. Declared here, beside the arms, and not in a list elsewhere; the contract
+    # `test_every_gate_declares_the_code_it_runs.py` holds every harness to naming its own
+    # module and to every name resolving to a source file.
+    arm_modules: tuple[str, ...] = ()
 
     def ceiling(self, frame: pl.DataFrame | None) -> Ceiling | None:
         """This harness's `Ceiling` off `frame`'s own `ceiling_column` -- the one collapse of
@@ -1638,7 +1661,7 @@ class Harness(NamedTuple):
             ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
             seed=seed, bootstrap=self.bootstrap if bootstrap is None else bootstrap,
             boards=boards, ledger=self.ledger if ledger is None else ledger,
-            recipe=recipe)
+            recipe=recipe, code_modules=self.arm_modules)
 
     def decide(self, paired: pl.DataFrame, *, ceiling_frame: pl.DataFrame | None = None,
               void: str | None = None, seed: int = 0,
