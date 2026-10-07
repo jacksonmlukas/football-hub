@@ -474,7 +474,22 @@ def test_the_published_run_prints_stage_2_and_the_stamps_and_writes_one_entry():
     assert "MDE at 80% power" in text and "ceiling (" in text
     assert "data:" in text and "board:" in text and "commit:" in text
     assert [(e.name, e.recipe) for e in ledger._entries] == [
-        ("injury_type", "seasons=2021+2022+2023+2024+2025")]
+        ("injury_type", "baseline=strictly-prior,seasons=2021+2022+2023+2024+2025")]
+
+
+def test_a_width_on_the_lookahead_baseline_does_not_compare_with_one_on_the_strictly_prior():
+    """#436. The two baselines share config and data digests (the digests do not see code), so
+    the recipe is the only thing separating their ledger entries. Planted: the pre-#361 entry,
+    spelled as it was written (`seasons=...` alone), must NOT compare with a run now."""
+    import dataclasses
+    ledger = Ledger(path=None)
+    injury.type_run(_errs(_CLEAN, noise=0.4), publish=True, seasons=SEASONS, ledger=ledger)
+    (new,) = ledger._entries
+    old = dataclasses.replace(new, recipe="seasons=2021+2022+2023+2024+2025")
+    assert (old.config_digest, old.data_digest) == (new.config_digest, new.data_digest)
+    assert not new.comparable(old)
+    assert new.comparable(new)
+    assert (new.recipe or "").startswith("baseline=strictly-prior")
 
 
 def test_the_oracle_is_fitted_in_sample_on_the_held_out_season_itself():
