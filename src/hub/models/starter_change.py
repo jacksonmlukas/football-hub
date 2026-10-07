@@ -143,7 +143,9 @@ WITHIN: tuple[str, ...] = SEASON_CLUSTER
 # `Harness.ceiling`'s default assumes.
 HARNESS = Harness(name="quarterback_gate", arm_a="the frozen line", arm_b="quarterback-adjusted",
                   within=WITHIN, ceiling_arm=CEILING_ARM, actions=ACTIONS,
-                  unit="log-loss per event game", places=4, ceiling_column="ceiling")
+                  unit="log-loss per event game", places=4, ceiling_column="ceiling",
+                  arm_modules=("hub.models.base", "hub.models.conformal", "hub.models.market",
+                               "hub.models.quarterback", "hub.models.starter_change"))
 
 PASSER = "passer_player_id"
 
