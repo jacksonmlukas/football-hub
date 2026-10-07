@@ -12,11 +12,17 @@ from typing import Protocol
 import numpy as np
 import polars as pl
 
+from hub.exhibits.weekly_projection import (
+    Shrink,
+    fit_shrink,
+    positional_sd,
+    project,
+    standard_error,
+)
 from hub.fetch import nflverse
 from hub.league import REG_SEASON_WEEKS
 from hub.models.experiment import realised_ppg, require_corrections
 from hub.models.panel import PanelSpec, build_panel, weekly_consensus
-from hub.models.weekly import Shrink, fit_shrink, positional_sd, project, standard_error
 from hub.names import player_key
 from hub.season.weekly_gate import UNRANKED, GateInputs
 
@@ -50,6 +56,7 @@ class SeasonDropped(RuntimeError):
 # one has to be a top-level import regardless of the cycle question, because `project` is now
 # a default *argument value*, and a default is evaluated when the module loads, not when the
 # function runs -- an in-body import cannot supply one.
+# *(Now `hub.exhibits.weekly_projection`, #430.)*
 
 
 def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -87,8 +94,8 @@ class ProjectionArm(Protocol):
 
     Structural rather than a subclass relationship -- the same reason
     `hub.models.experiment.CorrectionReport` is a `Protocol` -- so a test's second arm has to
-    match only this call shape, not inherit from anything. `hub.models.weekly.project` already
-    has exactly this signature and is the default without `assemble_universe` doing anything
+    match only this call shape, not inherit from anything. `hub.exhibits.weekly_projection.project`
+    already has exactly this signature and is the default without `assemble_universe` doing anything
     to adapt it.
 
     The return only has to carry `now`'s columns plus `mu`, which is what `project` returns
@@ -200,6 +207,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     outside and hoping the patch landed on the module this file actually reads from -- which
     it once did not, and scored the shipped arm twice with zero flips to show for it. A second
     adapter now just is a second value for this parameter.
+    *(Now `hub.exhibits.weekly_projection`, #430.)*
 
     `ecr` is the incumbent's weekly consensus, accepted rather than read (#432): the columns
     `weekly_consensus` returns (`season`, `week`, `key`, `ecr`). `None` is every caller before

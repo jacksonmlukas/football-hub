@@ -146,7 +146,7 @@ def test_a_different_arm_refuses_the_reading_and_loads_nothing():
         r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(), assemble=_boom,
                   arm_blob=blob)
         assert r.status == "REFUSED" and "new pre-registration" in r.lines[0]
-    assert wf.PINNED_ARM_BLOB == "f6de17b2ca26a6dbaa2e606f567f8227456bc015"
+    assert wf.PINNED_ARM_BLOB == "96114791e9ba5492d92e996c1ad5f302fca5169a"
     assert wf.PINNED_ARM_BLOB in (Path(__file__).resolve().parents[2] / "docs"
                                   / "weekly-forward.md").read_text()
     ok = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
@@ -354,3 +354,22 @@ def test_the_captures_become_the_consensus_frame_the_gate_reads():
     assert sorted(frame["week"].unique().to_list()) == [5, 6]
     assert frame.filter(pl.col("week") == 5).height == 2
     assert frame["key"].str.contains("mahomes").any()                  # the repo's own player key
+
+
+def test_the_pinned_arm_is_the_blob_of_the_file_the_arm_is_defined_in():
+    """#430: the pin was stale for a day before anyone noticed (#309 edited a diagnostic's
+    prose in the pinned file), and the first anyone would have heard of it was a REFUSED verdict
+    in November. `arm_blob()` finds the file through `weekly_gate_data.project`, so it follows
+    a move; this holds the constant to what it finds, so a later edit to the projection's file
+    -- a comment included -- fails here, with the instruction, and not at the reading."""
+    blob = wf.arm_blob()
+    if blob is None:
+        pytest.skip("no git here to hash the file with")
+    from hub.exhibits import weekly_projection
+    assert Path(weekly_projection.__file__).name == "weekly_projection.py"
+    assert blob == wf.PINNED_ARM_BLOB, (
+        f"hub/exhibits/weekly_projection.py is blob {blob}, not the pinned "
+        f"{wf.PINNED_ARM_BLOB}. If the edit changed what the projection computes it is a new arm "
+        f"and needs a new pre-registration; if it did not, prove that with "
+        f"tests/unit/test_weekly_projection_move.py, re-pin, and amend docs/weekly-forward.md, "
+        f"dated, before any 2026 outcome is read.")

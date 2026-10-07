@@ -9,7 +9,7 @@ G7 of the research artifact of 2026-09-07.
 
 **The tree is already clean, and by accident.** `own_spread` and `implied_total` appear in
 `models/panel.py`, which builds them, and in `models/weekly_screen.py`, which screened them;
-`models/weekly.py` touches neither. The reason on the record was not circularity: the joint
+`exhibits/weekly_projection.py` touches neither. The reason on the record was not circularity: the joint
 screen killed both as one finding wearing two hats at r = 0.83, since
 `implied_total = total_line/2 + own_spread/2`. A correct outcome reached from unrelated
 reasoning is exactly what a guard test is for -- the reasoning that produced it does not
@@ -17,7 +17,7 @@ constrain the next edit.
 
 **Why a census and not a `# GUARD` block.** `tests/contracts/test_guards_are_load_bearing.py`
 proves a guard by deleting it and watching the suite go red, which needs a *statement* to
-delete. What is being asserted here is an **absence**: there is no refusal in `weekly.py` to
+delete. What is being asserted here is an **absence**: there is no refusal in `weekly_projection.py` to
 excise, and excising nothing proves nothing. So this is the other shape this repo uses --
 `test_the_split_is_written_once` and
 `tests/contracts/test_stage_columns_are_asked_of_the_report.py` -- an AST census over named
@@ -37,7 +37,7 @@ Two things stop that here:
   anyone remembering this file exists.
 
 **What is deliberately outside the constraint.** The **Consensus** prior is not the betting
-market and does not contaminate a team total. `hub.models.weekly` regresses a thin sample
+market and does not contaminate a team total. `hub.exhibits.weekly_projection` regresses a thin sample
 toward what a player's *preseason* FantasyPros ECR implies (`fit_consensus_prior`,
 `consensus_target`), and `fit_shrink(target="market")` names that variant with the word this
 repo reserves for three different things -- see the *Market signals* section of `CONTEXT.md`,
@@ -99,7 +99,7 @@ MARKET_MODULES: tuple[str, ...] = ("hub.models.market", "hub.fetch.odds")
 # out of, and a market term entering the distribution or the rebuild launders it exactly as
 # one entering the mean would.
 MARKET_FREE: dict[str, str] = {
-    "models/weekly.py":
+    "exhibits/weekly_projection.py":
         "the Weekly projection itself -- the mean a team aggregate would sum. #212's "
         "subject",
     "models/components.py":
@@ -307,7 +307,7 @@ def test_the_weekly_model_references_no_betting_market_column(module, why):
 def test_the_consensus_prior_is_outside_the_constraint():
     """#212's fourth criterion, as a statement rather than as an omission.
 
-    `hub.models.weekly` regresses a thin sample toward what a player's preseason FantasyPros
+    `hub.exhibits.weekly_projection` regresses a thin sample toward what a player's preseason FantasyPros
     rank implies. That is the **Consensus** -- a fantasy market -- and it says nothing about
     how many points a defence will concede, so it cannot launder a team total. If the scan
     ever started reading it, this test says so in the same run rather than the constraint
@@ -318,7 +318,7 @@ def test_the_consensus_prior_is_outside_the_constraint():
         f"{sorted(consensus & market_names())} is being scanned for as a betting-market "
         f"column. It is the Consensus, the model regresses toward it on purpose, and this "
         f"constraint is not about it.")
-    weekly = (SRC / "models" / "weekly.py").read_text()
+    weekly = (SRC / "exhibits" / "weekly_projection.py").read_text()
     assert "preseason_ecr" in _strings(ast.parse(weekly)), (
         "the Weekly projection no longer reads `preseason_ecr`, so the test above is "
         "carving out something the model does not do -- and the constraint's own scan has "
@@ -331,7 +331,7 @@ def test_the_scan_sees_a_market_read_written_any_of_the_ordinary_ways():
     `tests/contracts/test_guards_are_load_bearing.py` was written after eight of.
 
     Four shapes that must be caught and three that must not: the two `market`-named things
-    `weekly.py` genuinely contains, and prose naming the column.
+    `weekly_projection.py` genuinely contains, and prose naming the column.
     """
     src = '''
 """A docstring naming implied_total and close_spread, which is not a read of either."""

@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from hub.models import weekly as W
+from hub.exhibits import weekly_projection as W
 
 
 def _rows(n=200, week=10, season=2024, seed=0, **over):
@@ -450,7 +450,7 @@ def test_the_published_spread_earns_its_place_in_the_score():
 
 
 def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
-    """`shipped_quantiles` must grade what `hub.models.predict` serves, not a second
+    """`parametric_quantiles` must grade what `hub.models.predict` serves, not a second
     implementation of `sd = K*sqrt(mu)` that can drift away from it.
 
     Proved by making the published spread zero at its source: with every `WEEKLY_K` at zero
@@ -460,7 +460,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     """
     mu = np.array([12.0, 3.0, 21.5])
     actual = np.array([4.0, 9.0, 21.5])
-    got = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+    got = W.crps_from_quantiles(W.parametric_quantiles(mu, ["WR", "RB", "QB"]), actual)
     assert (got > 0.0).all(), "a week scored at zero is a forecast with no spread at all"
     # The third row is the outcome landing exactly on the projection, where a point mass
     # scores zero and any honest distribution scores more. Per row the two are not ordered;
@@ -471,7 +471,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(W.predict, "WEEKLY_K", dict.fromkeys(W.predict.WEEKLY_K, 0.0))
         mp.setattr(W.predict, "WEEKLY_K_POOLED", 0.0)
-        flat_dist = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+        flat_dist = W.crps_from_quantiles(W.parametric_quantiles(mu, ["WR", "RB", "QB"]), actual)
     assert flat_dist == pytest.approx(np.abs(mu - actual), abs=1e-9)
 
     # And the third moment, which the spread law says nothing about: weekly scoring is
@@ -479,7 +479,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     # by touchdown spikes -- so the quantiles being graded must sit below their own centre.
     # A normal fitted to the same two moments would put the median exactly on it, and every
     # assertion above would still hold.
-    wr = W.shipped_quantiles(np.array([12.0]), ["WR"])[0]
+    wr = W.parametric_quantiles(np.array([12.0]), ["WR"])[0]
     assert float(np.median(wr)) < 12.0 - 0.5, (
         "the graded distribution is symmetric about its mean, so it is not the one "
         "`predict.skewed` serves")

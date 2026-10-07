@@ -1,6 +1,6 @@
 """Does a lineup set off the **Weekly projection** beat one set off weekly consensus rank?
 
-This is **the** gate for `hub.models.weekly`.
+This is **the** gate for `hub.exhibits.weekly_projection`.
 [ADR-0015](../../../docs/adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)
 records why it has to be a decision and not an accuracy test: six seasons of historical
 weekly FantasyPros consensus ship `ecr` and no `r2p_pts`, so the only incumbent worth beating
@@ -16,7 +16,7 @@ the season, because weekly historical projections do not exist."* They do now.
 THE ARMS, and they see the same information.
 
     consensus  fill each slot with your highest-ranked rostered player by `weekly-op` ECR
-    weekly     fill each slot by `hub.models.weekly`'s projection for that week
+    weekly     fill each slot by `hub.exhibits.weekly_projection`'s projection for that week
 
 The search is fixed at *start your highest* in both, per ADR-0012. Both are restricted to the
 same roster and score against the same realised grid.
@@ -445,11 +445,12 @@ HARNESS = Harness(name="weekly", arm_a="weekly", arm_b="consensus", within=WITHI
                       "hub.draft.cohort", "hub.draft.durability", "hub.draft.optimize",
                       "hub.draft.picks", "hub.draft.playoff_sos", "hub.draft.prior_signal",
                       "hub.draft.regression", "hub.draft.report", "hub.draft.season",
-                      "hub.draft.state", "hub.holdout", "hub.league", "hub.models.base",
+                      "hub.draft.state", "hub.exhibits.weekly_projection", "hub.holdout",
+                      "hub.league", "hub.models.base",
                       "hub.models.components", "hub.models.conformal", "hub.models.coverage",
                       "hub.models.margin", "hub.models.market", "hub.models.panel",
                       "hub.models.predict", "hub.models.scoring_rules", "hub.models.volume",
-                      "hub.models.weekly", "hub.names", "hub.season.weekly_gate",
+                      "hub.names", "hub.season.weekly_gate",
                       "hub.season.weekly_gate_data"))
 
 

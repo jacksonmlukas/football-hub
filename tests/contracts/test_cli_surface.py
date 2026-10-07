@@ -55,7 +55,8 @@ from hub.fetch import nflverse
 CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
-    "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
+    "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage",
+    "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
     "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.audit_ready",
     "hub.instrument_check",
@@ -63,7 +64,7 @@ CLI_MODULES = (
     "hub.models.coverage",
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
     "hub.models.ratings", "hub.models.spread", "hub.models.starter_change",
-    "hub.models.component_error", "hub.models.props", "hub.models.weekly",
+    "hub.models.component_error", "hub.models.props",
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
     "hub.season.weekly_forward", "hub.season.survivor", "hub.season.pool", "hub.season.journal", "hub.store",
@@ -277,7 +278,7 @@ ABSENT_INPUT = [
     # developer's `data/raw/` and `--store` the archive read off the developer's store, so a
     # fresh clone meets no cached file and says so.
     ("hub.models.starter_change", ["--gate", "--cache", "{tmp}/nfeloqb", "--store", "{tmp}"]),
-    ("hub.models.weekly", ["--fit"]),
+    ("hub.exhibits.weekly_projection", ["--fit"]),
     ("hub.models.weekly_screen", ["--run"]),
     ("hub.publish", ["--live", "--out", "{tmp}"]),
     ("hub.season.lineup", ["--opp-mu", "110", "--roster", "{tmp}/nope.parquet"]),

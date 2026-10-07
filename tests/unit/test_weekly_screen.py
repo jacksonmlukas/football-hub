@@ -426,7 +426,7 @@ def test_wind_left_the_family_rather_than_being_quietly_retained():
     is the other half, and the half a ticket criterion had to ask for: **the count of features
     tried moves with it.** A screen reporting eight verdicts while nine features were run is a
     multiple-comparison family that understates its own size, and the number is quoted in
-    `hub.models.weekly` and on two pages.
+    `hub.exhibits.weekly_projection` and on two pages.
 
     Both halves are asserted, because either alone is satisfiable without the other. Dropping
     the tuple entry while the Panel still called wind a feature would leave it screenable by
@@ -438,7 +438,7 @@ def test_wind_left_the_family_rather_than_being_quietly_retained():
         "predictor of the week it was measured on")
     assert len(ws.FEATURES) == 8, (
         f"the screened family is {len(ws.FEATURES)}. If that is deliberate, the count moves "
-        f"in `hub.models.weekly`'s docstring and on docs/weekly-projection.md with it -- "
+        f"in `hub.exhibits.weekly_projection`'s docstring and on docs/weekly-projection.md with it -- "
         f"which is what #170's third criterion is about")
 
     # Offline, like everything else here: `require_features` refuses a *classified* non-feature

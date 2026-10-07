@@ -58,10 +58,10 @@ SCORING: dict[str, float] = chosen({
 #
 # **Consumers take subsets, and should.** The Panel deliberately uses four of these: counts
 # have no expected version and should not, and the touchdowns are left out for a reason that
-# has moved twice and is now this: the Panel wants the priors `hub.models.weekly` divides by a
-# count to hold an efficiency, and touchdown *rate* is the one efficiency this repo has
-# specifically declined to project. The Board needs the touchdowns because six points is a
-# heavy weight on a small error. Same vocabulary, different questions.
+# has moved twice and is now this: the Panel wants the priors `hub.exhibits.weekly_projection`
+# divides by a count to hold an efficiency, and touchdown *rate* is the one efficiency this repo has
+# specifically declined to project. The Board needs the touchdowns because six points is a heavy
+# weight on a small error. Same vocabulary, different questions.
 #
 # This comment used to say the touchdown rate had been *measured* to regress -- `td_rate_prior`
 # at -0.040 across five of five seasons, a broken pre-stated null. That was true on the control
