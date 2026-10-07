@@ -56,7 +56,7 @@ CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.fetch.bigten",
-    "hub.fetch.cfbd", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
+    "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
     "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
@@ -66,7 +66,7 @@ CLI_MODULES = (
     "hub.models.component_error", "hub.models.props", "hub.models.weekly",
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
-    "hub.season.survivor", "hub.season.pool", "hub.season.journal", "hub.store",
+    "hub.season.weekly_forward", "hub.season.survivor", "hub.season.pool", "hub.season.journal", "hub.store",
 )
 
 
@@ -245,6 +245,9 @@ ABSENT_INPUT = [
     # The published quarterback ratings (#218). `--cache` keeps the refresh's last-good read
     # off the developer's `data/raw/`, so a fresh clone meets no network and nothing cached.
     ("hub.fetch.nfeloqb", ["--refresh", "--cache", "{tmp}/nfeloqb"]),
+    # The weekly consensus capture (#432): no archive to read and no schedule to place the
+    # week by is one sentence and a non-zero exit, and nothing under `state/` is written.
+    ("hub.fetch.consensus", ["--capture"]),
     ("hub.fetch.nflverse", ["--refresh"]),
     ("hub.fetch.odds", ["--snapshot", "--state-path", "{tmp}/odds.json"]),
     # The pool host (#85). `--store` keeps the refresh's last-good read off the developer's
@@ -287,6 +290,9 @@ ABSENT_INPUT = [
     ("hub.season.pool", ["--week", "1", "--store", "{tmp}"]),
     ("hub.season.journal", ["--store", "{tmp}"]),
     ("hub.season.weekly_gate", ["--run"]),
+    # The 2026 forward measurement (#432): no schedule for the season is a sentence, not a
+    # reading -- and a run before the horizon loads no outcome whatever it finds.
+    ("hub.season.weekly_forward", []),
     ("hub.store", ["--verify"]),
 ]
 
