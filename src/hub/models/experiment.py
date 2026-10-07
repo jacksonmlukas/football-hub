@@ -320,9 +320,11 @@ def t_quantile(p: float, df: int) -> float:
 def two_sided_p(t: float, df: int) -> float:
     """`P(|T| >= |t|)` for Student's t on `df` degrees of freedom -- the p a screen's `t` is.
 
-    Two-sided because the screen's bar is `abs(t) < MIN_SE`, and on the same `_t_cdf` the
-    quantile above comes from, so the p printed beside a `t` and the interval printed beside
-    a gain cannot disagree about the reference distribution. NaN when there are no degrees of
+    Two-sided because the screen's bar is a two-sided p below `ALPHA` -- read by
+    `weekly_screen.verdict` itself since #312, where it had been a flat `abs(t) < MIN_SE` --
+    and on the same `_t_cdf` the quantile above comes from, so the p printed beside a `t`, the
+    verdict reading it and the interval printed beside a gain cannot disagree about the
+    reference distribution. NaN when there are no degrees of
     freedom -- one season has a mean and nothing to test it against -- or no `t`.
     """
     if df < 1 or not math.isfinite(t):

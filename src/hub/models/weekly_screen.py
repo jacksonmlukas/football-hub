@@ -22,8 +22,11 @@ THE DESIGN, PRE-REGISTERED in `docs/weekly-projection-plan.md` before the first 
     item 3, which turned noise into an apparent 4-sigma result once already. Pooling
     player-weeks would inflate every t here by roughly the square root of fourteen.
   * A feature clears only if its pre-stated sign holds in **every** season and the pooled
-    statistic clears `MIN_SE`. A sign that flips between seasons is a bug, not a signal
-    (protocol item 4), and it is the cheapest diagnostic available.
+    statistic's two-sided p, at the run's own degrees of freedom, is below `ALPHA` -- #312.
+    The bar was a flat 2.0 se, which over four or five seasons (three or four degrees of
+    freedom) is a p of 0.139 or 0.116, not the 0.05 it was read as. A sign that flips
+    between seasons is a bug, not a signal (protocol item 4), and it is the cheapest
+    diagnostic available.
   * **The season is the unit of replication, so the standard error is over the seasons.**
     Cells are how the correlation is computed without repeating a player; they are not
     independent of each other, sharing a schedule, a rules year and one consensus source.
@@ -69,8 +72,9 @@ the split is visible rather than assumed -- see `docs/weekly-screen.md`.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import NamedTuple, cast
 
 import numpy as np
@@ -80,7 +84,14 @@ from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS, digests, resolved_config
 from hub.declare import not_an_input
 from hub.fetch.nflverse import pins_this_run, reads_of_one_run
-from hub.models.experiment import FDR_Q, MIN_SE, FalseDiscovery, false_discovery, two_sided_p
+from hub.models.experiment import (
+    ALPHA,
+    FDR_Q,
+    FalseDiscovery,
+    false_discovery,
+    t_quantile,
+    two_sided_p,
+)
 from hub.models.panel import (
     MIN_GAMES_BEFORE,
     OUTCOME,
@@ -435,34 +446,46 @@ def summarise(cells: pl.DataFrame) -> dict:
             "seasons": len(seasons), "per_season": per}
 
 
-def verdict(summary: dict, sign: str, *, min_se: float = MIN_SE) -> tuple[str, str]:
+def verdict(summary: dict, sign: str, *, alpha: float = ALPHA) -> tuple[str, str]:
     """The pre-registered rule, both halves of it.
 
     A feature clears only if the sign it was given *before the run* holds in every season and
-    the pooled statistic clears `min_se`. `sign="0"` is a pre-stated null: it clears when it
+    the pooled statistic's two-sided p -- of the season-clustered `t`, on `seasons - 1`
+    degrees of freedom -- is below `alpha`. `sign="0"` is a pre-stated null: it clears when it
     behaves like one, and a null that comes back significant is reported as a finding against
     the pre-registration rather than quietly relabelled.
+
+    **The bar is a probability, not a t (#312).** It used to be `abs(t) < 2.0`, a normal
+    quantile applied to four or five season means: two-sided p at t = 2.0 is 0.139 on three
+    degrees of freedom and 0.116 on four, and the p `with_family` printed beside that t
+    disagreed with the verdict on the same row. `t_quantile(1 - alpha/2, df)` is the same
+    comparison in t units -- 3.182 on three degrees of freedom, 2.776 on four -- and this
+    reads the p because the p is what the report prints. One season has no degrees of freedom
+    and so no p: it is not significant, and says so rather than clearing.
     """
     per = summary["per_season"]
     if not per:
         return KILLED, "nothing measured -- no cell reached the minimum"
     t = summary["t"]
+    p = two_sided_p(t, len(per) - 1)
+    significant = p < alpha                  # NaN (one season) compares False
+    shown = f"{t:+.1f} se, p {p:.3f}" if math.isfinite(p) else f"{t:+.1f} se, no p"
     agree = sum((v > 0) == (summary["r"] > 0) for v in per.values())
     if sign == "0":
-        if abs(t) < min_se:
-            return CLEARS, f"null as pre-stated ({t:+.1f} se)"
+        if not significant:
+            return CLEARS, f"null as pre-stated ({shown})"
         if agree == len(per):
-            return NULL_BROKEN, (f"PRE-STATED NULL BROKEN: {summary['r']:+.4f} at {t:+.1f} se, "
+            return NULL_BROKEN, (f"PRE-STATED NULL BROKEN: {summary['r']:+.4f} at {shown}, "
                                  f"consistent in {agree}/{len(per)} seasons")
         return CLEARS, f"noisy, not a signal ({agree}/{len(per)} seasons agree)"
     held = agree if sign == "?" else (
         sum(v > 0 for v in per.values()) if sign == "+" else sum(v < 0 for v in per.values()))
     if held < len(per):
         return KILLED, (f"killed: sign holds in only {held}/{len(per)} seasons "
-                        f"({summary['r']:+.4f} at {t:+.1f} se)")
-    if abs(t) < min_se:
-        return KILLED, f"killed: {held}/{len(per)} seasons but only {t:+.1f} se"
-    return CLEARS, f"clears: {summary['r']:+.4f} at {t:+.1f} se, {held}/{len(per)} seasons"
+                        f"({summary['r']:+.4f} at {shown})")
+    if not significant:
+        return KILLED, f"killed: {held}/{len(per)} seasons but only {shown}"
+    return CLEARS, f"clears: {summary['r']:+.4f} at {shown}, {held}/{len(per)} seasons"
 
 
 def with_family(rows: Sequence[dict], q: float = FDR_Q) -> tuple[list[dict], FalseDiscovery]:
@@ -497,6 +520,59 @@ def family_line(fd: FalseDiscovery) -> str:
             f"Benjamini-Hochberg threshold at q = {fd.q:.2f}: {fd.threshold:.4f}, "
             f"{below} below it  (a diagnostic: the pre-registered rule decides; the "
             f"threshold does not)")
+
+
+def run_family(frames: Mapping[str, pl.DataFrame],
+               q: float = FDR_Q) -> tuple[list[dict], FalseDiscovery]:
+    """One Benjamini-Hochberg family over every alone test a run made -- #312.
+
+    `with_family` is scoped to the rows one call was handed, so the five anchors of a sweep each
+    printed a family of eight and a reader who looked across them saw forty tests counted as
+    eight, five times. `frames` is `{basis: sweep(...)}`; the family is every **distinct** alone
+    test across them, the size of what was run and not of what one printing saw.
+
+    **Distinct means (basis, feature, rows measured on).** A feature whose rows do not depend on
+    the anchor -- `min_week` the same at all five -- is one test that the sweep printed five
+    times, with the same p each time, and counting it five times would put four copies of every
+    such p into a family that ranks them: the count would rise and so would the number of
+    "discoveries", for no new information. A trend feature is measured on different rows at
+    each anchor, so each anchor is its own test. Still a diagnostic (#274): `verdict` decides,
+    and the tests share one panel, so the family is the reading the maintainer is owed beside
+    the rule and not a second rule.
+    """
+    seen: dict[tuple[str, str, int], dict] = {}
+    for b, frame in frames.items():
+        for r in frame.sort("anchor").to_dicts():
+            seen.setdefault((b, r["feature"], r["min_week"]),
+                            {"basis": b, "anchor": r["anchor"], "feature": r["feature"],
+                             "p": r["alone_p"]})
+    tests = list(seen.values())
+    fd = false_discovery([t["p"] for t in tests], q)
+    return [{**t, "p_adj": ai} for t, ai in zip(tests, fd.adjusted, strict=True)], fd
+
+
+def run_family_report(frames: Mapping[str, pl.DataFrame]) -> list[str]:
+    """Lines: the run's whole family -- its size, its threshold, and what sits below it."""
+    rows, fd = run_family(frames)
+    bases = sorted(frames)
+    anchors = sorted({r["anchor"] for r in rows})
+    printed = sum(f.height for f in frames.values())
+    out = ["", f"  the family of everything this run tested -- #312: {fd.tests} distinct tests "
+               f"over {len(bases)} {'bases' if len(bases) != 1 else 'basis'} "
+               f"({', '.join(bases)}) and {len(anchors)} "
+               f"anchor{'s' if len(anchors) != 1 else ''}, from {printed} printed rows (a feature "
+               f"the anchor does not touch is one test, not one per anchor)",
+           f"  Benjamini-Hochberg threshold at q = {fd.q:.2f}: {fd.threshold:.4f}, "
+           f"{sum(fd.rejected)} below it  (a diagnostic: the pre-registered rule decides)"]
+    if len(bases) < len(BASES):
+        out.append(f"  this run swept {len(bases)} of the {len(BASES)} bases the repo has tried; "
+                   f"--all-bases counts the rest")
+    below = sorted((r for r, rej in zip(rows, fd.rejected, strict=True) if rej),
+                   key=lambda r: r["p"])
+    for r in below:
+        out.append(f"    below: {r['feature']:16} {r['basis']:10} week >= {r['anchor']:<3} "
+                   f"p {r['p']:.4f}  adj {r['p_adj']:.3f}")
+    return out
 
 
 def report(rows: Sequence[dict]) -> list[str]:
@@ -707,6 +783,49 @@ def sweep_report(swept: pl.DataFrame, sens: pl.DataFrame) -> list[str]:
     return out
 
 
+_JOINT_KEYS = ("p_t_clears", "p_joint", "p_joint_flat_bar", "p_independent")
+
+# The bar `verdict` read before #312, kept only so the joint size under it can be printed beside
+# the size under the corrected one. Not an input to any verdict.
+FLAT_BAR = not_an_input(
+    2.0,
+    "the bar `verdict` read before #312, kept only to print the joint size under it beside the "
+    "size under the corrected bar; no verdict reads it")
+
+
+def joint_size(means: np.ndarray, want: float, *, alpha: float = ALPHA,
+               flat_bar: float = FLAT_BAR) -> dict:
+    """The size of the two-part rule on null draws -- #312, by the permutation harness.
+
+    `means` is `(draws, seasons)`: each row one null draw's season means, as
+    `every_season_null` builds them. The rule `verdict` applies is a conjunction -- the sign
+    `want` in **every** season, **and** a two-sided p below `alpha` on the season-clustered `t`
+    -- and its size is the fraction of null draws that satisfy both, which no product of the
+    two marginals gives because they are correlated: a draw with every season on one side of
+    zero has a mean far from zero relative to a spread that the same draw made small.
+
+    `p_t_clears` is the second half alone (about `alpha`, and it says how far the permutation
+    null is from a t); `p_joint` is the conjunction under the corrected bar; `p_joint_flat_bar`
+    the conjunction under the 2.0 se bar `verdict` used to read; `p_independent` is
+    `P(every season holds) * p_t_clears`, the number the two halves *would* have if they were
+    independent, so that the correlation is a printed difference and not a claim. NaN with
+    fewer than two seasons, where there is no t.
+    """
+    k = means.shape[1]
+    if k < 2:
+        return dict.fromkeys(_JOINT_KEYS, float("nan"))
+    sd = means.std(axis=1, ddof=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = np.where(sd > 0, means.mean(axis=1) / (sd / np.sqrt(k)), 0.0)
+    crit = t_quantile(1.0 - alpha / 2.0, k - 1)       # |t| > crit  <=>  two-sided p < alpha
+    holds = (np.sign(means) == want).all(axis=1)
+    clears = np.abs(t) > crit
+    return {"p_t_clears": float(clears.mean()),
+            "p_joint": float((holds & clears).mean()),
+            "p_joint_flat_bar": float((holds & (np.abs(t) >= flat_bar)).mean()),
+            "p_independent": float(holds.mean() * clears.mean())}
+
+
 def every_season_null(panel: pl.DataFrame, feature: Feature, controls: Sequence[str] = CONTROLS,
                       *, draws: int = 2000, seed: int = 0, effects: Sequence[float] = (),
                       min_cell: int = MIN_CELL, outcome: str = OUTCOME) -> dict:
@@ -753,6 +872,7 @@ def every_season_null(panel: pl.DataFrame, feature: Feature, controls: Sequence[
     if not seasons:
         return {"cells": 0, "seasons": 0, "per_season_cells": {}, "r": float("nan"),
                 "p_any_wrong_sign": float("nan"), "p_every_season": float("nan"),
+                **dict.fromkeys(_JOINT_KEYS, float("nan")),
                 "p_value": float("nan"), "cell_sd": float("nan"), "alternatives": {}}
     idx = {s: [i for i, (cs, *_) in enumerate(cells) if cs == s] for s in seasons}
     observed = np.array([float(ry @ (x - h @ x) / np.linalg.norm(x - h @ x))
@@ -768,6 +888,7 @@ def every_season_null(panel: pl.DataFrame, feature: Feature, controls: Sequence[
     means = np.column_stack([null[:, idx[s]].mean(axis=1) for s in seasons])
     r_null = means.mean(axis=1)
     return {
+        **joint_size(means, want),
         "cells": len(cells), "seasons": len(seasons),
         "per_season_cells": {s: len(idx[s]) for s in seasons},
         "r": r, "per_season": {s: float(m) for s, m in zip(seasons, obs_means, strict=True)},
@@ -787,6 +908,10 @@ def null_report(name: str, anchor: int, n: dict) -> list[str]:
            f"p {n['p_value']:.3f}",
            f"    under the null, P(at least one season has the wrong sign) = "
            f"{n['p_any_wrong_sign']:.3f}; P(every season holds) = {n['p_every_season']:.3f}",
+           f"    the two-part rule's size, on the same draws -- #312: P(every season holds AND "
+           f"two-sided p < {ALPHA:g}) = {n['p_joint']:.4f}  (the p half alone "
+           f"{n['p_t_clears']:.4f}; the halves as if independent {n['p_independent']:.4f}; "
+           f"under the old flat {FLAT_BAR:g} se bar {n['p_joint_flat_bar']:.4f})",
            f"    sd of one cell's r under the null {n['cell_sd']:.4f}"]
     for e, p in n["alternatives"].items():
         out.append(f"    if the true effect were {e:+.4f} in every cell: P(at least one "
@@ -842,6 +967,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                          "pre-registration, and every figure published before #229); "
                          "'decomposed' holds its touchdown and non-touchdown halves apart "
                          "(#179)")
+    ap.add_argument("--all-bases", dest="all_bases", action="store_true",
+                    help="also sweep the other control bases, unprinted, so the family size "
+                         "at the end counts every anchor and every basis -- #312")
     ap.add_argument("--trend-min-week", dest="trend_min_week", type=int, default=None,
                     metavar="N",
                     help="run the screen at this one anchor instead of sweeping "
@@ -955,6 +1083,14 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                 print("\n".join(null_report(name, anchor, n)))
         if len(anchors) > 1:
             print("\n".join(sweep_report(swept, sensitivity(swept))))
+        frames = {a.basis: swept}
+        if a.all_bases:
+            # Computation only, on the sample already built: the other bases' sweeps are not
+            # printed, they are counted -- the family is what was run, not what was shown.
+            for b in sorted(BASES):
+                if b not in frames:
+                    frames[b] = sweep(sample, pool, anchors, BASES[b])
+        print("\n".join(run_family_report(frames)))
         return 0
 
 
