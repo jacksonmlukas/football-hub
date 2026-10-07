@@ -176,7 +176,8 @@ def _matrix(keys: Sequence[str], lookup: dict[tuple[str, int], float],
 
 def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0,
                       shrink: str | None = None, arm: ProjectionArm = project,
-                      expected: bool = False, holdout: bool = False):
+                      expected: bool = False, holdout: bool = False,
+                      ecr: pl.DataFrame | None = None):
     # pragma: no cover - network
     """Rosters, realised points and both arms' scores, over the whole board.
 
@@ -200,6 +201,13 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     it once did not, and scored the shipped arm twice with zero flips to show for it. A second
     adapter now just is a second value for this parameter.
 
+    `ecr` is the incumbent's weekly consensus, accepted rather than read (#432): the columns
+    `weekly_consensus` returns (`season`, `week`, `key`, `ecr`). `None` is every caller before
+    the 2026 forward measurement and reads the FantasyPros archive exactly as it always did; the
+    forward gate hands it the first-party captures under `state/consensus/` instead, because the
+    archive cannot show what could have been read before a 2026 kickoff. The weeks it names are
+    the weeks the gate scores (`covered_weeks` reads them off this frame).
+
     Returns a `GateInputs`: ten aligned collections that used to be a positional tuple.
     """
     from collections.abc import Sequence as _Seq
@@ -213,7 +221,7 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     panel = build_panel(seasons, PanelSpec(
         consensus=False, expected=expected,
         ranks=preseason_ranks(seasons) if want_ranks else None))
-    ecr = weekly_consensus(seasons)
+    ecr = weekly_consensus(seasons) if ecr is None else ecr
 
     projected = []
     for _season, past, now in expanding_seasons(panel):
