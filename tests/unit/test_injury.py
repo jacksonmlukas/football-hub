@@ -88,6 +88,88 @@ def test_duplicate_injury_rows_for_one_week_collapse():
     assert injury.observations(inj, st).height == 1
 
 
+# --- the baseline is strictly prior (#361, S4; method.md rules 2 and 18) ----
+#
+# `observations` once took a designated week's baseline as the player's mean over the healthy
+# weeks of the WHOLE season, so a week-9 designation was measured against weeks 10-14 -- the
+# held-out arm handed the realised in-season level, a column no Sunday has. The control is a
+# check that can vary with the thing it is about: change what happens AFTER a designated week
+# and the baseline for that week must not move. `_leaks_the_future` is that check; it is
+# trusted only because the planted lookahead below makes it fire.
+
+def _season_with_a_late_run(late_pts):
+    """Eight healthy weeks at 10, a designation in week 9, then five healthy weeks of
+    `late_pts` -- the future, as far as week 9 is concerned."""
+    stats = ([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+             + [(2024, 9, "a", "WR", 4.0)]
+             + [(2024, w, "a", "WR", late_pts) for w in range(10, 15)])
+    return _stats(stats), _inj([(2024, 9, "a", "WR", "Questionable", "Limited")])
+
+
+def _leaks_the_future(build) -> bool:
+    """True if the week-9 baseline `build(injuries, stats)` returns moves when only weeks
+    10-14 do."""
+    quiet = build(*reversed(_season_with_a_late_run(10.0)))
+    loud = build(*reversed(_season_with_a_late_run(40.0)))
+    return quiet["baseline"].to_list() != loud["baseline"].to_list()
+
+
+def _lookahead_observations(injuries, stats):
+    """THE PLANT: the shipped lookahead, as it stood before #361 -- baseline grouped on
+    `(gsis_id, season)` over every healthy week of the season, designated week or no."""
+    full = (stats.select("season", "week", pl.col("player_id").alias("gsis_id"),
+                         pl.col("fantasy_points_ppr").alias("pts"))
+                 .join(injuries.select("season", "week", "gsis_id",
+                                       pl.col("report_status").alias("status")),
+                       on=["season", "week", "gsis_id"], how="full", coalesce=True)
+                 .with_columns(pl.col("status").fill_null("Healthy")))
+    base = (full.filter(pl.col("status") == "Healthy").group_by(["gsis_id", "season"])
+                .agg(pl.col("pts").mean().alias("baseline")))
+    return full.filter(pl.col("status") != "Healthy").join(base, on=["gsis_id", "season"])
+
+
+def test_the_future_leak_check_fires_on_the_planted_lookahead():
+    """The positive control (rule 18). If this is green the check below is not decorative."""
+    assert _leaks_the_future(_lookahead_observations)
+
+
+def test_a_designated_weeks_baseline_does_not_move_with_the_weeks_after_it():
+    assert not _leaks_the_future(injury.observations)
+
+
+def test_the_baseline_is_the_expanding_mean_of_strictly_earlier_healthy_weeks():
+    """Weeks 1-8 at 10 and week 9 designated: baseline 10 whatever follows. A second
+    designation after a later, hotter healthy run sees that run, and only that far."""
+    stats = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                   + [(2024, 9, "a", "WR", 4.0)]
+                   + [(2024, w, "a", "WR", 20.0) for w in range(10, 14)]
+                   + [(2024, 14, "a", "WR", 5.0)]
+                   + [(2024, w, "a", "WR", 99.0) for w in range(15, 19)])
+    inj = _inj([(2024, 9, "a", "WR", "Questionable", "Limited"),
+                (2024, 14, "a", "WR", "Questionable", "Limited")])
+    got = injury.observations(inj, stats).sort("week")
+    assert got["baseline"].to_list() == pytest.approx([10.0, (80.0 + 80.0) / 12.0])
+    assert got["healthy_weeks"].to_list() == [8, 12]
+
+
+def test_the_prior_weeks_must_reach_the_minimum_before_the_week_is_scored():
+    """Six healthy weeks of history, *before* the designation. A week-5 designation with
+    thirteen healthy weeks after it used to qualify on the whole season's count."""
+    st = _stats([(2024, w, "a", "WR", 10.0) for w in range(1, 5)]
+                + [(2024, 5, "a", "WR", 3.0)]
+                + [(2024, w, "a", "WR", 10.0) for w in range(6, 19)])
+    inj = _inj([(2024, 5, "a", "WR", "Questionable", "Limited")])
+    assert injury.observations(inj, st).is_empty()
+
+
+def test_a_designation_does_not_borrow_another_seasons_weeks():
+    st = _stats([(2023, w, "a", "WR", 30.0) for w in range(1, 10)]
+                + [(2024, w, "a", "WR", 10.0) for w in range(1, 9)]
+                + [(2024, 9, "a", "WR", 4.0)])
+    inj = _inj([(2024, 9, "a", "WR", "Questionable", "Limited")])
+    assert injury.observations(inj, st)["baseline"].to_list() == pytest.approx([10.0])
+
+
 # --- retention is multiplicative, and that is the point -------------------
 
 def test_out_retains_exactly_nothing():

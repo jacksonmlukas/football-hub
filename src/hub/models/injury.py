@@ -131,13 +131,28 @@ def observations(injuries: pl.DataFrame, stats: pl.DataFrame, *,
               .with_columns(pl.col("pts").fill_null(0.0),
                             pl.col("status").fill_null("Healthy"),
                             pl.col("practice").fill_null("Healthy")))
-    base = (full.filter(pl.col("status") == "Healthy")
-                .group_by(["gsis_id", "season"])
-                .agg(pl.len().alias("healthy_weeks"), pl.col("pts").mean().alias("baseline"))
-                .filter(pl.col("healthy_weeks") >= min_healthy))
-    return (full.filter(pl.col("status") != "Healthy")
-                .join(base, on=["gsis_id", "season"])
-                .with_columns((pl.col("pts") - pl.col("baseline")).alias("delta")))
+    # #361 (S4): the baseline is what a Sunday has -- the mean of his healthy weeks STRICTLY
+    # BEFORE the designated one, in the same season. It was the mean over the whole season's
+    # healthy weeks, so a week-5 designation was measured against weeks 6-18: the held-out arm
+    # handed the realised in-season level. `healthy_weeks` is the prior count, and the
+    # `min_healthy` floor is on it, so a designation needs `min_healthy` weeks of history
+    # *behind* it and not merely in the season.
+    healthy = (full.filter(pl.col("status") == "Healthy")
+                   .sort("gsis_id", "season", "week")
+                   .with_columns(pl.col("pts").cum_sum().over(["gsis_id", "season"])
+                                   .alias("_cum"),
+                                 pl.col("pts").cum_count().over(["gsis_id", "season"])
+                                   .alias("healthy_weeks"))
+                   .select("gsis_id", "season", "week", "healthy_weeks", "_cum"))
+    designated = full.filter(pl.col("status") != "Healthy").sort("week")
+    return (designated
+            .join_asof(healthy.sort("week"), on="week", by=["gsis_id", "season"],
+                       strategy="backward", allow_exact_matches=False,
+                       check_sortedness=False)
+            .filter(pl.col("healthy_weeks") >= min_healthy)
+            .with_columns((pl.col("_cum") / pl.col("healthy_weeks")).alias("baseline"))
+            .with_columns((pl.col("pts") - pl.col("baseline")).alias("delta"))
+            .drop("_cum"))
 
 
 def retention_table(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
