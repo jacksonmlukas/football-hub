@@ -281,3 +281,29 @@ def test_the_parametric_interval_is_kept_beside_the_published_one():
 def test_a_board_with_nothing_calibrated_is_reported_not_returned_empty():
     with pytest.raises(coverage.NotEnoughWeeks, match="calibration"):
         coverage.measure(_stats(_player("a", "WR", 2024, [10.0] * 17)), "prior")
+
+
+def test_calibrate_names_the_columns_it_is_missing():
+    with pytest.raises(ValueError, match="sd_pred"):
+        coverage.calibrate(pl.DataFrame({"season": [1], "week": [1], "position": ["WR"],
+                                         "points": [1.0], "mu": [1.0]}))
+
+
+def test_a_group_with_nothing_scored_is_a_row_that_says_so_in_the_table(capsys):
+    """A position whose every row lacked a calibration is reported with `n` 0 and printed as
+    nothing scored, not dropped and not divided by zero."""
+    empty = coverage._published_row("TE", pl.DataFrame({"scored": [False]}), "TE")
+    assert empty == {"group": "TE", "position": "TE", "n": 0}
+    coverage._print_published([empty])
+    assert "nothing scored" in capsys.readouterr().out
+
+
+def test_the_cli_says_which_positions_ran_on_pooled_calibration(capsys, monkeypatch):
+    wr = _drawn(n_players=300, weeks=17, pos="WR", seed=1)
+    qb = _drawn(n_players=30, weeks=17, pos="QB", mu=18.0, seed=2).with_columns(
+        pl.col("player_id") + "_qb")
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: pl.concat([wr, qb]))
+    assert coverage.main(["--measure"]) == 0
+    out = capsys.readouterr().out
+    assert "not a test of the conditional claim there: QB" in out
+    assert "had no calibration and were not scored" in out

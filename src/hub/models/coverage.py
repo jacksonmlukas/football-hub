@@ -928,15 +928,6 @@ def _print_published(rows: list[dict[str, Any]]) -> None:
               f"{r['deviation']:>+8.1%}{r['sigma']:>+7.1f}{pooled}")
 
 
-def _print_table(rows: list[dict[str, Any]]) -> None:
-    print(f"    {'':<18}{'n':>7}{'80%':>8}{'68%':>8}{'<p10':>8}{'>p90':>8}"
-          f"{'80% no skew':>13}{'sd r/m':>8}")
-    for r in rows:
-        print(f"    {r['group']:<18}{r['n']:>7,}{r['cov80']:>8.1%}{r['cov68']:>8.1%}"
-              f"{r['below_p10']:>8.1%}{r['above_p90']:>8.1%}"
-              f"{r['cov80_no_skew']:>13.1%}{r['sd_ratio']:>8.2f}")
-
-
 def _stats(seasons: Sequence[int], cache: Path | None) -> pl.DataFrame:
     from hub.fetch import nflverse
     return nflverse.load("player_stats", seasons=list(seasons),
