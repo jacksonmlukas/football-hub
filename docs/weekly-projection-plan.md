@@ -47,6 +47,8 @@ And two positives, which are the only two this repo has ever found in fourteen m
 * **Injury retention** by (status, practice): **+0.170** MAE at 3.8 se
   ([weekly-injury.md](weekly-injury.md)).
 
+  > *(Restated 2026-10-07, #361: the +0.170 / 3.8 se baseline was a within-season lookahead. Strictly-prior it is +0.0623 MAE (se 0.0588, t = +1.06 on 2 df, p = 0.40, interval [-0.1909, +0.3155]), won 2 of 3 seasons with 2024 at -0.0529; usable designated weeks 4,939 -> 2,581, and about 0.011 of the drop is the lookahead itself, the rest the early-season rows no longer scorable. Prior value kept above; see weekly-injury.md.)*
+
 Both are *timeliness* signals — something published on a Monday that consensus has not yet
 absorbed. Every null asked consensus about information it had had all summer. That pattern is
 the sharpest prior available for what follows, and it is stated here before the screen rather
@@ -279,6 +281,8 @@ Phase 2 is still non-empty in that case, and exactly two things are named:
 * **The injury designation enters without a new screen.** It was measured at player-week
   grain — +0.170 MAE at 3.8 se, [weekly-injury.md](weekly-injury.md) — which is already this
   horizon.
+
+  > *(Restated 2026-10-07, #361: the +0.170 / 3.8 se baseline was a within-season lookahead. Strictly-prior it is +0.0623 MAE (se 0.0588, t = +1.06 on 2 df, p = 0.40, interval [-0.1909, +0.3155]), won 2 of 3 seasons with 2024 at -0.0529; usable designated weeks 4,939 -> 2,581, and about 0.011 of the drop is the lookahead itself, the rest the early-season rows no longer scorable. Prior value kept above; see weekly-injury.md.)*
 * **The snap trend does not.** Its established result is a *three-week* horizon; using it for a
   one-week lineup asserts a mechanism the screen never tested, which is protocol item 6 and the
   thing this repo got wrong once already. It must be re-screened at a one-week horizon first,

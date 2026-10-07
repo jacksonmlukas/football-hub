@@ -1076,11 +1076,12 @@ def build_panel(seasons: Sequence[int] = SEASONS,
         the injury retention term CANNOT be fitted here.
 
     Of 5,473 "Out" designations across 2021-25, **six** reach this panel: 0.11%. Doubtful is
-    764 against 2. The model `hub.models.injury` fitted at +0.170 MAE and 3.8 se prices an
-    injury row with no stat row as *zero* -- the player who did not play is its entire subject
-    -- and here he is structurally absent. Fitting retention on these rows would measure
-    something much weaker, "what a Questionable player who played anyway retains", and would
-    report it under the stronger result's name.
+    764 against 2. The model `hub.models.injury` fitted at +0.170 MAE and 3.8 se
+    (restated 2026-10-07, #361: +0.0623, t = +1.06 on 2 df, p = 0.40, strictly-prior
+    baseline) prices an injury row with no stat row as *zero* -- the player who did not play
+    is its entire subject -- and here he is structurally absent. Fitting retention on these
+    rows would measure something much weaker, "what a Questionable player who played anyway
+    retains", and would report it under the stronger result's name.
 
     `status` and `practice` are carried regardless, because Gate B builds a complete
     player-week grid where a missing row is a zero, and that is where the term belongs. If the

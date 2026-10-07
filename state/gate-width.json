@@ -750,54 +750,52 @@
     },
     {
       "abstained": 0,
-      "clusters": 5.0,
+      "clusters": 3.0,
       "config_digest": "c4606f91",
-      "data_digest": "b1a14540",
-      "gate": "interval_shape",
-      "hi": -0.0296116414969188,
-      "lo": -0.042331431540016895,
-      "recipe": "min_mu=2,min_prior=4,min_weeks=8,seed=0",
-      "resolved": 5,
+      "data_digest": "3028f320",
+      "gate": "injury_type",
+      "hi": 0.08665836860038005,
+      "inputs": [
+        {
+          "as_of": null,
+          "digest": "9f2912bc",
+          "source": "injuries"
+        },
+        {
+          "as_of": null,
+          "digest": "9f2bc034",
+          "source": "player_stats"
+        }
+      ],
+      "lo": -0.0041085874263040965,
+      "recipe": "seasons=2022+2023+2024+2025",
+      "resolved": 3,
       "seasons": [
         {
           "disposition": "loss",
-          "gain": -0.043617632054457504,
-          "m": 267,
-          "se": 0.006306481051037508,
-          "season": 2021
-        },
-        {
-          "disposition": "loss",
-          "gain": -0.042754522145761004,
-          "m": 253,
-          "se": 0.00651686652418983,
-          "season": 2022
-        },
-        {
-          "disposition": "loss",
-          "gain": -0.03239476709571642,
-          "m": 234,
-          "se": 0.00641308966214881,
+          "gain": -0.0041085874263040965,
+          "m": 1,
+          "se": NaN,
           "season": 2023
         },
         {
-          "disposition": "loss",
-          "gain": -0.02430297274770553,
-          "m": 249,
-          "se": 0.006240368279065969,
+          "disposition": "win",
+          "gain": 0.08665836860038005,
+          "m": 1,
+          "se": NaN,
           "season": 2024
         },
         {
-          "disposition": "loss",
-          "gain": -0.03891284929964748,
-          "m": 246,
-          "se": 0.00633827479749164,
+          "disposition": "win",
+          "gain": 0.03704941970172647,
+          "m": 1,
+          "se": NaN,
           "season": 2025
         }
       ],
-      "timestamp": "2026-10-07T01:37:39+00:00",
-      "verdict": "NOT-RUNNABLE",
-      "width": 0.012719790043098096
+      "timestamp": "2026-10-07T12:51:51+00:00",
+      "verdict": "SHOW",
+      "width": 0.09076695602668415
     }
   ]
 }
