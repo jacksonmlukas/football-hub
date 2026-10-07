@@ -223,34 +223,156 @@ def test_prediction_scales_the_players_own_baseline():
     assert got[1] > got[0], "the higher-baseline player must be predicted higher"
 
 
-# --- the gate -------------------------------------------------------------
+# --- the gate: retention against bench-the-ruled-out (#360) -----------------
+#
+# `verdict` was an argmin over four candidates. It is `experiment.gate` now, over `retention`
+# and `out_zero`, clustered on the season and resampled within the season over the player.
 
-def _wf(base, out_zero, table, retention):
-    return pl.DataFrame({"season": [2024, 2025], "n": [500, 500],
-                         "mae_baseline": base, "mae_out_zero": out_zero,
-                         "mae_table": table, "mae_retention": retention})
+RSEASONS = (2022, 2023, 2024, 2025)
+
+
+def _rerrs(gain, noise, seasons=RSEASONS, n=400, seed=0, headroom=0.3, players=70):
+    """Per-row held-out errors in `walk_forward_rows`' shape. Antithetic noise, so each
+    season's mean `out_zero` minus `retention` is exactly `gain[i]`; `err_ceiling` is the
+    declared ceiling arm, `headroom` better than `out_zero` on every row (`None`: a frame
+    that never measured a ceiling). The player ids repeat, so the within unit has structure."""
+    rng = np.random.default_rng(seed)
+    out = {"season": [], "gsis_id": [], "err_out_zero": [], "err_retention": [],
+           "err_table": [], "err_baseline": []}
+    ceil = []
+    for si, season in enumerate(seasons):
+        e = rng.normal(0, noise, n // 2)
+        for i, d in enumerate(np.concatenate([e, -e])):
+            out["season"].append(season)
+            out["gsis_id"].append(f"p{i % players}")
+            out["err_out_zero"].append(5.0)
+            out["err_retention"].append(5.0 - gain[si] + float(d))
+            out["err_table"].append(9.0)
+            out["err_baseline"].append(9.0)
+            ceil.append(5.0 - (headroom or 0.0))
+    if headroom is not None:
+        out["err_ceiling"] = ceil
+    return pl.DataFrame(out)
+
+
+_RCLEAN = [0.2, 0.21, 0.19, 0.2]
 
 
 def test_a_table_that_beats_both_simple_rules_is_adopted():
-    winner, text = injury.verdict(_wf([6.0, 6.0], [4.2, 4.2], [4.9, 4.9], [4.0, 4.0]))
+    winner, text = injury.verdict(_rerrs(_RCLEAN, noise=0.4))
     assert winner == "retention" and text.startswith("ADOPT")
+    assert "resolved of 4" in text and "abstained" in text
 
 
-def test_beating_only_the_null_is_not_enough():
-    """Beating "ignore the injury report" shows injuries matter, which nobody doubts. The
-    rule worth beating is the one a manager already follows for free."""
-    winner, text = injury.verdict(_wf([6.0, 6.0], [4.2, 4.2], [5.0, 5.0], [4.5, 4.5]))
-    assert winner == "out_zero" and text.startswith("KEEP")
+def test_winning_on_average_but_losing_a_season_is_not_adopted():
+    """The argmin adopted on the mean alone. One reversed season (2024's, in the real data) is
+    enough for the Gate to withhold it."""
+    winner, text = injury.verdict(_rerrs([0.2, 0.2, -0.2, 0.2], noise=0.4, headroom=2.0))
+    assert winner == "out_zero" and text.startswith("KEEP") and "SHOW" in text
 
 
-def test_the_additive_table_losing_is_recorded_not_hidden():
-    """It lost its own gate, and the reason -- Out is multiplicative -- is the finding."""
-    winner, text = injury.verdict(_wf([6.0, 6.0], [4.2, 4.2], [4.9, 4.9], [4.0, 4.0]))
-    assert "table" in text and winner == "retention"
+def test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted():
+    """Positive in every season and the old argmin adopted it: retention had the lowest mean
+    MAE. The season is the cluster, four of them, and they scatter wider than their mean."""
+    winner, text = injury.verdict(_rerrs([0.02, 0.2, 0.01, 0.3], noise=0.4))
+    assert winner == "out_zero" and "interval contains zero" in text
+
+
+def test_no_ceiling_measured_is_not_runnable_for_retention():
+    winner, text = injury.verdict(_rerrs(_RCLEAN, noise=0.4, headroom=None))
+    assert winner == "out_zero" and "NOT-RUNNABLE" in text
+    assert "ceiling_diff" not in injury.retention_frame(
+        _rerrs(_RCLEAN, noise=0.4, headroom=None)).columns
+
+
+def test_a_ceiling_below_the_design_s_resolution_is_not_runnable_for_retention():
+    """Stage 2: the same clean gain against a headroom of 0.001, smaller than the smallest
+    effect four seasons at this noise could resolve. NOT-RUNNABLE is an exemption, not a null."""
+    winner, text = injury.verdict(_rerrs(_RCLEAN, noise=0.4, headroom=0.001))
+    assert winner == "out_zero" and "NOT-RUNNABLE" in text and "ceiling of +0.001" in text
+
+
+def test_retention_is_removed_when_worse_in_every_season():
+    run = injury.retention_run(_rerrs([-0.2, -0.21, -0.19, -0.2], noise=0.4))
+    assert run.verdict[0] == "REMOVE"
+    assert run.verdict[1].startswith("Retention is worse than zeroing a designated player")
+
+
+def test_the_three_actions_are_the_preregistered_sentences():
+    a = injury.RETENTION_ACTIONS
+    assert a.adopt == ("Retention is the availability model the product wires in place of "
+                       "zeroing a designated player.")
+    assert a.remove == ("Retention is worse than zeroing a designated player; it is dropped "
+                        "from the model surface.")
+    assert a.show == ("Retention is kept as a measurement and not wired; the product keeps "
+                      "ESPN's availability.")
+
+
+def test_only_retention_and_out_zero_are_gated_the_rest_are_diagnostics():
+    """`table` and `baseline` can be arbitrarily bad or good and the paired frame the Gate reads
+    does not change: it is built from `out_zero` and `retention` (and the ceiling) alone."""
+    errs = _rerrs(_RCLEAN, noise=0.4)
+    swung = errs.with_columns(err_table=pl.lit(0.0), err_baseline=pl.lit(0.0))
+    assert injury.retention_frame(errs).equals(injury.retention_frame(swung))
+    assert set(injury.retention_frame(errs).columns) == {"season", "gsis_id", "diff",
+                                                         "ceiling_diff"}
+
+
+def test_the_within_unit_is_the_player_not_the_season():
+    """Planted: 70 players in a season is 70 clusters, where the declared no-op was one."""
+    assert injury.RETENTION_HARNESS.within == ("gsis_id",)
+    assert injury.HARNESS.within == ("gsis_id",)
+    run = injury.retention_run(_rerrs(_RCLEAN, noise=0.4))
+    assert run.seasons["m"].to_list() == [70] * 4
+
+
+def test_the_published_retention_run_writes_one_named_entry():
+    ledger = Ledger(path=None)
+    run = injury.retention_run(_rerrs(_RCLEAN, noise=0.4), publish=True, seasons=RSEASONS,
+                               ledger=ledger)
+    text = "\n".join(run.lines)
+    assert "MDE at 80% power" in text and "data:" in text
+    assert [(e.name, e.recipe) for e in ledger._entries] == [
+        ("injury_retention", "baseline=strictly-prior,seasons=2022+2023+2024+2025")]
+
+
+def test_the_ceiling_is_fitted_in_sample_on_the_held_out_season_itself():
+    """The declared ceiling arm: its cell values come from the season it is scored on, so on a
+    fixture whose cells drift between seasons it is at least as good as the walk-forward fit."""
+    rows_st, rows_inj = [], []
+    for season, keep in ((2023, 0.6), (2024, 0.3)):
+        for i in range(30):
+            pid = f"p{season}{i}"
+            for w in range(1, 9):
+                rows_st.append((season, w, pid, "WR", 10.0))
+            rows_st.append((season, 9, pid, "WR", 10.0 * keep))
+            rows_inj.append((season, 9, pid, "WR", "Questionable", "Limited"))
+    obs = injury.observations(_inj(rows_inj), _stats(rows_st))
+    errs = injury.walk_forward_rows(obs, min_cell=1)
+    assert errs["season"].unique().to_list() == [2024]
+    assert float(errs["err_ceiling"].to_numpy().mean()) == pytest.approx(0.0, abs=1e-9)
+    assert float(errs["err_retention"].to_numpy().mean()) > 1.0
+    assert "gsis_id" in errs.columns
+
+
+def test_the_per_season_diagnostic_table_is_the_mean_of_the_rows():
+    rows_st, rows_inj = [], []
+    for season in (2023, 2024):
+        for i in range(10):
+            pid = f"p{season}{i}"
+            for w in range(1, 9):
+                rows_st.append((season, w, pid, "WR", 10.0))
+            rows_st.append((season, 9, pid, "WR", 5.0))
+            rows_inj.append((season, 9, pid, "WR", "Out", "Did Not Participate"))
+    obs = injury.observations(_inj(rows_inj), _stats(rows_st))
+    wf = injury.walk_forward(obs, min_cell=1)
+    assert wf["season"].to_list() == [2024] and wf["n"].to_list() == [10]
+    assert wf["mae_out_zero"].to_list() == [5.0]
+    assert wf["mae_baseline"].to_list() == [5.0]
 
 
 def test_no_held_out_seasons_reports_nothing_measured():
-    winner, text = injury.verdict(pl.DataFrame(schema={"season": pl.Int32}))
+    winner, text = injury.verdict(pl.DataFrame())
     assert winner == "baseline" and "nothing measured" in text
 
 
@@ -399,7 +521,8 @@ def _errs(gain, noise, seasons=SEASONS, n=400, seed=0, headroom=0.3):
         e = rng.normal(0, noise, n // 2)
         for d in np.concatenate([e, -e]):
             rows.append((season, 5.0, 5.0 - gain[si] + float(d)))
-    out = {"season": [r[0] for r in rows], "k": [50.0] * len(rows),
+    out = {"season": [r[0] for r in rows],
+           "gsis_id": [f"p{i % 70}" for i in range(len(rows))], "k": [50.0] * len(rows),
            "err_retention": [r[1] for r in rows], "err_type": [r[2] for r in rows]}
     if headroom is not None:
         out["err_oracle"] = [r[1] - headroom for r in rows]

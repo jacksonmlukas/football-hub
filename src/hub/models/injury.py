@@ -59,7 +59,6 @@ from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.ledger import Ledger, recipe
 from hub.models.experiment import (
-    SEASON_CLUSTER,
     Actions,
     GateRun,
     Harness,
@@ -254,11 +253,13 @@ CANDIDATES = ("baseline", "out_zero", "table", "retention")
 # here by hand (`g.wins == g.seasons and g.t >= MIN_SE`) with no stage 2 and no stamps -- the
 # second copy of the rule ADR-0019 exists to end. The comparison is one `Harness.run`.
 
-# #343, this comparison's declaration. The within-season unit is the season column itself, a
-# declared no-op (every season is one cluster, `m = 1`, so `_disposition` reads the sign alone
-# below `TIE_MIN_CLUSTERS`): this module's within-season unit is #360's to choose, and #343
-# converts the *rule* without pre-empting it.
-WITHIN: tuple[str, ...] = SEASON_CLUSTER
+# The within-season unit of both comparisons here is the player: `gsis_id`, `docs/method.md`
+# rule 3's repeated-measure unit (a player appears in many designated weeks of one season) and
+# the unit #335 adopted for this gate. #343 declared the type comparison with `season` instead,
+# one cluster a season and a declared no-op that read every season on its sign alone, because
+# this module's unit was #360's to choose; #360 chose it (2026-10-07), which discharges the
+# no-op ADR-0019's amendment recorded.
+WITHIN: tuple[str, ...] = ("gsis_id",)
 
 # The declared ceiling arm (S6, #363), by name where it prints. Pre-registered for *this*
 # comparison at #343's adoption (not the component calibration's, which was the lane's own
@@ -280,6 +281,30 @@ HARNESS = Harness(name="injury_type", arm_a="type-adjusted", arm_b="retention", 
                   ceiling_arm=CEILING_ARM, actions=ACTIONS,
                   unit="MAE points per designated player-week", places=4,
                   arm_modules=("hub.models.injury", "hub.names"))
+
+# --- is retention the availability model, or is zeroing a designated player enough? (#360) ---
+#
+# THE GATE, FIXED BEFORE IT WAS RUN (docs/weekly-injury.md, *Pre-registration, 2026-10-07*).
+# `verdict` used to be an argmin over four candidates that adopted whichever fitted table had
+# the lowest mean MAE: no interval, no every-season half, the lowest bar in the repo. It is
+# now `experiment.run_gate` over two arms, `retention` against `out_zero`; `table` and
+# `baseline` are diagnostics, measured and printed and never gated. The baseline stays
+# within-season (the strictly-prior expanding mean, `BASELINE`).
+RETENTION_CEILING_ARM = "the per-cell retention fitted in sample on the held-out season's own rows"
+
+RETENTION_ACTIONS = Actions(
+    adopt="Retention is the availability model the product wires in place of zeroing a "
+          "designated player.",
+    remove="Retention is worse than zeroing a designated player; it is dropped from the "
+           "model surface.",
+    show="Retention is kept as a measurement and not wired; the product keeps ESPN's "
+         "availability.")
+
+RETENTION_HARNESS = Harness(
+    name="injury_retention", arm_a="retention", arm_b="out_zero", within=WITHIN,
+    ceiling_arm=RETENTION_CEILING_ARM, actions=RETENTION_ACTIONS,
+    unit="MAE points per designated player-week", places=4,
+    arm_modules=("hub.models.injury", "hub.names"))
 
 # Shrinkage grid for the per-type multiplier, chosen on TRAINING rows only. Shrinking toward
 # 1.0 rather than imposing a cell minimum is what lets a thin type (Groin, n=450 across four
@@ -359,7 +384,7 @@ def walk_forward_type(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.Data
         oracle = type_adjustment(now, ret, fallback=pooled, k=0.0)
         actual = now["pts"].to_numpy().astype(float)
         frames.append(pl.DataFrame({
-            "season": [yr] * now.height, "k": [k] * now.height,
+            "season": [yr] * now.height, "gsis_id": now["gsis_id"], "k": [k] * now.height,
             "err_retention": np.abs(predict_retention(now, ret, fallback=pooled) - actual),
             "err_type": np.abs(predict_with_type(now, ret, adj, fallback=pooled) - actual),
             "err_oracle": np.abs(predict_with_type(now, ret, oracle, fallback=pooled) - actual),
@@ -372,7 +397,7 @@ def type_frame(errs: pl.DataFrame) -> pl.DataFrame:
     (positive when type-adjusting helps), `ceiling_diff` is `retention` minus the declared
     ceiling arm's. A frame with no `err_oracle` carries no `ceiling_diff` column at all, so the
     Gate reads it as a ceiling never measured -- NOT-RUNNABLE -- and not as a ceiling of zero."""
-    cols = [pl.col("season"),
+    cols = [pl.col("season"), pl.col("gsis_id"),
             (pl.col("err_retention") - pl.col("err_type")).alias("diff")]
     if "err_oracle" in errs.columns:
         cols.append((pl.col("err_retention") - pl.col("err_oracle")).alias("ceiling_diff"))
@@ -417,62 +442,123 @@ def type_verdict(errs: pl.DataFrame, *, run: GateRun | None = None) -> tuple[str
                          f"could establish.\n{line}")
 
 
-def walk_forward(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
-    """Held-out mean absolute error per season, table against two simpler rules.
+ERR_COLS = ("baseline", "out_zero", "table", "retention")
 
-    Three candidates, and the two baselines are the ones a person would actually use:
+
+def walk_forward_rows(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
+    """One row per held-out designated player-week: every candidate's absolute error on it.
+
+    Four candidates, and the two simple ones are the ones a person would actually use:
 
       * `baseline`  -- ignore the designation; predict his healthy average. The null.
       * `out_zero`  -- bench anyone listed Out or Doubtful, otherwise ignore it. The rule
-                       every fantasy manager already follows without a model.
-      * `table`     -- the fitted (status, practice) penalties.
+                       every fantasy manager already follows without a model. **The
+                       incumbent the gate measures `retention` against.**
+      * `table`     -- the fitted (status, practice) additive penalties. A diagnostic.
+      * `retention` -- the fitted multiplicative table. The arm under test.
 
-    Fitting is on strictly earlier seasons only.
+    plus `err_ceiling` (#360): the declared ceiling arm, the (status, practice) retention table
+    fitted *in sample on this held-out season's own designated rows* (same `min_cell`, thin
+    cells folded to that season's own pooled ratio) and scored on them. It sees the outcome it
+    is scored on, so it bounds what any walk-forward fit of this functional form could earn;
+    it is never an arm.
+
+    Fitting is on strictly earlier seasons only, except `err_ceiling`. Per observation rather
+    than per season so the Gate can pair the arms (the same player-week scored by both) and
+    cluster on the player (`gsis_id`).
     """
-    rows = []
+    frames = []
     for yr, past, now in expanding_seasons(obs):
         table = penalty_table(past, min_cell=min_cell)
         ret = retention_table(past, min_cell=min_cell)
         pooled = _mean(past, "delta")
-        pb = float(past["baseline"].sum() or 0.0)
-        pooled_ret = float(past["pts"].sum() or 0.0) / pb if pb > 0 else 1.0
+        pooled_ret = _pooled_retention(past)
         actual = now["pts"].to_numpy().astype(float)
         base = now["baseline"].to_numpy().astype(float)
         ruled_out = np.array([s in ("Out", "Doubtful") for s in now["status"].to_list()])
+        in_sample = retention_table(now, min_cell=min_cell)
         preds = {
             "baseline": base,
             "out_zero": np.where(ruled_out, 0.0, base),
             "table": predict(now, table, fallback=pooled),
             "retention": predict_retention(now, ret, fallback=pooled_ret),
+            "ceiling": predict_retention(now, in_sample, fallback=_pooled_retention(now)),
         }
-        rows.append({"season": yr, "n": now.height,
-                     **{f"mae_{k}": float(np.abs(v - actual).mean()) for k, v in preds.items()}})
-    return pl.DataFrame(rows)
+        frames.append(pl.DataFrame({
+            "season": [yr] * now.height, "gsis_id": now["gsis_id"],
+            **{f"err_{k}": np.abs(v - actual) for k, v in preds.items()}}))
+    return pl.concat(frames) if frames else pl.DataFrame()
 
 
-def verdict(wf: pl.DataFrame) -> tuple[str, str]:
-    """Pre-registered. The table must beat BOTH simpler rules on held-out mean absolute error.
+def _pooled_retention(df: pl.DataFrame) -> float:
+    """Ratio of totals over every row: what a cell absent from the table falls back to."""
+    b = float(df["baseline"].sum() or 0.0)
+    return float(df["pts"].sum() or 0.0) / b if b > 0 else 1.0
 
-    Both, not either: beating "ignore the injury report" only shows that injuries matter, which
-    nobody doubts. The rule worth beating is the one a manager already follows for free — bench
-    anyone ruled out — and a table that cannot beat that is a lookup nobody needs.
+
+def walk_forward(obs: pl.DataFrame, *, min_cell: int = MIN_CELL) -> pl.DataFrame:
+    """Held-out mean absolute error per season: the diagnostic table `main` prints.
+
+    The four candidates' means over `walk_forward_rows`, one row per held-out season. Only
+    `retention` against `out_zero` is gated (`verdict`); `table` and `baseline` are reported.
     """
-    if wf.is_empty():
+    rows = walk_forward_rows(obs, min_cell=min_cell)
+    if rows.is_empty():
+        return pl.DataFrame()
+    return (rows.group_by("season")
+                .agg(pl.len().alias("n"),
+                     *[pl.col(f"err_{c}").mean().alias(f"mae_{c}") for c in ERR_COLS])
+                .sort("season"))
+
+
+def retention_frame(errs: pl.DataFrame) -> pl.DataFrame:
+    """The paired rows for the Gate: `diff` is `out_zero`'s error minus `retention`'s (positive
+    when retention helps), `ceiling_diff` is `out_zero`'s minus the declared ceiling arm's. A
+    frame with no `err_ceiling` carries no `ceiling_diff` column at all, so the Gate reads it
+    as a ceiling never measured -- NOT-RUNNABLE -- and not as a ceiling of zero."""
+    cols = [pl.col("season"), pl.col("gsis_id"),
+            (pl.col("err_out_zero") - pl.col("err_retention")).alias("diff")]
+    if "err_ceiling" in errs.columns:
+        cols.append((pl.col("err_out_zero") - pl.col("err_ceiling")).alias("ceiling_diff"))
+    return errs.select(cols)
+
+
+def retention_run(errs: pl.DataFrame, *, publish: bool = False, seasons: Sequence[int] = (),
+                  seed: int = 0, ledger: Ledger | None = None) -> GateRun:
+    """`retention` against `out_zero` through the one Gate: `Harness.decide` for the pure
+    verdict, `Harness.run` -- the report with stage 2 and the four stamps, and a Ledger write --
+    when `publish`."""
+    paired = retention_frame(errs)
+    if publish:
+        return RETENTION_HARNESS.run(paired, seed=seed, ledger=ledger,
+                                     recipe=recipe(baseline=BASELINE, seasons=list(seasons)))
+    return RETENTION_HARNESS.decide(paired, seed=seed)
+
+
+def verdict(errs: pl.DataFrame, *, run: GateRun | None = None) -> tuple[str, str]:
+    """Is retention the availability model? The Gate's answer, `(model, sentence)`.
+
+    **Not an argmin since #360.** It took the lowest of four mean MAEs and adopted whichever
+    fitted table that was: no interval, no every-season half, no ceiling. The bar is now
+    `experiment.gate`'s, the same two halves every other comparison faces, and the rule is
+    pre-registered (`docs/weekly-injury.md`): `retention` is the availability model exactly when
+    the Gate says ADOPT for it against `out_zero`. REMOVE, SHOW and NOT-RUNNABLE (the design
+    could not have found the effect, which is not that there was none) each leave `out_zero`
+    standing, with the Gate's own sentence beside it. What the product wires is not this
+    function's to change.
+
+    `run` is what `main` hands in so the gate is run once, published, and read here.
+    """
+    if errs.is_empty() or "err_retention" not in errs.columns:
         return "baseline", "no held-out seasons; nothing measured."
-    m = {c: _mean(wf, f"mae_{c}") for c in CANDIDATES}
-    best = min(m, key=lambda c: m[c])
-    if best in ("table", "retention"):
-        # Every candidate is reported, not just the winner and the baselines. The additive
-        # table losing to a one-line rule is the finding that motivated the multiplicative
-        # one, and a verdict that printed only the winner would bury it.
-        return best, (f"ADOPT '{best}': held-out MAE "
-                      + ", ".join(f"{c} {m[c]:.4f}" for c in CANDIDATES)
-                      + f". '{best}' beats bench-the-ruled-out by "
-                      f"{m['out_zero'] - m[best]:.4f}.")
-    return best, (f"KEEP '{best}': no fitted table beat both simpler rules "
-                  f"(retention {m['retention']:.4f}, table {m['table']:.4f}, "
-                  f"out_zero {m['out_zero']:.4f}, baseline {m['baseline']:.4f}). A lookup "
-                  f"that cannot beat benching the ruled-out is a lookup nobody needs.")
+    got = run if run is not None else retention_run(errs)
+    label, sentence = got.verdict
+    line = (f"  retention vs out_zero: {label}: mean gain {float(got.summary['mean']):+.4f} MAE"
+            f" -- {sentence}")
+    if label == "ADOPT":
+        return "retention", f"ADOPT 'retention': it beats bench-the-ruled-out.\n{line}"
+    return "out_zero", (f"KEEP 'out_zero': retention did not clear the Gate against "
+                        f"bench-the-ruled-out.\n{line}")
 
 
 def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> int:
@@ -505,16 +591,25 @@ def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> 
         print(f"  {r['status']:<14} {r['practice']:<9} {r['n']:>5} "
               f"{r['penalty']:>+9.2f} {r['se']:>7.2f}")
 
+    rows = walk_forward_rows(obs)
     wf = walk_forward(obs)
     if not wf.is_empty():
-        print(f"\n  Held-out MAE, {wf.height} seasons, fitting only on earlier ones:")
+        print(f"\n  Held-out MAE (diagnostic; only retention against out_zero is gated), "
+              f"{wf.height} seasons, fitting only on earlier ones:")
         print(f"  {'season':>6} {'n':>5}  " + "  ".join(f"{c:>10}" for c in CANDIDATES))
         for r in wf.iter_rows(named=True):
             print(f"  {r['season']:>6} {r['n']:>5}  "
                   + "  ".join(f"{r['mae_' + c]:>10.4f}" for c in CANDIDATES))
         print(f"  {'mean':>6} {'':>5}  "
               + "  ".join(f"{_mean(wf, 'mae_' + c):>10.4f}" for c in CANDIDATES))
-    print(f"\n  {verdict(wf)[1]}")
+    # Is retention the availability model? The Gate (#360), not an argmin.
+    if not rows.is_empty():
+        gate_run = retention_run(rows, publish=True, seasons=seasons, ledger=ledger)
+        print("\n  === retention against out_zero ===")
+        print("\n".join(gate_run.lines))
+        print(f"\n  {verdict(rows, run=gate_run)[1]}")
+    else:
+        print(f"\n  {verdict(rows)[1]}")
 
     # Does what is wrong with him add to how he practised? The Gate (#343).
     errs = walk_forward_type(obs)

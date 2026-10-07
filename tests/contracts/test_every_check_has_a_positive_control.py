@@ -150,11 +150,14 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_no_ceiling_measured_is_not_runnable_even_when_the_effect_is_clean",
         "test_a_ceiling_below_the_design_s_resolution_is_not_runnable",
     )),
-    # One direction only: `injury.verdict` is an argmin with no bar (S3, #360, frozen), so
-    # there is no "too small to adopt" case to plant until it has one. The positive
-    # direction is controlled; the negative is #360's to add.
+    # #360: `injury.verdict` is the Gate over retention and `out_zero`, no longer an argmin, so
+    # both directions are planted: a clean win adopts, and each way of not clearing it does not.
     "hub.models.injury.verdict": ("tests/unit/test_injury.py", (
         "test_a_table_that_beats_both_simple_rules_is_adopted",
+        "test_winning_on_average_but_losing_a_season_is_not_adopted",
+        "test_a_gain_too_small_to_distinguish_from_noise_is_not_adopted",
+        "test_no_ceiling_measured_is_not_runnable_for_retention",
+        "test_a_ceiling_below_the_design_s_resolution_is_not_runnable_for_retention",
     )),
     "hub.models.coverage.verdict": ("tests/unit/test_coverage.py", (
         "test_the_verdict_reads_the_pre_registered_band",
