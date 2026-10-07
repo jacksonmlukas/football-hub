@@ -371,3 +371,66 @@ into a product path before then is what the contract test refuses.
 > requirement attached, reachable only through its own NOT-RUNNABLE branch, is exactly what
 > #300 closes. Item 1 is unchanged and still gates both: neither the coefficient nor the
 > diagnostic has a row to read until a starter source that is timely before kickoff exists.
+
+## Noted 2026-10-06 (#420, Audit V's V2) — what the pin does to the study's event set, and where the study's events come from now
+
+Written beside the pin's note on the live path above, which stands: *until `COMMIT` is
+advanced the live state names the starters as they stood at the pin*. This is the same fact
+read at the study, where it had never been written down.
+
+**What the pin did to the study.** The line-move study (`hub.models.starter_change --events
+--study`) read its in-season starter changes from the pinned nfeloqb file, and the file at
+`2c95e5fc` holds **16 games of 2026**, all week 1 (game days 2026-09-09 to 09-14), two of them
+with a score. A change made after the pin is on no row of it. So the run of 2026-10-06 that
+printed `2026: 0 changes on 0 event games` was a statement about the file, not about the season
+— which by then had four played weeks — and it printed as a count, which is [method.md](method.md)
+rule 18's shape: the same output whether or not anything happened.
+
+**Where the events come from now (#421, ADOPTED (B)).** From play-by-play in the nflverse store:
+a team's starter in a game is the passer of its first pass play
+(`hub.models.starter_change.starters_from_pbp`, read through `hub.fetch.nflverse.load`'s
+`STARTER_PBP_COLS` slice and the schedule), regular season only, the passer identified by
+GSIS id and never by name. The adjustment's pinned input, `COMMIT`, the gate (which still
+replays `nfeloqb.state`) and `config_digest` are untouched: nothing in `hub.config`,
+`hub.fetch.nfeloqb`, `conf/` or `hub.models.quarterback` changed, and the digest is the one
+the previous commit produced. The study's per-run output now gives each source's horizon on one
+line (played through, starters observed through, the pinned file's last game, the archive's
+last poll), and a season whose played games run past what a source has seen prints **NOT
+ESTABLISHED past <date>** in place of its count.
+
+**Reconciliation, 2022–2025, before any 2026 event was read** (the acceptance #421 carried
+into #420). Both definitions of "starter" exist on 2,174 regular-season team-games (the file
+carries 2,174 of the 2,176 the schedule holds):
+
+| | |
+|---|---|
+| play-by-play starter differs from nfeloqb's starter column | **6 of 2,174 (0.28%)** |
+| in-season changes: nfeloqb / play-by-play / both | 231 / 233 / **228** (file-only 3, play-by-play-only 5) |
+| by season (file / play-by-play / both) | 2022: 62 / 64 / 62 · 2023: 61 / 61 / 61 · 2024: 51 / 49 / 48 · 2025: 57 / 59 / 57 |
+
+The six, by what the play-by-play shows (counts only): **3** where the first passer threw as
+many pass plays or more than nfeloqb's starter (the file named someone who then did not
+carry the game); **2** where nfeloqb's starter threw more than the first passer (a relief
+appearance early in the game); **1** a brief opening appearance (the first passer under three
+pass plays, nfeloqb's starter eight or more — the trick-play shape). Six team-games in all
+have a first passer who threw two or fewer pass plays; two threw one. Two rules were run
+beside the adopted one as context and not as candidates: the first pass *attempt* gives the
+same six; the passer with the most pass plays disagrees on **62 (2.85%)** and is the worse
+reading of "who started". At 0.28% the rate does not change what an "event" is, so the rule
+was not stopped on, and it was not tuned after the count (method.md rule 1); the standing
+cost is that a trick play which opens a game names its thrower the starter and reads as a
+change out and a change back, pinned by name in `tests/unit/test_starter_change.py`.
+
+**What this does not buy, as of 2026-10-06.** The study's regressor is the *value* of the
+arriving minus the departing starter, read off the pinned file — and the file holds no value
+for any 2026 game after week 1. Play-by-play shows **10 in-season changes on 9 event games in
+2026** (weeks 2–4, through the 2026-10-05 games); none has a gap, so each is refused as
+*unvalued* and counted, never entered as a zero. Their prices are no better: the back-fill's
+lookahead predates the season, so each of the nine has a frozen price that is also its only
+poll before the game day — `windowless`, a third fact beside *never polled* and *polled only
+after the change*, refused by the study rather than read as a move of zero. #383's in-season
+captures begin with the 2026-10-07 slate; `store.lines` unions them from `state/odds/` with no
+`--store` (a `--store` elsewhere reads the `_state/odds` tree inside it, and the run line
+says how many files it read). The coefficient stays not established for 2026. What would
+establish it is a value for a starter the pinned file has not seen, which is a different
+object from the starter and not decided here.
