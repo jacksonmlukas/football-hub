@@ -87,18 +87,84 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # 4,096-byte cap that a counter honours is a cap it crosses on schedule -- it crossed it on
 # 2026-10-06, when #343's routed harnesses wrote their first four entries (the file held 2,997
 # bytes). It is still *our own* small bookkeeping and still no payload: an entry is a name, two
-# digests, an interval and a per-season record. **Sized from the measured entry**: 590 bytes on
-# average and 870 at most today (the longest carries five per-season records), so a budget of
-# 800 bytes an entry puts 256 KiB at about 320 runs -- "a few hundred", the size at which someone
-# should decide what to do with the history. (An earlier 64 KiB here claimed the same figure and
-# held about 80; the cap and its reasoning now agree.) A counter's cap stays as it was, and this
-# is the only file with its own.
-LEDGER_CAPS = {"state/gate-width.json": 262144}
+# digests, an interval and a per-season record. **Sized from the measured entry** (#426, again
+# at #434, restated at #439). *Measured* on `state/gate-width.json` as it is on disk (19 rows,
+# 23,283 bytes; each row counted as written, indented two levels): the 16 rows without inputs
+# average 977 bytes and reach 1,339 (the longest carries five per-season records); the 3 rows
+# that carry `inputs` inline (#429) are 1,147, 1,172 and 5,317 bytes, 7,636 between them
+# (over all 19 rows the average is 1,224) -- the 5,317 is the draft gate's 36 reads, the
+# reason the list is stored once in `state/inputs/` and a new row carries a digest. *Projected*
+# (not measured): the two fields since added, `code_digest` (#435) and `inputs_digest` (#434),
+# add about 65 bytes a row, so a budget of 1,400 bytes an entry is the measured maximum plus
+# those, rounded up. 384 KiB (393,216 bytes) less the 7,636 legacy bytes (append-only, not
+# rewritten) is about 275 such entries -- "a few hundred", the size at which someone should
+# decide what to do with the history. (The earlier 256 KiB was sized at 800 bytes an entry on
+# the compact-JSON measure below, which is not the file's own size: the file is indented, so
+# its rows are larger than that arithmetic said.) A counter's cap stays as it was, and this is
+# the only file with its own.
+#
+# The coverage measurement has its own budget since #309. It is a *summary of one run*, rewritten
+# in place (not appended), and it grew from 3.2 KB when every group row began carrying its
+# `position`, `n`, `n_cal`, deviation, sigma and the named cells that fell back to pooled
+# calibration, beside the parametric table it replaced (the prior values, kept in the file).
+# **Sized from the measured file, re-measured in #438** (the first figure here, 8,544, was taken
+# before the rows gained their verdicts and was stale on arrival): 8,935 bytes serialised the way
+# this test measures them, and **10,899 with all three audit looks recorded** -- the file's whole
+# life under #310's rule, an `audit` block plus about 145 bytes a look in `audit_looks`. 16 KiB is
+# 1.5 times that end-of-life size: room for a sixth season's rows or a longer window, not room
+# for a payload. Still no third party's data in it -- coverage rates of this repo's own interval.
+LEDGER_CAPS = {"state/gate-width.json": 393216, "state/interval_coverage.json": 16384}
+
+
+def test_the_coverage_artifacts_cap_and_its_comment_agree_with_the_file():
+    """#438: the comment above sized the cap from a figure that was stale on arrival, and
+    nothing noticed. The cap must sit within a factor of 2.5 of the file as measured the way
+    `test_the_state_directory_carries_no_third_party_payload` measures it -- 1.5x the file at its
+    three-look end of life is the intent -- so a cap left 10x too slack, or a file that has
+    outgrown its reasoning, fails here rather than in a comment.
+
+    Mutation (observed): `"state/interval_coverage.json": 163840` is red."""
+    cap = LEDGER_CAPS["state/interval_coverage.json"]
+    size = len(json.dumps(json.loads((ROOT / "state" / "interval_coverage.json").read_text())))
+    assert 1.0 < cap / size <= 2.5, f"cap {cap} against a file of {size}: resize it and its comment"
+
+
+# #432: one capture of the weekly consensus page, a few hundred ranked players, is a record of
+# what could have been read before a week's first game and is the only thing that can ever say
+# so. Bigger than a counter by design; still one small JSON document a file.
+CAPTURE_CAP = 131072
+
+# #434: the content-addressed input sets under `state/inputs/`, one file per distinct set of
+# pins a gate run read (identical sets share a file). A file is a small dict of
+# `{source, as_of, digest}` reads, 2,178 bytes for the draft gate's 36 -- the largest run
+# today -- so 8,192 per file is about 3.7x the measured maximum (~130 reads) and a file at the
+# cap means a gate reads an order of magnitude more sources than any does now. A new file
+# appears only when a pin moves (a refetch, a new season), not on every run; the directory as a
+# whole has its own budget, `INPUTS_DIR_BUDGET`, and its own headroom check below.
+INPUTS_PREFIX = "state/inputs/"
+INPUTS_FILE_CAP = 8192
+INPUTS_DIR_BUDGET = 131072
+# A contract that fails at the cap tells you after the fact. These fail at this share of it, so
+# the decision (roll the ledger by season, prune the sets no row names) is made while the file
+# still works.
+HEADROOM = 0.8
 
 
 def test_the_state_directory_carries_no_third_party_payload():
     """The reason `data/raw/` is excluded still applies to whatever replaces it. Counters
-    and balances are ours; a cached response is not."""
+    and balances are ours; a cached response is not.
+
+    One adopted exception (#383, restated 2026-10-06/07): `state/odds/` holds the betting
+    market's per-game median spread, derived from The Odds API. Their terms permit "storing
+    our data and retaining it indefinitely" and "calculating and displaying values you derive
+    from our data", and prohibit redistribution "as a standalone data product"; this repo is
+    private. What this test holds is the mechanical line: small JSON records, nothing else.
+
+    A second (#432): `state/consensus/` holds one week's FantasyPros `weekly-op` page, as
+    redistributed by DynastyProcess, taken before kickoff because a ranking that is not kept
+    cannot be shown to have been read in time. That source's terms have **not** been checked the
+    way The Odds API's were; the repo is private, and `state/README.md` says to re-examine this
+    directory first if it is ever made public."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
                              capture_output=True, text=True).stdout.split()
     assert tracked, "state/ is not tracked, so a runner still starts with no record"
@@ -108,9 +174,50 @@ def test_the_state_directory_carries_no_third_party_payload():
     for f in records:
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
-        cap = LEDGER_CAPS.get(f, 4096)
-        what = "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter"
+        stored_set = f.startswith(INPUTS_PREFIX)
+        capture = f.startswith("state/consensus/")
+        cap = (INPUTS_FILE_CAP if stored_set else CAPTURE_CAP if capture
+               else LEDGER_CAPS.get(f, 4096))
+        what = ("a stored input set" if stored_set
+                else "one week's captured page" if capture
+                else "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
         assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
+
+
+def _headroom_failure(used: int, cap: int, what: str) -> str | None:
+    """The message when `used` has passed `HEADROOM` of `cap`, else `None`."""
+    if used <= cap * HEADROOM:
+        return None
+    return (f"{what} is {used:,} bytes, past {HEADROOM:.0%} of its {cap:,}-byte cap: decide what "
+            f"to do with the history (roll by season, prune) before the cap test fails")
+
+
+def test_the_gate_ledger_and_its_stored_inputs_have_headroom_before_their_caps():
+    """#434: the cap test above fails *at* the cap, when the decision is already late -- the
+    ledger crossed 4,096 bytes on 2026-10-06 and 256 KiB was within 45 entries on 2026-10-07
+    before anyone had asked. This fails at 80% of each cap, on the bytes the file occupies on
+    disk (indented, which the compact `json.dumps` above undercounts by about a third)."""
+    ledger = ROOT / "state" / "gate-width.json"
+    problems = [_headroom_failure(ledger.stat().st_size, LEDGER_CAPS["state/gate-width.json"],
+                                  "state/gate-width.json")]
+    stored = sorted((ROOT / "state" / "inputs").glob("*.json"))
+    problems.append(_headroom_failure(sum(f.stat().st_size for f in stored), INPUTS_DIR_BUDGET,
+                                      "state/inputs/"))
+    problems += [_headroom_failure(f.stat().st_size, INPUTS_FILE_CAP, f"state/inputs/{f.name}")
+                 for f in stored]
+    assert not [p for p in problems if p], [p for p in problems if p]
+
+
+def test_the_headroom_check_fires_where_it_says_it_does():
+    """Rule 18: a check that never fails reads as headroom. Planted at the boundary -- one byte
+    under 80% passes, one over fails -- and against the real caps, so it is the figures in use
+    that are exercised, not a fixture's."""
+    cap = LEDGER_CAPS["state/gate-width.json"]
+    edge = int(cap * HEADROOM)
+    assert _headroom_failure(edge, cap, "x") is None
+    over = _headroom_failure(edge + 1, cap, "x")
+    assert over is not None and "past 80%" in over
+    assert _headroom_failure(INPUTS_FILE_CAP, INPUTS_FILE_CAP, "f") is not None
 
 
 def test_the_slate_commits_the_state_it_spent():

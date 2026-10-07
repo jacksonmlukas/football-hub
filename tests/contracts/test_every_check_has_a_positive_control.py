@@ -92,6 +92,26 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_void_condition_preempts_every_branch_and_is_the_caller_s_sentence",
         "test_a_ceiling_below_the_effect_says_so_loudly_in_the_gate_s_own_places",
     )),
+    # #432: the capture's refusal (rule 18's own control for it) and the read that excludes a
+    # late capture the write never saw -- both planted on either side of the deadline.
+    "hub.fetch.consensus.write_capture": ("tests/unit/test_fetch_consensus.py", (
+        "test_a_capture_written_after_kickoff_is_refused_and_nothing_lands",
+        "test_a_capture_is_append_only_atomic_and_idempotent",
+    )),
+    # #437: the reading's own refusals -- before the horizon (dates, then the data), a different
+    # arm, too few weeks -- each planted and flipped.
+    "hub.season.weekly_forward.read_forward": ("tests/unit/test_weekly_forward.py", (
+        "test_a_run_before_the_horizon_reads_no_outcome",
+        "test_dates_past_the_horizon_with_week_14_absent_from_the_data_is_not_yet",
+        "test_a_different_arm_refuses_the_reading_and_loads_nothing",
+        "test_fewer_than_the_pre_registered_weeks_is_not_runnable_and_loads_nothing",
+        "test_a_planted_effect_is_detected_in_both_directions",
+    )),
+    "hub.season.weekly_forward.admit": ("tests/unit/test_weekly_forward.py", (
+        "test_a_capture_after_kickoff_is_excluded_at_the_read_and_named",
+        "test_a_stale_page_is_refused_and_the_latest_valid_capture_is_the_one_used",
+        "test_a_capture_first_committed_after_the_deadline_is_not_admitted",
+    )),
     "hub.models.margin.verdict": ("tests/unit/test_margin.py", (
         "test_a_better_challenger_is_adopted",
         "test_a_challenger_better_on_average_but_not_every_season_is_not_adopted",
@@ -139,6 +159,16 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub.models.coverage.verdict": ("tests/unit/test_coverage.py", (
         "test_the_verdict_reads_the_pre_registered_band",
         "test_the_gate_refuses_when_the_interval_leaves_the_band",
+    )),
+    # #310: the audit-time verdict and its per-position reading. The plants are a marginal
+    # outside 80 +/- 2 (fails), a position below N = 8,377 (no verdict) and one at it (rules).
+    "hub.models.coverage.audit_verdict": ("tests/unit/test_coverage_audit.py", (
+        "test_a_marginal_outside_eighty_plus_or_minus_two_fails_the_audit",
+        "test_a_position_below_the_minimum_gets_no_verdict_only_its_deviation_and_sigma",
+    )),
+    "hub.models.coverage.group_verdict": ("tests/unit/test_coverage_audit.py", (
+        "test_a_position_below_the_minimum_gets_no_verdict_only_its_deviation_and_sigma",
+        "test_a_position_at_the_minimum_does_return_a_verdict_at_root_two_binomial_se",
     )),
     "hub.draft.adherence.verdict": ("tests/unit/test_adherence.py", (
         "test_twelve_of_sixteen_meets_it",

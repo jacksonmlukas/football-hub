@@ -1,34 +1,61 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-09-11T19:23:43+00:00",
+  "generated_at": "2026-10-07T07:41:20+00:00",
   "shape": "summary",
   "season": 2026,
-  "week": null,
+  "week": 6,
   "deadline": {
-    "id": null,
-    "name": null
+    "id": "2026-10-07T0130Z",
+    "name": "evening"
   },
-  "fetched": false,
+  "fetched": true,
   "stale": true,
-  "reason": "nothing was captured: the first availability report is due 2026-09-17T00:00:00+00:00, and this run is before it",
+  "reason": "the page's shape changed (PageShapeChanged); the raw page is archived and nothing was parsed out of it",
   "documents": {
-    "seen": 0,
-    "new": 0
+    "seen": 1,
+    "new": 1,
+    "reports": 0
+  },
+  "skipped": {
+    "count": 0,
+    "by_reason": {},
+    "hosts": []
   },
   "lines": {
     "rows": null,
     "captured_at": null,
-    "why": "nothing was captured: the first availability report is due 2026-09-17T00:00:00+00:00, and this run is before it"
+    "why": "not captured: TypeError"
   },
   "missed": {
-    "count": 0,
-    "deadlines": []
+    "count": 20,
+    "deadlines": [
+      "2026-09-17T0130Z",
+      "2026-09-18T0130Z",
+      "2026-09-19T0130Z",
+      "2026-09-19T1500Z",
+      "2026-09-19T2100Z",
+      "2026-09-20T0130Z",
+      "2026-09-23T0130Z",
+      "2026-09-24T0130Z",
+      "2026-09-25T0130Z",
+      "2026-09-26T0130Z",
+      "2026-09-26T1500Z",
+      "2026-09-26T2100Z",
+      "2026-09-27T0130Z",
+      "2026-09-30T0130Z",
+      "2026-10-01T0130Z",
+      "2026-10-02T0130Z",
+      "2026-10-03T0130Z",
+      "2026-10-03T1500Z",
+      "2026-10-03T2100Z",
+      "2026-10-04T0130Z"
+    ]
   },
-  "archive_rows": 0,
+  "archive_rows": 1,
   "quota": {
-    "month": "2026-09",
-    "used": 0,
+    "month": "2026-10",
+    "used": 1,
     "limit": 1000
   }
 }

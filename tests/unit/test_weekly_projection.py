@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from hub.models import weekly as W
+from hub.exhibits import weekly_projection as W
 
 
 def _rows(n=200, week=10, season=2024, seed=0, **over):
@@ -450,7 +450,7 @@ def test_the_published_spread_earns_its_place_in_the_score():
 
 
 def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
-    """`shipped_quantiles` must grade what `hub.models.predict` serves, not a second
+    """`parametric_quantiles` must grade what `hub.models.predict` serves, not a second
     implementation of `sd = K*sqrt(mu)` that can drift away from it.
 
     Proved by making the published spread zero at its source: with every `WEEKLY_K` at zero
@@ -460,7 +460,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     """
     mu = np.array([12.0, 3.0, 21.5])
     actual = np.array([4.0, 9.0, 21.5])
-    got = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+    got = W.crps_from_quantiles(W.parametric_quantiles(mu, ["WR", "RB", "QB"]), actual)
     assert (got > 0.0).all(), "a week scored at zero is a forecast with no spread at all"
     # The third row is the outcome landing exactly on the projection, where a point mass
     # scores zero and any honest distribution scores more. Per row the two are not ordered;
@@ -471,7 +471,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(W.predict, "WEEKLY_K", dict.fromkeys(W.predict.WEEKLY_K, 0.0))
         mp.setattr(W.predict, "WEEKLY_K_POOLED", 0.0)
-        flat_dist = W.crps_from_quantiles(W.shipped_quantiles(mu, ["WR", "RB", "QB"]), actual)
+        flat_dist = W.crps_from_quantiles(W.parametric_quantiles(mu, ["WR", "RB", "QB"]), actual)
     assert flat_dist == pytest.approx(np.abs(mu - actual), abs=1e-9)
 
     # And the third moment, which the spread law says nothing about: weekly scoring is
@@ -479,7 +479,7 @@ def test_the_crps_column_reads_the_published_laws_rather_than_a_copy_of_them():
     # by touchdown spikes -- so the quantiles being graded must sit below their own centre.
     # A normal fitted to the same two moments would put the median exactly on it, and every
     # assertion above would still hold.
-    wr = W.shipped_quantiles(np.array([12.0]), ["WR"])[0]
+    wr = W.parametric_quantiles(np.array([12.0]), ["WR"])[0]
     assert float(np.median(wr)) < 12.0 - 0.5, (
         "the graded distribution is symmetric about its mean, so it is not the one "
         "`predict.skewed` serves")
@@ -528,6 +528,24 @@ def test_the_report_cites_the_coverage_measurement_rather_than_a_figure_typed_he
     # `COVERS` at 77.4% with only "80%" on the line would read as the label covering.
     assert "against the claimed 77%" in text and "labelled 80%" in text
     assert "2026-09-13" in text, "a measurement with no date is not one that can go stale"
+
+
+def test_the_report_says_the_figure_is_over_the_whole_scored_board_with_its_clipped_share():
+    """#309: the gate stopped leaving the clipped weeks out, so the line says what population
+    it is over, how much of it was clipped, and how much of the board it could not score --
+    and a figure over the whole board must not be worded as 'unclipped'."""
+    from hub.models import coverage
+
+    published = {"centre": "prior", "lookahead": False, "n": 16061,
+                 "gate_subset": "all", "gate_n": 15000, "gate_cov80": 0.80,
+                 "gate_claim": 0.77, "band": 0.02, "verdict": "OVER-COVERS",
+                 "gate_clipped_share": 0.31, "n_uncalibrated": 1061,
+                 "generated_at": "2026-10-06"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(coverage, "published_summary", lambda *a, **k: published)
+        text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
+    assert "15,000 scored player-weeks" in text and "31.0% of them clipped" in text
+    assert "1,061 of the board not scored" in text and "unclipped" not in text
 
 
 def test_an_artifact_written_before_the_claim_was_carried_reads_as_the_label():

@@ -1,0 +1,79 @@
+name: consensus
+
+# The weekly consensus page, captured before each week's first game and committed (#432).
+#
+# **Why a workflow and not a person.** The 2026 forward measurement of the Weekly projection
+# against consensus (`docs/weekly-forward.md`) scores the incumbent on the ranking that could
+# have been read before kickoff, and nothing in this repo kept one. A capture that depends on
+# someone remembering on a Wednesday is the system CLAUDE.md says dies in October; every week
+# this does not run is a week the measurement may not count.
+#
+# **Four runs a week, because a capture needs this week's page and the archive's page lands when
+# it lands.** Tuesday 21:00 UTC, then Wednesday 11:00, 17:00 and 23:00 UTC -- all before the
+# Thursday game day's midnight Eastern (04:00 UTC in daylight time, 05:00 in standard), which
+# is the deadline `hub.fetch.consensus` enforces. A run that finds no page yet for the next
+# week exits 3 and says so (a notice, not a failure); the next run tries again. Each run that
+# finds a newer page writes a new file, and the harness reads the latest one that stands.
+#
+# **A late capture is refused, not stored.** After the deadline the CLI writes nothing, and this
+# workflow has nothing to commit; the harness separately excludes any file in the tree that was
+# first committed after its deadline, whatever the file says about itself.
+#
+# The slate's concurrency group, because both commit under `state/` and two runs rebasing onto
+# each other's commit is the race that group exists for.
+on:
+  schedule:
+    - cron: "0 21 * * 2"    # Tuesday 21:00 UTC (17:00 ET): the first page FantasyPros posts
+    - cron: "0 11 * * 3"    # Wednesday 11:00 UTC
+    - cron: "0 17 * * 3"    # Wednesday 17:00 UTC
+    - cron: "0 23 * * 3"    # Wednesday 23:00 UTC (19:00 EDT): the last before a Thursday game day
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: slate
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      # Exit 3 is "nothing to capture yet" (the page is not published, or the week's deadline
+      # has passed) and is expected on most runs; any other non-zero is a failed fetch and
+      # must turn the run red so a missed week is seen, not read about in January.
+      - name: Capture the next week's consensus page
+        run: |
+          code=0
+          uv run python -m hub.fetch.consensus --capture || code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::notice::nothing captured this run; the next scheduled run tries again"
+            exit 0
+          fi
+          exit "$code"
+
+      # Only when something was written. The capture is a record, so a run that wrote one and
+      # did not commit it is the failure this directory exists to prevent.
+      - name: Commit what was captured
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # `state`, not `state/consensus`: a run that captured nothing (exit 3) in a tree with no
+          # consensus directory yet would die at the pathspec (the shape of #424), and `state` exists.
+          git add state
+          if git diff --cached --quiet; then
+            echo "nothing changed; no commit"
+            exit 0
+          fi
+          git commit -m "consensus: week capture ($(date -u +%Y-%m-%dT%H:%MZ))
+
+          Captured before the week's first game day -- see docs/weekly-forward.md and
+          docs/track-record.md rule 1."
+          git pull --rebase origin main
+          git push

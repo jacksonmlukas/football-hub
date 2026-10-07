@@ -83,6 +83,18 @@ PBP_COLS: tuple[str, ...] = (
 )
 
 
+# The slice the starter-change study reads (#420): who threw the first pass of each (game, team).
+# Its own slice, not three more columns on `PBP_COLS`, because `PBP_COLS` is what the slate
+# refreshes into the store and its pin feeds the data digest the slate prints -- widening it
+# would move that digest for a diagnostic. `season_type` keeps the postseason out of an
+# in-season question; `play_id` orders the plays inside a game; `passer_player_id` is the
+# GSIS id, so a starter is never matched by name.
+STARTER_PBP_COLS: tuple[str, ...] = (
+    "game_id", "season", "week", "season_type", "play_id", "posteam", "play_type",
+    "passer_player_id",
+)
+
+
 # The default slice of weekly player stats. 150 columns of box score, of which the weekly
 # spread fit wants one: what he actually scored, in this league's scoring.
 PLAYER_STATS_COLS: tuple[str, ...] = (

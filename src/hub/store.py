@@ -384,6 +384,12 @@ def committed_lines(base: Path | None = None) -> pl.DataFrame:
     return pl.concat(frames) if frames else pl.DataFrame()
 
 
+def committed_snapshots(base: Path | None = None) -> int:
+    """How many committed snapshot files `lines` unions under `base`, so a reader can say how
+    many it read rather than leave a run to look the same with the tree absent (#420)."""
+    return sum(1 for _ in snapshot_root(base).glob(_SNAPSHOT_GLOB))
+
+
 def _has_committed(base: Path | None) -> bool:
     return any(snapshot_root(base).glob(_SNAPSHOT_GLOB))
 

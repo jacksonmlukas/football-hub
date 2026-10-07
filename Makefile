@@ -32,7 +32,7 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # CFB_WEEK, not WEEK, and it is normally unset. WEEK is the *NFL* week -- a different
 # calendar with a different week-1 date and three more weeks in it -- so passing it here
 # would have fetched a confidently wrong college week. Left unset, `hub.fetch.cfbd` counts
-# the week from $CFB_WEEK_ONE, the date of the college season's first game, which is a fact
+# the week from $CFB_WEEK_ONE, the date of week 1's first game (not Week 0's), which is a fact
 # stated once in `.env` (or as an Actions variable) rather than a number somebody has to
 # bump every Wednesday. `make slate CFB_WEEK=3` is the one-off override, for a backfill.
 #

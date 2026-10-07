@@ -20,7 +20,7 @@ import statistics
 import polars as pl
 import pytest
 
-from hub.fetch import nfeloqb, odds
+from hub.fetch import nfeloqb, nflverse, odds, replay
 from hub.ledger import Ledger, WidthEntry
 from hub.models import experiment, quarterback
 from hub.models import starter_change as sc
@@ -85,6 +85,74 @@ PRIOR = [("2025-12-28", 2025, "17.0", "KC", "DEN", "Mahomes", "Nix", 210.0, 100.
 @pytest.fixture
 def rows():
     return source_rows(PRIOR + SEASON)
+
+
+def pbp_for(rows_df, *, drop=()):
+    """nflverse play-by-play, `STARTER_PBP_COLS`-shaped, whose first pass of every (game, team)
+    the source's rows hold was thrown by the source's own starter -- so the two definitions of
+    "starter" agree by construction and a test of the *study* is not a test of the reconciliation.
+    A game with a starter and no score is an in-flight one: its first pass is thrown, no
+    result. `drop` names (game_id, team) pairs left out, a game with no pass play yet. A
+    run play precedes each first pass, and a later pass by a backup follows it, so the rule
+    is read off the first *pass* and not the first play or the last passer."""
+    tg = sc.team_games(rows_df)
+    frames = []
+    for play_id, kind, who in ((1, "run", None), (2, "pass", "first"), (3, "pass", "later")):
+        frames.append(tg.select(
+            pl.col("game_id"), pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
+            pl.lit("REG").alias("season_type"), pl.lit(float(play_id)).alias("play_id"),
+            pl.col("team").alias("posteam"), pl.lit(kind).alias("play_type"),
+            (pl.col("qb") if who == "first" else
+             pl.lit("00-backup") if who == "later" else pl.lit(None, dtype=pl.Utf8))
+            .alias("passer_player_id"), pl.col("team")))
+    # `nflverse.PBP`'s contract refuses fewer than 1,000 rows, so a recording of a handful of
+    # plays would not reach the reader at all; the padding is kickoffs of no game on the
+    # schedule, which name no passer and join nothing.
+    # One block per season, because the reader asks for one season at a time and the contract
+    # holds each of those reads to the floor.
+    pad = pl.concat([pl.DataFrame({
+        "game_id": ["pad"] * 1000, "season": [year] * 1000, "week": [1] * 1000,
+        "season_type": ["REG"] * 1000, "play_id": [float(i) for i in range(1000)],
+        "posteam": [None] * 1000, "play_type": ["kickoff"] * 1000,
+        "passer_player_id": [None] * 1000, "team": [None] * 1000},
+        schema={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
+                "season_type": pl.Utf8, "play_id": pl.Float64, "posteam": pl.Utf8,
+                "play_type": pl.Utf8, "passer_player_id": pl.Utf8, "team": pl.Utf8})
+        for year in range(2020, 2031)])
+    out = pl.concat([*frames, pad]).sort("game_id", "team", "play_id", nulls_last=True)
+    for game_id, team in drop:
+        out = out.filter(~((pl.col("game_id") == game_id) & (pl.col("team") == team)))
+    return out.drop("team")
+
+
+def schedule_for(rows_df):
+    """nflverse's schedule for the source's rows: the game day, and the result where there is
+    one -- null until played, as the wire's is."""
+    tg = sc.team_games(rows_df)
+    home = tg.filter(pl.col("home"))
+    return home.select(
+        pl.col("game_id"), pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
+        pl.lit("REG").alias("game_type"), pl.col("date").alias("gameday"),
+        pl.col("game_id").str.split("_").list.get(3).alias("home_team"),
+        pl.col("game_id").str.split("_").list.get(2).alias("away_team"),
+        pl.col("score").alias("home_score"), pl.col("opp_score").alias("away_score"))
+
+
+def serve_world(rows_df, *, drop=(), pbp=None):
+    """Select a Replay holding the play-by-play and schedule `rows_df` implies, so the CLI's
+    events source is read through the nflverse seam offline. `pbp` replaces the derived one."""
+    frame = pbp_for(rows_df, drop=drop) if pbp is None else pbp
+    return replay.serve(
+        pbp=lambda keys: frame.filter(pl.col("season").is_in([int(k) for k in keys])),
+        schedules=schedule_for(rows_df))
+
+
+@pytest.fixture(autouse=True)
+def _the_events_source_is_served_offline(rows):
+    """Every test here that drives `main` reads its events through `nflverse.load`, which on
+    the network adapter would leave the machine; the offline suite fails a test that tries.
+    The default world is the fixture's own rows read as play-by-play."""
+    serve_world(rows)
 
 
 # --- the event construction ----------------------------------------------------------------
@@ -323,16 +391,20 @@ def test_the_first_pass_attempt_names_the_starter_in_play_by_play():
     drive does not name him and a later relief appearance does not replace him. Without the
     passer column the reader refuses by name rather than guessing off a column it has."""
     pbp = pl.DataFrame({
-        "game_id": ["g1"] * 5, "season": [2026] * 5, "week": [1] * 5,
-        "play_id": [10, 20, 30, 40, 50],
-        "posteam": ["A", "A", "B", "A", "B"],
-        "play_type": ["run", "pass", "pass", "pass", "run"],
-        "passer_player_id": [None, "a-starter", "b-starter", "a-backup", None]})
+        "game_id": ["g1"] * 5 + ["g1p"], "season": [2026] * 6, "week": [1] * 5 + [19],
+        "season_type": ["REG"] * 5 + ["POST"],
+        "play_id": [10, 20, 30, 40, 50, 60],
+        "posteam": ["A", "A", "B", "A", "B", "A"],
+        "play_type": ["run", "pass", "pass", "pass", "run", "pass"],
+        "passer_player_id": [None, "a-starter", "b-starter", "a-backup", None, "a-playoff"]})
     got = sc.starters_from_pbp(pbp).sort("team")
+    # the postseason game names no starter: this is a regular-season question (#420)
     assert got["qb"].to_list() == ["a-starter", "b-starter"]
     assert got["game_id"].to_list() == ["g1", "g1"]
     with pytest.raises(ValueError, match="passer_player_id"):
         sc.starters_from_pbp(pbp.drop("passer_player_id"))
+    with pytest.raises(ValueError, match="season_type"):
+        sc.starters_from_pbp(pbp.drop("season_type"))
 
 
 # --- the gate ----------------------------------------------------------------------------
@@ -1417,3 +1489,289 @@ def test_the_cli_refuses_when_season_is_before_since(tmp_path, capsys, rows):
 def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):
     assert sc.main([]) == 2
     assert "usage:" in capsys.readouterr().out
+
+
+# --- the event source is play-by-play (#420, ADOPTED (B) on #421) -----------------------------
+#
+# Rule 18: each check below is run against the condition it exists to detect. The mutation
+# each one was seen red under is named in its docstring.
+
+
+def _pbp_events(rows_df, pbp=None):
+    """The in-season events the study reads, built as `study_events` builds them."""
+    frame = pbp_for(rows_df) if pbp is None else pbp
+    tg = sc.team_games_from_pbp(frame, schedule_for(rows_df))
+    return tg, sc.in_season_events(sc.events(sc.observed(tg)))
+
+
+def test_a_starter_change_in_play_by_play_is_detected_as_an_event(rows):
+    """#420's control 1: KC's first pass goes from Mahomes to Gabbert in week 3 and back in
+    week 4, and both are events, dated off the schedule with the previous-game link. The Rams'
+    change across the offseason is flagged, not counted. Mutation: `events` filtering on
+    `arriving == departing` (or `starters_from_pbp` reading the last passer, which is the
+    backup here) leaves this red."""
+    _, ev = _pbp_events(rows)
+    got = ev.sort("team", "week").select("team", "week", "departing", "arriving", "prev_date")
+    assert got.rows() == [("KC", 3, "Mahomes", "Gabbert", "2026-09-20"),
+                          ("KC", 4, "Gabbert", "Mahomes", "2026-09-27")]
+
+
+def test_the_same_starter_across_games_is_no_event(rows):
+    """Control 2: with Gabbert's game given to Mahomes, nobody changes in-season -- the Rams'
+    offseason change is still flagged and still not counted. Mutation: dropping the
+    `in_season` filter from `in_season_events` turns the Rams' offseason change into an event
+    and this red."""
+    same = rows.with_columns(pl.col("qb1").str.replace("Gabbert", "Mahomes"))
+    tg, ev = _pbp_events(same)
+    assert ev.is_empty()
+    assert sc.events(sc.observed(tg)).filter(~pl.col("in_season")).height == 1
+
+
+def test_a_later_trick_play_is_not_a_change_and_a_first_one_is_the_rules_counted_cost(rows):
+    """Control 3. The rule is the passer of the *first* pass play, so a wide receiver's pass
+    after it changes nothing; and a wide receiver's pass that *opens* a game names him the
+    starter, which reads as a change out and a change back. The second half is what the rule
+    does, not what a position-aware rule would do, and it is pinned so that adding a guard is
+    a decision with this test's name on it: the reconciliation counts the exposure at six of
+    2,174 team-games with a first passer who threw two or fewer, and a guard chosen after
+    that count would be a second definition of "starter" (method rule 1). Mutation: sorting
+    `starters_from_pbp` by passer id, not play id, turns the first assertion red."""
+    base = pbp_for(rows)
+    kc2 = (pl.col("game_id") == "2026_02_KC_DEN") & (pl.col("posteam") == "KC")
+    later = pl.concat([base, base.filter(kc2 & (pl.col("play_id") == 2.0)).with_columns(
+        pl.lit(2.5).alias("play_id"), pl.lit("00-aaa-wr").alias("passer_player_id"))])
+    _, ev = _pbp_events(rows, later)
+    assert ev.sort("week")["arriving"].to_list() == ["Gabbert", "Mahomes"]      # unchanged
+
+    opened = base.with_columns(
+        pl.when(kc2 & (pl.col("play_id") == 2.0)).then(pl.lit("00-wr"))
+          .otherwise(pl.col("passer_player_id")).alias("passer_player_id"))
+    _, ev = _pbp_events(rows, opened)
+    assert ev.sort("week")["arriving"].to_list() == ["00-wr", "Gabbert", "Mahomes"]
+
+
+def test_an_event_with_no_lookahead_price_is_censored_and_counted_not_dropped(
+        tmp_path, capsys, rows):
+    """Control 4: both of the fixture's event games are priced by no poll at all -- the state of
+    a 2026 week the back-filled lookahead never reached -- and the run line counts both as
+    censored and never polled, rather than printing two event games and no mention of what
+    could not be priced. Mutation: `priced` marking `censored` false for an unpolled game
+    (or `main` filtering censored games out before counting) leaves this red."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    code = sc.main(["--events", "--since", "2026", "--cache", str(cache),
+                    "--store", str(tmp_path / "store")])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2026: 2 event games; 2 censored (no snapshot before the change could be known: " \
+           "2 never polled at all, 0 polled only after the change)" in out
+    assert "reconciliation against the pinned file" in out          # the pbp path, not the file's
+
+
+def test_a_frozen_price_that_is_also_the_only_pre_game_price_has_no_window(rows):
+    """The 2026 shape the maintainer's note ("weeks 1-5 stay censored") did not name: the
+    back-filled lookahead predates the season, so a week-2 event *has* a frozen price -- and
+    the same capture is its last one before the game day. It is not censored, and it is not
+    a move of zero; `priced` marks it `windowless` and `study_rows` refuses it. The positive
+    control is the same game with a later poll, which has a window. Mutation: dropping the
+    `windowless` term from `_priced_both_ways` leaves the first block red."""
+    tg, ev = _pbp_events(rows)
+    games = sc.event_games(sc.with_values(ev, sc.team_games(rows)))
+    lone = polls([("2026_03_LA_KC", 3.0, utc(15), 3)])
+    got = sc.priced(lone, games).filter(pl.col("game_id") == "2026_03_LA_KC")
+    assert got["censored"].to_list() == [False] and got["windowless"].to_list() == [True]
+    assert sc._priced_both_ways(lone, games).is_empty()
+    assert sc.study_rows(lone, games, tg).is_empty()
+
+    later = polls([("2026_03_LA_KC", 3.0, utc(15), 3), ("2026_03_LA_KC", 2.0, utc(24), 3)])
+    got = sc.priced(later, games).filter(pl.col("game_id") == "2026_03_LA_KC")
+    assert got["windowless"].to_list() == [False]
+    assert sc._priced_both_ways(later, games)["game_id"].to_list() == ["2026_03_LA_KC"]
+
+
+def test_an_event_whose_starter_the_pinned_file_cannot_value_has_no_gap_not_a_zero(rows):
+    """A change whose arriving starter the pinned file holds no value for -- every 2026 event
+    past the pin -- joins to a null gap, and its game has a null net gap: unknown, never zero.
+    The study refuses it and counts it (`unvalued_study_games`); the game where the file does
+    value both starters is untouched. Mutation: restoring `fill_null(0.0)` over the changed
+    side's gap (the old `net_gap`) makes `net_gap` 0.0 and the first assertion red."""
+    tg, ev = _pbp_events(rows)
+    file_tg = sc.team_games(rows)
+    blind = file_tg.filter(pl.col("game_id") != "2026_03_LA_KC")        # no values for week 3
+    games = sc.event_games(sc.with_values(ev, blind))
+    by_game = dict(zip(games["game_id"], games["net_gap"], strict=True))
+    assert by_game["2026_03_LA_KC"] is None
+    assert by_game["2026_04_DEN_KC"] is None            # its departing starter is the week-3 one
+    valued = sc.event_games(sc.with_values(ev, file_tg))
+    assert valued["net_gap"].null_count() == 0
+    assert sc.unvalued_study_games(ARCHIVE, games) == 2
+    assert sc.unvalued_study_games(ARCHIVE, valued) == 0
+    assert sc.study_rows(ARCHIVE, games, tg).is_empty()
+
+
+def test_with_values_keeps_the_dates_events_already_carry(rows):
+    """Events built off the schedule carry a date for every game; the pinned file has dates
+    for only the games it holds. `with_values` joins values and leaves dates alone -- so a
+    game the file does not hold (here, every week after week 3) keeps its date rather than
+    losing it to a null join. Mutation: re-deriving the dates from `tg` (the old behaviour)
+    nulls `prev_date` for week 4 and this goes red."""
+    _, ev = _pbp_events(rows)
+    only_early = sc.team_games(rows).filter(pl.col("week") <= 3)
+    got = sc.with_values(ev, only_early).sort("week")
+    assert got["prev_date"].to_list() == ["2026-09-20", "2026-09-27"]
+    assert got["date"].to_list() == ["2026-09-27", "2026-10-04"]
+    assert got["arriving_value"].to_list() == [60.0, None]
+
+
+def test_the_reconciliation_counts_agreement_and_stays_inside_what_both_observe(rows):
+    """Both sources name the same two KC changes, over the team-games both hold. Give
+    play-by-play a week-3 starter equal to week 2's and the file's two events become a
+    disagreement it counts (file 2, pbp 0, both 0); take week 4 out of the file and that game
+    is outside the comparison rather than a miss. Mutation: counting a game one source lacks
+    (dropping the semi-join that restricts play-by-play to the file's games) leaves the last block red."""
+    file_tg = sc.team_games(rows)
+    pbp_tg = sc.team_games_from_pbp(pbp_for(rows), schedule_for(rows))
+    agree = sc.reconcile(pbp_tg, file_tg)
+    assert agree == sc.Reconciliation(compared=file_tg.height, file=2, pbp=2, both=2)
+
+    same = sc.team_games_from_pbp(
+        pbp_for(rows.with_columns(pl.col("qb1").str.replace("Gabbert", "Mahomes"))),
+        schedule_for(rows))
+    assert sc.reconcile(same, file_tg) == sc.Reconciliation(
+        compared=file_tg.height, file=2, pbp=0, both=0)
+
+    early = file_tg.filter(pl.col("week") <= 3)
+    got = sc.reconcile(pbp_tg, early)
+    assert got == sc.Reconciliation(compared=early.height, file=1, pbp=1, both=1)
+
+
+def _played(rows_df):
+    """The fixture with its week-4 game played, so a game with a result and no observed
+    starter is something a test can make."""
+    return rows_df.with_columns(pl.col("score1").fill_null(24), pl.col("score2").fill_null(17))
+
+
+def test_a_season_played_past_the_source_is_not_established_and_counts_once_it_is(
+        tmp_path, capsys):
+    """#420's positive control (rule 18): week 4 is played and play-by-play has no pass for
+    either side yet. The season's count is printed as NOT ESTABLISHED past the last game day
+    with a starter, with the one change seen through it beside it -- not as "1 changes on 1
+    event games" as though it were the season's. The same fixture with the horizon advanced
+    (week 4's passes present) prints the season's two changes and no such line. Mutation:
+    `beyond_event_horizon` returning `{}` leaves the first block red; ignoring `qb` nulls in
+    it leaves the second red."""
+    played = _played(source_rows(PRIOR + SEASON))
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    played.write_csv(cache / nfeloqb.FILE)
+    argv = ["--events", "--since", "2026", "--cache", str(cache),
+            "--store", str(tmp_path / "store")]
+
+    serve_world(played, drop=[("2026_04_DEN_KC", "KC"), ("2026_04_DEN_KC", "DEN")])
+    assert sc.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "2026: NOT ESTABLISHED past 2026-09-27 -- 2 played team-game(s) after it have no " \
+           "observed starter; through it: 1 changes on 1 event games" in out
+    assert "horizons 2026: played through 2026-10-04 (week 4); starters observed through " \
+           "2026-09-27" in out
+
+    serve_world(played)
+    assert sc.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "2026: 2 changes on 2 event games" in out and "NOT ESTABLISHED" not in out
+    assert "starters observed through 2026-10-04" in out
+
+
+def test_the_study_says_so_when_it_can_only_read_the_pinned_file(tmp_path, capsys, rows):
+    """With play-by-play unreachable the study reads the pinned file and says it: the season
+    in progress is NOT ESTABLISHED past the file's last game, because a pinned file cannot hold
+    a change made after its pin and a count from it is a fact about the file (V2). Mutation:
+    removing the `beyond` the fallback returns prints the count with no such sentence."""
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    nflverse.select(replay.Replay({"schedules": schedule_for(rows)}))     # no pbp recorded
+    assert sc.main(["--events", "--since", "2026", "--cache", str(cache),
+                    "--store", str(tmp_path / "store")]) == 0
+    out = capsys.readouterr().out
+    assert "play-by-play unavailable (NotRecorded" in out
+    assert "2026: NOT ESTABLISHED past 2026-10-04 -- games after it are not in the source" in out
+    assert "reconciliation against" not in out
+
+
+def test_prices_past_the_archives_last_poll_are_not_established_and_are_once_it_reaches(rows):
+    """The price side of the same horizon: the fixture's polls end 2026-09-30, and a played
+    game on 2026-10-04 cannot have a frozen price from them. Advanced past the last game, no
+    season is reported. Mutation: comparing `date` to the *first* poll day instead of the last
+    leaves the second assertion red."""
+    played_tg = sc.team_games(_played(rows))
+    got = sc.beyond_price_horizon(ARCHIVE, played_tg)
+    assert got == {2026: sc.Beyond("2026-09-30", 2)}
+    ahead = polls([("2026_04_DEN_KC", 1.0, dt.datetime(2026, 10, 5, 16), 4)])
+    assert sc.beyond_price_horizon(ahead, played_tg) == {}
+    assert sc.beyond_price_horizon(polls([]), played_tg) == {}
+
+
+def test_the_study_reads_the_committed_snapshots_and_prices_an_event_off_them(
+        tmp_path, capsys, monkeypatch, rows):
+    """#383's tree under `state/odds/` is read by the study through `store.lines` with no
+    `--store`: two committed captures, one before KC's week-2 game day and one before its
+    week-3 game, price the week-3 event off a frozen and a pre-game snapshot -- the run line
+    counts the files it read and shows one game priced and one (week 4, no capture) censored.
+    Mutation: pointing `archive` at a store with no committed tree leaves "0 file(s)" and the
+    event game censored, and this red."""
+    from hub import store
+
+    monkeypatch.setattr(store, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(store, "DATA", tmp_path / "processed")
+    monkeypatch.setattr(store, "CATALOG", tmp_path / "processed" / "hub.duckdb")
+    for when, spread in ((dt.datetime(2026, 9, 17, 12), 3.0), (dt.datetime(2026, 9, 24, 12), -1.0)):
+        frame = pl.DataFrame({
+            "game_id": ["2026_03_LA_KC"], "close_spread": [spread], "spread_price": [None],
+            "close_total": [None], "total_price": [None], "captured_at": [when],
+            "polls_unmoved": [0], "unmoved_since": [None]},
+            schema={"game_id": pl.Utf8, "close_spread": pl.Float64, "spread_price": pl.Float64,
+                    "close_total": pl.Float64, "total_price": pl.Float64,
+                    "captured_at": pl.Datetime("us"), "polls_unmoved": pl.Int64,
+                    "unmoved_since": pl.Datetime("us")})
+        store.write_snapshot(frame, 2026, 3, when)
+    cache = tmp_path / "nfeloqb"
+    cache.mkdir()
+    rows.write_csv(cache / nfeloqb.FILE)
+    assert sc.main(["--events", "--since", "2026", "--cache", str(cache)]) == 0
+    out = capsys.readouterr().out
+    assert "committed snapshots read: 2 file(s)" in out
+    assert "2026: 2 event games; 1 censored (no snapshot before the change could be known: " \
+           "1 never polled at all, 0 polled only after the change), 1 with a frozen price" in out
+
+
+def test_a_schedule_without_the_dates_and_results_is_refused_by_name(rows):
+    """The study cannot date or settle a game off a schedule that lacks the columns, and says
+    which ones rather than failing in a join. Mutation: removing the check turns this red with
+    a polars error instead of the sentence."""
+    with pytest.raises(ValueError, match="gameday"):
+        sc.schedule_team_games(schedule_for(rows).drop("gameday"))
+
+
+def test_a_refresh_that_fails_is_served_last_good_and_named(rows):
+    """The season in progress is refreshed on every run; if the wire is down the cached entry
+    answers and the run line says which source it was (graceful degradation, CLAUDE.md). Each
+    source here raises on its first read and serves on its second, so the refresh fails and
+    the fallback read succeeds. Mutation: `_last_good` letting the refresh's error through
+    makes this red; dropping the `stale` bookkeeping makes the tuple come back empty."""
+    calls = {"pbp": 0, "schedules": 0}
+    frame, sched = pbp_for(rows), schedule_for(rows)
+
+    def flaky(name, table):
+        def read(keys):
+            calls[name] += 1
+            if calls[name] == 1:
+                raise ConnectionError("wire down")
+            return table.filter(pl.col("season").is_in([int(k) for k in keys]))
+        return read
+
+    replay.serve(pbp=flaky("pbp", frame), schedules=flaky("schedules", sched))
+    got = sc.pbp_team_games([2026])
+    assert got.stale == ("play-by-play 2026", "schedules")
+    assert got.tg.filter(pl.col("qb").is_not_null()).height > 0

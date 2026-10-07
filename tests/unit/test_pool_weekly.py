@@ -1,6 +1,6 @@
 """`pool.weekly`: the survivor pick for a week, and the free pick it has to beat.
 
-Named for the module, not the word. `hub.models.weekly` is a different weekly -- the
+Named for the module, not the word. `hub.exhibits.weekly_projection` is a different weekly -- the
 projection -- and its tests are `test_weekly.py`. These two were briefly the same file.
 
 Every grid here is small and hand-priced. A recommendation is only interesting against a

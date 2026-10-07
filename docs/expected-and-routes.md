@@ -145,7 +145,7 @@ improve projections did not improve this projection, and the one that slightly i
 ## Reproduce
 
 ```bash
-uv run python -m hub.models.weekly --fit --expected
+uv run python -m hub.exhibits.weekly_projection --fit --expected
 uv run python -m hub.models.weekly_screen --run --routes
 uv run python -m hub.season.weekly_gate --run --seasons 2021,2022,2023,2024,2025 \
   --drafts 40 --shrink mae-market --expected

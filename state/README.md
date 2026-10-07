@@ -10,6 +10,16 @@ What this repo has spent against two metered third-party accounts:
   per week, append-only, written by `hub.store.write_snapshot` from `hub.fetch.odds` and
   committed by the `slate` workflow. `hub.store.connect` unions it under `lines`, so a fresh
   checkout reads every capture a scheduled run made. Never edit or delete one.
+- `consensus/<season>/wk<NN>/cap-<ts>.json` — **the weekly consensus captures** (#432): one file
+  per capture, append-only, written by `hub.fetch.consensus` before the week's first game day
+  (Eastern) and committed by the `consensus` workflow. One FantasyPros `weekly-op` page, the
+  incumbent of the 2026 forward measurement (`docs/weekly-forward.md`), as its newest scrape in
+  the DynastyProcess archive stood: `player`, `pos`, `team`, `ecr`, with the capture time, the
+  first game day, the deadline and the archive's digest. `hub.fetch.consensus.write_capture`
+  refuses a capture at or after the deadline, and `hub.season.weekly_forward.admit` excludes
+  one that reaches the tree any other way. Never edit or delete one. **The licence basis of this
+  directory has not been checked**, unlike `odds/`'s: if this repository is ever made public,
+  re-examine `consensus/` first.
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
   interval width a backtest gate has produced. `hub.ledger.Ledger.record` (`experiment.
@@ -18,6 +28,12 @@ What this repo has spent against two metered third-party accounts:
   alongside the width and `requires_review` set when the interval narrowed against that
   gate's *most recent comparable* previous entry by more than the interval could honestly
   narrow (#45's clustering argument predicts widening).
+
+  **Order is append order, not time order (#438).** When two lanes append in parallel, a merge
+  resolves the conflict by keeping main's rows and re-appending the other lane's, so an entry can
+  sit after one stamped later than it -- `interval_shape` of 2026-10-07T01:37 sits after
+  entries stamped the same day later. Read `timestamp`, never position, for when a run was made;
+  no row is rewritten or dropped to straighten it.
 
   **The key, since #385.** Two entries compare iff `(name, recipe, config_digest,
   data_digest)` are equal *and* both carry a known `recipe` -- `WidthEntry.comparable`, one
@@ -81,6 +97,60 @@ What this repo has spent against two metered third-party accounts:
   not zero (`0 abstained` would be a claim about a run that never counted). The `seasons` records
   say which seasons abstained; these two say how many without a reader counting.
 
+  **`inputs`, since #429.** Every entry written from a gate run records what the run read, one
+  `{source, as_of, digest}` per source, `digest` being `unpinned` for a read with no pin sidecar.
+  `data_digest` folds the run's pins into one string and is `unpinned` as soon as one is, so on its
+  own it cannot say *which* read could not be named; this can. It is what let #429 say that the
+  draft gate reads twelve unpinned `player_stats` cache entries, and what a replay is diffed
+  against. Optional and additive: absent on an older entry, which is unrecorded, not empty.
+
+  **Restated 2026-10-07 (#434, rule 13): `inputs` are stored once, beside the ledger.** The
+  paragraph above says every entry carries the list; that is true of the three rows written
+  before this note and no longer of what the writer does. Inline, the draft gate's 36 reads
+  were about 3 KB of an entry whose other fields are about 1 KB, and the ledger's cap was sized
+  without them. A file-backed `Ledger` now writes the run's reads once to
+  `state/inputs/<digest>.json` -- `{"inputs": [...]}`, sorted by `(source, as_of, digest)`, the
+  digest being the first 16 hex characters of the SHA-256 of that canonical text -- and the row
+  carries `"inputs_digest"` instead of `"inputs"`. Runs that read the same pins hash alike and
+  share one file. `Ledger.inputs_of(entry)` reads either form back; a stored set that is missing
+  or whose content no longer hashes to its name reads as *unrecorded*, never as another run's
+  reads, and a row whose set could not be written keeps `inputs` inline. **Old rows were not
+  migrated**: the ledger is append-only, so the three that carry `inputs` inline keep them,
+  byte for byte; only rows written from here use the compact form. The files
+  under `state/inputs/` are as append-only as the ledger -- do not edit or delete one a row
+  names.
+
+  **`code_digest`, since #435 (2026-10-07).** The key above is `(name, recipe, config_digest,
+  data_digest)` and `config_digest` hashes the config and the fitted constants, **not code**, so a
+  change to a gate's arms with config and data unchanged produced an entry the ledger took as
+  comparable to the ones before it: #361 swapped the injury retention baseline from a
+  within-season lookahead to a strictly prior expanding mean, and the new `injury_type` interval
+  ([-0.0041, +0.0867]) sat at the same `c4606f91`/`3028f320` as the old one ([-0.0150,
+  +0.0602]). The key is now `(name, recipe, config_digest, data_digest, code_digest)`:
+  `code_digest` is 8 hex characters of a SHA-256 over the name and source bytes of the modules
+  the gate declares in `Harness.arm_modules` (`hub.ledger.code_digest`; a contract holds every
+  harness to naming its own module and to every name resolving). **It covers exactly the declared
+  modules, and the declaration is held to the first-party import closure (#439):**
+  `test_every_gate_declares_the_code_it_runs` walks the AST (module-level and function-local
+  `hub.*` imports) from the gate's module and from each declared module, and fails on any module
+  reached that is neither declared nor on its `EXEMPT` list, which gives each exemption's reason
+  (the shared rule, `hub.fetch.*`, config, I/O and CLI plumbing). The first declarations omitted
+  `hub.exhibits.championship_equity` from the draft gate and `weekly_gate_data`, `weekly` and
+  `panel` from the weekly gate, so an edit there kept the old history comparable. A direct
+  `run_gate` call that declares no modules is not a "no modules declared" run: it is of unknown
+  code, like a row without the key. It is raw source: a comment
+  edit moves it, which errs toward *not compared*. It deliberately leaves out `hub.models.
+  experiment` -- the shared rule, which every gate runs -- since naming it would end every
+  gate's history on any edit there; a change to the rule is a change the repository's tests and
+  `docs/method.md` have to catch, not this key. **An entry with no `"code_digest"` key** -- every
+  one written before this note, whatever its recipe -- reads as *of unknown code*: named
+  (`earlier run(s) of this gate of unknown code`), never compared, not even against a run that
+  declares no modules (`"code_digest": null`, "no modules declared", which compares equal to
+  another `null` as `"recipe": null` does), and written back without a `code_digest` key so a
+  rewrite of the file does not turn it into one. A changed source is named apart
+  (`on other arm source`). **The first run of each gate after this has nothing to compare
+  against**, by design, as after #384; none of the existing rows is rewritten.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362
@@ -114,7 +184,9 @@ What this repo has spent against two metered third-party accounts:
 - `interval_coverage.json` — what `hub.models.coverage --measure --survivor --write` last
   measured: whether the weekly player interval covers at nominal, and the survivor
   favourite's price. `hub.publish` carries it into `track_record.json` and the slate commits
-  it before gating on it (#273).
+  it before gating on it (#273). Since #309 the graded interval is the conformalised one over
+  the whole scored board; each group row carries its `position`, `n`, `n_cal`, deviation and
+  sigma, and the parametric interval it replaced is kept under `parametric`.
 
 **Committed on purpose.** Both lived under `data/raw/`, which `.gitignore` excludes as
 redistributed third-party data — correct for a cached payload and fatal for a counter. Every
@@ -142,3 +214,11 @@ accounts; `tests/contracts/test_quota_state_survives_a_runner.py` holds that lin
 > season's pre-#383 polls survived, by `hub.store.write_snapshot` keyed on each poll's own
 > `captured_at`. They predate #211, so they carry `close_spread` only; every other snapshot
 > column reads null.
+>
+> **Basis, checked 2026-10-07:** The Odds API's terms (https://the-odds-api.com/terms-and-conditions.html)
+> list "storing our data and retaining it indefinitely" and "calculating and displaying values you
+> derive from our data" as permitted uses, and prohibit redistributing the data "as a standalone
+> data product". `odds/` holds derived values (medians across books) in a private repository. The
+> terms are silent on private storage specifically and do not differ by plan. **If this repository
+> is ever made public, re-examine `odds/` first**: a public archive of these medians starts to read
+> as a data product.

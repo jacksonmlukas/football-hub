@@ -26,7 +26,7 @@ both worked for the same reason.
 | 9 | Volume model beating the market's mean | draft | null — market mean reproduced instead |
 | 10 | Lineup optimiser | weekly | **+0.00** — a structural zero |
 | 11 | Per-player weekly spread | weekly | null — 0.085 MAE of headroom exists at all *(Restated 2026-10-06, #343/#311: `own_k` is +0.0065 at t = +4.93 on 4 df, not 1.8 se, but ties every season; still KEEP — [player-spread.md](player-spread.md).)* |
-| 12 | **Weekly injury retention** | weekly | **+0.170 MAE at 3.8 se, wins 5/5 seasons** *(Restated 2026-10-06, #311: on the held-out seasons as the unit, t = +4.19 on 2 df, p = 0.053, better in 3 of 3 seasons; the decision is #360's — [weekly-injury.md](weekly-injury.md).)* |
+| 12 | **Weekly injury retention** | weekly | **+0.170 MAE at 3.8 se, wins 5/5 seasons** *(Restated 2026-10-06, #311: on the held-out seasons as the unit, t = +4.19 on 2 df, p = 0.053, better in 3 of 3 seasons; the decision is #360's — [weekly-injury.md](weekly-injury.md).)* *(Restated 2026-10-07, #361: the baseline was a within-season lookahead; strictly-prior it is +0.0623 MAE, t = +1.06 on 2 df, p = 0.40, won 2 of 3 seasons, n = 1,963. Prior values kept above; the decision is still #360's.)* |
 | 13 | Injury *type* on top of that | weekly | null by the gate — +0.032 at 3.1 se but 2/3 seasons *(Restated 2026-10-06, #343/#311: t = +1.69 on 2 df (p 0.23) on the season cluster, not 3.1 se; still SHOW — [weekly-injury.md](weekly-injury.md).)* |
 | 14 | **Snap-share trend** | next 3 weeks, in season | **partial r +0.24 beyond PPG *and* ECR, 12/12 cells** |
 

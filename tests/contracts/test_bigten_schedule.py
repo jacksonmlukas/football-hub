@@ -75,8 +75,10 @@ def test_the_job_runs_the_contract_subset_and_not_the_suite():
 def test_the_job_commits_the_archive_the_stamp_and_the_quota_state():
     """A capture a runner does not commit is a capture that did not happen, and a call
     spent against a counter that is not committed is a call the next run cannot see."""
+    # Since #424 the paths are added in a loop that skips the ones that do not exist yet
+    # (`archive/` is created by the first capture); the paths are named on its `for` line.
     adds = [ln for ln in WORKFLOW.read_text().splitlines()
-            if ln.strip().startswith("git add")]
+            if ln.strip().startswith(("git add", "for p in"))]
     assert adds, "the workflow commits nothing"
     line = adds[0]
     for path in ("archive", "site/data/bigten.json", "state"):

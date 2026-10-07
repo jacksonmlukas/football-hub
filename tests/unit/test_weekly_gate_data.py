@@ -25,9 +25,9 @@ import panelarchive as arc
 import polars as pl
 import pytest
 
+from hub.exhibits.weekly_projection import Shrink, project
 from hub.league import REG_SEASON_WEEKS
 from hub.models import experiment
-from hub.models.weekly import Shrink, project
 from hub.names import player_key
 from hub.season import weekly_gate as G
 from hub.season import weekly_gate_data as wgd
@@ -476,6 +476,7 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
 # by monkeypatching that module attribute from outside -- and a patch landed on the wrong
 # module once scored the shipped arm twice and printed zero flips. `arm` is now a parameter,
 # `project` its default, and this is the seam: a second value for that one parameter.
+# *(Now `hub.exhibits.weekly_projection`, #430.)*
 
 
 def test_a_second_arm_moves_the_universe_only_where_its_mu_differs(monkeypatch, tmp_path):

@@ -55,7 +55,7 @@ a null practice cell with `"None"`, and `INJURIES` deliberately leaves `practice
 45 rows of 40,204 over 2019-25. So a whole column of `"None"` is indistinguishable from a real
 week in which nobody was designated. The `(status, practice)` pair is what
 `hub.models.injury` keys its retention table on, the instrument measured at +0.170 MAE and 3.8
-se; filling the column silently narrows that pair to `status` alone and leaves nothing saying
+se *(Restated 2026-10-07, #361: the +0.170 / 3.8 se baseline was a within-season lookahead. Strictly-prior it is +0.0623 MAE (se 0.0588, t = +1.06 on 2 df, p = 0.40, interval [-0.1909, +0.3155]), won 2 of 3 seasons with 2024 at -0.0529; usable designated weeks 4,939 -> 2,581, and about 0.011 of the drop is the lookahead itself, the rest the early-season rows no longer scorable. Prior value kept above; see weekly-injury.md.)*; filling the column silently narrows that pair to `status` alone and leaves nothing saying
 so. A tolerance whose failure mode is a silently weaker model is not a graceful one.
 
 ## Where the degradation goes instead, and why null

@@ -163,7 +163,8 @@ ACTIONS = Actions(
 
 HARNESS = Harness(name="component_calibration", arm_a="calibrated", arm_b="raw projection",
                   within=WITHIN, ceiling_arm=CEILING_ARM, actions=ACTIONS,
-                  unit="points per game of MAE", places=3)
+                  unit="points per game of MAE", places=3,
+                  arm_modules=("hub.models.component_error", "hub.models.components"))
 
 
 def _points_error(frame: pl.DataFrame, fits: dict[str, tuple[float, float]]) -> np.ndarray:

@@ -1,13 +1,32 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-10-06T17:57:27+00:00",
+  "generated_at": "2026-10-07T17:40:08+00:00",
   "shape": "summary",
   "n_scored": 80,
   "n_tied": 0,
-  "n_preregistered": 0,
+  "n_preregistered": 64,
   "is_backtest": true,
-  "note": "No pre-registered predictions yet. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "note": "64 of 80 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "late_game_ids": [
+    "2025_18_ARI_LA",
+    "2025_18_BAL_PIT",
+    "2025_18_CAR_TB",
+    "2025_18_CLE_CIN",
+    "2025_18_DAL_NYG",
+    "2025_18_DET_CHI",
+    "2025_18_GB_MIN",
+    "2025_18_IND_HOU",
+    "2025_18_KC_LV",
+    "2025_18_LAC_DEN",
+    "2025_18_MIA_NE",
+    "2025_18_NO_ATL",
+    "2025_18_NYJ_BUF",
+    "2025_18_SEA_SF",
+    "2025_18_TEN_JAX",
+    "2025_18_WAS_PHI"
+  ],
+  "unverified_game_ids": [],
   "seasons": [
     {
       "season": 2026,
@@ -151,7 +170,9 @@
           "actual": null,
           "gap": null
         }
-      ]
+      ],
+      "n_preregistered": 64,
+      "n_backtest": 0
     },
     {
       "season": 2025,
@@ -174,7 +195,7 @@
         "2025_18_TEN_JAX",
         "2025_18_WAS_PHI"
       ],
-      "log_loss": 0.5562546215330759,
+      "log_loss": 0.556254621533076,
       "brier": 0.19402081023712744,
       "bins": [
         {
@@ -247,7 +268,9 @@
           "actual": null,
           "gap": null
         }
-      ]
+      ],
+      "n_preregistered": 0,
+      "n_backtest": 16
     }
   ],
   "bins": [
@@ -328,13 +351,21 @@
     "centre": "prior",
     "lookahead": false,
     "n": 16061,
-    "gate_subset": "unclipped",
-    "gate_n": 10536,
-    "gate_cov80": 0.7737281700835231,
-    "gate_claim": 0.77,
+    "gate_subset": "all",
+    "gate_n": 15678,
+    "gate_cov80": 0.80035718841689,
+    "gate_claim": 0.8,
     "band": 0.02,
     "verdict": "COVERS",
-    "generated_at": "2026-10-03T17:53:10+00:00",
+    "generated_at": "2026-10-07T12:56:26+00:00",
+    "interval": "conformal",
+    "gate_clipped_share": 0.27758642684015816,
+    "n_uncalibrated": 383,
+    "season_coverage": {
+      "season": 2025,
+      "n": 3192,
+      "cov80": 0.7985588972431078
+    },
     "survivor": {
       "verdict": "HOLDS",
       "favourite_spread": 7.0,
@@ -393,7 +424,7 @@
         }
       ],
       "min_bucket": 50,
-      "generated_at": "2026-10-03T17:53:09+00:00"
+      "generated_at": "2026-10-06T17:57:28+00:00"
     }
   }
 }

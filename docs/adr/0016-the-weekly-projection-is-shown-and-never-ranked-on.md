@@ -22,6 +22,31 @@ and the decision is not re-decided here; see below.
 > **Owned by #44**, whose disposition is recorded as pending rather than taken. A reader should
 > not take the REMOVE below as applied, and should not take the SHOW above as still evidenced.
 
+> **Amendment, 2026-10-07 (#430) -- the Weekly projection is an Exhibit; the decision below
+> is kept as written and is no longer the standing one.** Everything beneath this note is
+> the ADR as it stood. What changed is the verdict word and therefore the action.
+>
+> The weekly gate's recipe (#378's ceiling recipe) restates from SHOW to **REMOVE on 3
+> resolved of 4, 1 abstained**, t interval [-2.032, -0.262], under #381's rule (C)
+> ([ADR-0019](0019-a-gate-requires-every-season.md), 2026-10-06): an Abstention no longer
+> vetoes a REMOVE. The evidence did not move, the rule did; the action was pre-registered
+> (`weekly_gate.ACTIONS.remove`), so it is honoured. Its text says to delete the module rather
+> than ship it as an option. **The maintainer decided on 2026-10-06 to honour it the repo's way:
+> the module becomes an Exhibit** (CONTEXT.md, *Exhibit*), not a deletion, because the one
+> honest test this ADR's *What would change it* names -- a 2026 season measured forward,
+> `docs/weekly-forward.md` -- needs the projection to exist.
+>
+> So: the module moved from `hub.models.weekly` to `hub.exhibits.weekly_projection`, which
+> nothing that ships imports (`tests/contracts/test_the_exhibit_is_not_a_dependency.py`), and
+> `hub.season.weekly_gate_data` is its harness. Its parametric interval, `shipped_quantiles`,
+> became `parametric_quantiles`, so that *Shipped interval* names only the conformalised
+> interval the page publishes. **Where this ADR says the projection "is printed beside weekly
+> consensus", that was the SHOW disposition and no longer holds:**
+> the page's weekly numbers come from `hub.models.predict`, and neither the page nor the
+> lineup call reads the module. The way back is the 2026
+> forward measurement and nothing else. The projection's arithmetic did not change in the move;
+> `tests/unit/test_weekly_projection_move.py` freezes its output from before it.
+
 **Decision.** `hub.models.weekly` stays in the repo, is printed beside weekly consensus, and
 **does not set lineups**. Start your highest-ranked player by consensus rank.
 

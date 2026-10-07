@@ -929,7 +929,7 @@ def test_the_panel_only_degrades_around_a_contract_violation(monkeypatch, tmp_pa
 # The rule is kept mechanically for the derived features and was kept nowhere for the frame
 # they are built on: `build_panel` starts from the realised week-level frame and never strips
 # it, so week w's own `targets`, `receptions`, `offense_pct`, `tds` and `yds` reach the
-# return alongside the features. They are meant to -- `hub.models.weekly` fits against them
+# return alongside the features. They are meant to -- `hub.exhibits.weekly_projection` fits against them
 # and the Usage screen measures against them -- and what was missing is that the return said
 # nothing about which was which. #176 is the cost when this species is not caught: a coverage
 # measurement centred on each player's own realised mean, published, and 81.1% -> 77.4% once

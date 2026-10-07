@@ -49,10 +49,25 @@ reading `t` off `r` without one. Units are stated in every row for this reason.
 | 9 | Volume model beating the market's mean | model | — | — | — | **not applicable** | fit on 2022-23, evaluated pooled on 2024-25 only -- one evaluation window, not multiple held-out seasons to cluster on ([volume-model.md](volume-model.md)) |
 | 10 | Lineup optimiser | gate | — | — | — | **not computed** | `docs/gate-power.md` states this gate builds its paired frame from the network at run time and persists nothing, so a season-clustered `s` "cannot be measured offline"; stage 2's own comparator question is still open (#138) |
 | 11 | Per-player weekly spread | gate (`hub.models.spread`) | 0.0033 | 5 | 0.0015 | **0.0054** (MAE) | closed-form; per-season gain (`own_k` vs `positional`) +0.0033, +0.0081, +0.0078, +0.0106, +0.0029 ([player-spread.md](player-spread.md)). Season-clustered, and deliberately not the pooled "1.8 se" this module's own `verdict()` prints, which is unclustered across every player-season row |
-| 12 | Weekly injury retention | gate | — | — | — | **not computed** | only the pooled figure (+0.170 MAE at 3.8 se, n=3,687 player-weeks) and a qualitative "better in all three held-out seasons" are published, no per-season gain values ([weekly-injury.md](weekly-injury.md)) |
+| 12 | Weekly injury retention | gate | 0.1018 | 3 | **0.0588 (published)** | **0.3027** (MAE) | *(Restated 2026-10-07, #361; this row was "not computed", with the s, k, SE and MDE columns "—".)* Season-clustered bootstrap se printed by `experiment.summarise` on the strictly-prior baseline and published in [weekly-injury.md](weekly-injury.md); `s = se * sqrt(k)` as for rows 4, 6 and 15; `delta = (t(0.975, 2) + z(0.80)) * se` at alpha 0.05 two-sided and 80% power, `minimum_detectable_effect(0.0588, 3)` = 0.3025 on the rounded se, 0.3027 on the unrounded one the run printed. Per-season gain (retention vs `out_zero`) +0.0441, -0.0529, +0.1957; mean +0.0623, t = +1.06 on 2 df, p = 0.40, so the observed gain sits far under what this design could detect. *Prior value kept:* the row stated only the pooled +0.170 MAE at 3.8 se, n=3,687 player-weeks, on a within-season lookahead baseline (#361: usable designated weeks 4,939 -> 2,581, about 0.011 of the drop the lookahead itself). Per-season gains on that baseline, re-run 2026-10-07: +0.2325, +0.0727, +0.2047 (se 0.0406, MDE not tabulated then). |
 | 13 | Injury type on top of it | gate | 0.0410 | 3 | 0.0236 | **0.122** (MAE) | closed-form; per-season gain (type-adjusted vs retention) +0.0507, +0.0602, −0.0150 ([weekly-injury.md](weekly-injury.md)) |
 | 14 | Snap-share trend | screen | 0.0592 | 4 | 0.0296 | **0.119** (r) | closed-form; per-season partial r beyond ECR at the published anchor (week ≥ 8/10) +0.2540, +0.1496, +0.2815, +0.2616 ([snap-trend-signal.md](snap-trend-signal.md)). The paired-points decision test on the same signal (top-1/top-3 by snap delta vs ECR) publishes only a win count, not per-season values, so no second `delta` is computed for it |
 | 15 | Weekly projection vs weekly consensus rank (the weekly blend gate) | gate | 0.382 | 4 | **0.191 (published)** | **0.768** (pts/team-week, published directly) | current restated figure: per-season −0.452, −1.490, −0.868, −1.204, se and MDE printed directly ([weekly-blend-gate.md](weekly-blend-gate.md)); `s = se * sqrt(k)` reproduces #357's own table exactly |
+
+> **Row 6, restated 2026-10-06 (#429, rule 13; the row above is kept, not edited).** *Prior value:
+> **11.17** pts/team-game, the MDE of the 2026-09-16 hold-out re-run (#290).* That figure is the
+> **hold-out recipe's** (`--holdout`, constants fitted without the season, per-season −19.28 /
+> −6.72 / −8.61 / −18.24) and stands as that recipe's; it was not re-run, and it was measured
+> before the draft gate's input drift below was known. The same gate run **without** `--holdout`
+> (#376's ceiling-measurement recipe, which is the one the published REMOVE is now restated on)
+> gives **11.01** as #376 recorded it on 2026-09-21 and **7.84** on today's inputs (per-season
+> −15.35 / −8.41 / −5.99 / −14.34, k=4, m=20 rooms; ceiling +21.90 either way). Today's 7.84
+> stands as the no-hold-out recipe's figure, and it rests on the same cause `docs/gate-power.md`
+> (*the draft re-run, attributed*) names: #376's 2025 season does not reproduce, from an input
+> that run did not record. So this row's detectable effect for the draft gate is **not one number**:
+> 11.17 (hold-out, 2026-09-16), 11.01 (no hold-out, #376's inputs, unrecoverable), 7.84 (no
+> hold-out, today's inputs, reproduced). A reader quoting a detectable effect for this gate quotes
+> the recipe with it.
 
 ## Reading this table
 

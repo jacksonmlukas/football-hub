@@ -106,7 +106,9 @@ ACTIONS = Actions(
 
 HARNESS = Harness(name="player_spread", arm_a="candidate", arm_b="positional", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS,
-                  unit="MAE points of predicted weekly sd", places=4)
+                  unit="MAE points of predicted weekly sd", places=4,
+                  arm_modules=("hub.models.components", "hub.models.predict",
+                               "hub.models.spread", "hub.models.volume"))
 
 # Prior-season role features for the `usage` arm. `drift` is the within-season slope of
 # snap share, which is the term docs/weekly-spread.md accuses of masquerading as spread.

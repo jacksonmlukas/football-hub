@@ -1,5 +1,10 @@
 """The **Weekly projection**: a multiplier on **Usage**, and a touchdown regression.
 
+**An exhibit since #430.** The weekly gate removed it from the product (`docs/weekly-gate.md`;
+REMOVE under #381), and it is kept here only so that measurement, and the 2026 forward one
+(`docs/weekly-forward.md`), can be re-run. Nothing that ships imports it; the page reads
+`hub.models.predict`, not this module.
+
 Everything this repo projects today is one season-long per-game mean applied flat to all
 seventeen weeks. This is the week-specific layer, and its shape was fixed by measurement
 rather than chosen -- see `docs/weekly-screen.md`.
@@ -55,7 +60,7 @@ only his *opportunity* moves. **Spread is not projected either**: `sd = k*sqrt(m
 per ADR-0012, which measured per-player volatility beyond the positional constant at +/-9.3%
 and not estimable. This module produces a mean; `predict.moments` turns it into a distribution.
 
-    uv run python -m hub.models.weekly --fit
+    uv run python -m hub.exhibits.weekly_projection --fit
 """
 from __future__ import annotations
 
@@ -403,8 +408,12 @@ def flat(now: pl.DataFrame) -> np.ndarray:
     return np.nan_to_num(now["ppg_before"].to_numpy().astype(float), nan=0.0)
 
 
-def shipped_quantiles(mu: np.ndarray, position: Sequence[str]) -> np.ndarray:
-    """The distribution this repo *publishes* around a projected mean, as its quantiles.
+def parametric_quantiles(mu: np.ndarray, position: Sequence[str]) -> np.ndarray:
+    """The projection's own parametric interval around a projected mean, as its quantiles.
+
+    Not the interval the page publishes: that one is conformalised (#309) and is the
+    **Shipped interval**. This is the law before calibration, which `predict` serves the
+    centre of -- named for what it is so that "shipped" has one meaning.
 
     `predict.moments` and `predict.skewed` rather than the two laws written out again:
     `sd = K[position] * sqrt(mu)` and the fitted Cornish-Fisher skew are one implementation
@@ -467,7 +476,7 @@ def walk_forward(panel: pl.DataFrame) -> pl.DataFrame:
             "err_weekly": np.abs(mu - actual),
             "err_flat": np.abs(flat(fitted) - actual),
             "crps_weekly": crps_from_quantiles(
-                shipped_quantiles(mu, fitted["position"].to_list()), actual)}))
+                parametric_quantiles(mu, fitted["position"].to_list()), actual)}))
     return pl.concat(frames) if frames else pl.DataFrame()
 
 
@@ -497,7 +506,7 @@ def _contrast(errs: pl.DataFrame, base: str, arm: str, label: str) -> list[str]:
 # `hub.models.scoring_rules.crps_normal` derives it: over outcomes drawn from the forecast
 # itself the expected CRPS is `sd/sqrt(pi)` and the expected absolute error is
 # `sd*sqrt(2/pi)`, so a calibrated forecast scores `1/sqrt(2)` of what publishing only its
-# centre scores. It is a *reference*, not a bar: it holds for a normal, and the shipped
+# centre scores. It is a *reference*, not a bar: it holds for a normal, and the parametric
 # distribution is skewed and clipped, so the figure printed beside it says how much of the
 # available gain the published spread is collecting rather than whether it passed anything.
 CALIBRATED_RATIO = not_an_input(
@@ -585,10 +594,22 @@ def _what_the_coverage_measurement_says() -> list[str]:
     # as the claim for an artifact written before the claim was carried.
     label = 0.80
     claim = got["gate_claim"]
+    # What population the figure is over (#309): the whole scored board since the gate stopped
+    # leaving out the clipped weeks, said with its clipped share and the rows it could not
+    # score; an artifact from before that is still the unclipped weeks, and says so.
+    if got.get("gate_subset") == "all":
+        clipped = got.get("gate_clipped_share")
+        left = got.get("n_uncalibrated")
+        weeks = (f"{got['gate_n']:,} scored player-weeks"
+                 + (f", {clipped:.1%} of them clipped" if clipped is not None else "")
+                 + (f", {left:,} of the board not scored for want of a calibration"
+                    if left else ""))
+    else:
+        weeks = f"{got['gate_n']:,} {got['gate_subset']} weeks"
     return [f"  The published interval, measured on a centre that cannot see the week it "
             f"scores: {got['verdict']}\n  at {got['gate_cov80']:.1%} against the claimed "
-            f"{claim:.0%} (labelled {label:.0%}) over {got['gate_n']:,} {got['gate_subset']} "
-            f"weeks (+/- {got['band']:.0%}), measured\n  {got['generated_at']}. That is what "
+            f"{claim:.0%} (labelled {label:.0%}) over {weeks} (+/- {got['band']:.0%}), "
+            f"measured\n  {got['generated_at']}. That is what "
             f"the gap between this ratio and {CALIBRATED_RATIO:.3f} is made of."]
 
 
@@ -622,7 +643,7 @@ def diagnostic(errs: pl.DataFrame) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
     ap = argparse.ArgumentParser(
-        prog="hub.models.weekly",
+        prog="hub.exhibits.weekly_projection",
         description="Walk the Weekly projection forward and report the Gate A diagnostic.")
     ap.add_argument("--fit", action="store_true",
                     help="build the panel and walk forward (the flag keeps its name; nothing "
@@ -636,7 +657,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     try:
         panel = build_panel(SEASONS, PanelSpec(expected=a.expected))
     except Exception as e:
-        return unavailable("hub.models.weekly", "the sources the Panel is built from", e)
+        return unavailable("hub.exhibits.weekly_projection",
+                           "the sources the Panel is built from", e)
     # Outside the guard deliberately. The filter is this repo's own logic over the Panel's own
     # columns, so a `ColumnNotFoundError` on `week` or `games_before` is a defect here, not a
     # source being unreachable -- and reporting a defect as an outage is what the board's

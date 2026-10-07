@@ -355,7 +355,14 @@ SHAPE_ACTIONS = Actions(
 # `ceiling_frame` is exactly this: a caller whose ceiling lives on a different frame).
 SHAPE_HARNESS = Harness(name="margin_shape", arm_a="skew-free", arm_b="deployed skew",
                         within=("season",), ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
-                        ceiling_column="ceiling_gain")
+                        ceiling_column="ceiling_gain",
+                        # Inline, not a shared constant: this module is in `FITTED_MODULES`, so
+                        # a module-level upper-case name would move the config digest.
+                        arm_modules=("hub.models.base", "hub.models.components",
+                                     "hub.models.conformal", "hub.models.coverage",
+                                     "hub.models.margin", "hub.models.market",
+                                     "hub.models.predict", "hub.models.scoring_rules",
+                                     "hub.models.volume"))
 
 
 def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
@@ -523,7 +530,12 @@ WIDTH_ACTIONS = Actions(adopt="ADOPT", remove="REMOVE", show="KEEP")
 # this was never one gate run to publish a width-history entry for.
 WIDTH_HARNESS = Harness(name="margin_width", arm_a="challenger", arm_b="incumbent",
                         within=("season",), ceiling_arm=CEILING_ARM, actions=WIDTH_ACTIONS,
-                        ceiling_column="ceiling_gain")
+                        ceiling_column="ceiling_gain",
+                        arm_modules=("hub.models.base", "hub.models.components",
+                                     "hub.models.conformal", "hub.models.coverage",
+                                     "hub.models.margin", "hub.models.market",
+                                     "hub.models.predict", "hub.models.scoring_rules",
+                                     "hub.models.volume"))
 
 
 def verdict(wf: pl.DataFrame) -> tuple[str, str]:

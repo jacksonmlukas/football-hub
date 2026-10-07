@@ -289,3 +289,11 @@ accurate enough to beat following consensus and filling your starting slots.
 > seasons, "worse in every resolved season, and one season unresolved" -- 2024's SE (3.75) is the
 > widest of the four, so this Abstention is partly the season and partly the small gain
 > (ADR-0019, the 2024 sub-question). The action this ADR took stands, as it did under SHOW.
+>
+> **Attributed 2026-10-06 (#429).** The gap above ("flagged, not attributed") is attributed in
+> `docs/gate-power.md`: #376's own commit re-run on today's data reproduces −11.02 / MDE 7.84 to the
+> cent, so it is not code, seeds or ordering; it is an input #376's worktree held and nothing
+> recorded (twelve unpinned `player_stats` caches are the unnameable ones), visible only in 2025.
+> **The run that stands is today's** (−11.02, t [−17.22, −4.82], MDE 7.84, replayed three times),
+> and the verdict word is the one stated above, REMOVE on 3 resolved of 4, 1 abstained. #376's
+> −12.40 / 11.01 stays as the record of what that run printed.

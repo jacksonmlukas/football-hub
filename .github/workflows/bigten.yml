@@ -153,7 +153,13 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add archive site/data/bigten.json state
+          # Only the paths that exist (#424). `git add` of a path that matches nothing is
+          # fatal (exit 128), and `archive/` is created by the first capture: a run that
+          # captured nothing -- the case that most needs its record committed -- used to die
+          # here, 25 runs in a row, and `site/data/bigten.json` with its miss list never landed.
+          for p in archive site/data/bigten.json state; do
+            if [ -e "$p" ]; then git add "$p"; fi
+          done
           if git diff --cached --quiet; then
             echo "nothing changed; no commit"
             exit 0
@@ -177,3 +183,21 @@ jobs:
           # the quiet failure this exists to replace. A conflict fails loudly, which is right.
           git pull --rebase origin main
           git push
+
+      # A capture that has missed every deadline since the first one, named (#424). Twenty-five
+      # runs went red at a pathspec and said nothing about why; this is the cause, said once,
+      # and it comes *after* the commit so the miss record is published either way. The stamp
+      # is the evidence: an empty archive and deadlines already past means no capture has ever
+      # landed, and its `reason` is the run's own sentence -- which names `CFB_WEEK_ONE` when
+      # that is the cause, as it was. A run before the first deadline has nothing missed and
+      # passes. (The watchdog's bigten job covers a capture that *was* working and stopped.)
+      - name: Fail, naming the cause, when no deadline has ever been captured
+        run: |
+          B=site/data/bigten.json
+          [ -f "$B" ] || exit 0
+          MISSED=$(jq -r '.missed.count // 0' "$B")
+          HELD=$(jq -r '.archive_rows // 0' "$B")
+          if [ "$MISSED" -gt 0 ] && [ "$HELD" -eq 0 ]; then
+            echo "::error::every deadline since the first has been missed ($MISSED so far) and the archive is empty. Cause: $(jq -r '.reason // "unknown"' "$B"). If it names CFB_WEEK_ONE, set that repository variable (week 1's first game, YYYY-MM-DD)."
+            exit 1
+          fi
