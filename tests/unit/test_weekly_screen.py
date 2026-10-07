@@ -362,7 +362,10 @@ def test_a_broken_null_is_a_finding_not_a_rejection():
 
 def test_a_null_that_is_merely_noisy_is_still_a_null():
     per = {2021: 0.05, 2022: -0.05, 2023: 0.05, 2024: -0.05, 2025: 0.05}
-    assert ws.verdict(_summary(per, 2.5), "0")[0] == ws.CLEARS
+    # 3.5 is past the p bar on four degrees of freedom (2.776), so the null is significant and
+    # only the seasons disagreeing keeps it from being a finding; 2.5 no longer gets there (#312).
+    status, note = ws.verdict(_summary(per, 3.5), "0")
+    assert status == ws.CLEARS and "noisy" in note
 
 
 def test_an_unsigned_feature_only_needs_consistency():
@@ -1408,3 +1411,5 @@ def test_the_run_family_keeps_a_strong_result_below_the_threshold():
     rows, fd = ws.run_family({"yardage": _frame((8,), list(p), p)})
     assert sum(fd.rejected) == 1
     assert next(r for r in rows if r["feature"] == "hit")["p_adj"] < experiment.FDR_Q
+    lines = ws.run_family_report({"yardage": _frame((8,), list(p), p)})
+    assert any(ln.lstrip().startswith("below: hit") for ln in lines)
