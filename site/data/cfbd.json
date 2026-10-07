@@ -1,17 +1,19 @@
 {
   "name": "cfbd",
   "source": "hub.fetch.cfbd",
-  "generated_at": "2026-10-06T17:57:20+00:00",
+  "generated_at": "2026-10-07T17:40:00+00:00",
   "shape": "summary",
   "season": 2026,
-  "week": null,
+  "week": 6,
   "fetched": false,
   "stale": true,
-  "reason": "nothing was fetched: CFB_WEEK_ONE is not set, so nothing here knows which college week it is. Set it to the date of the season's first game (YYYY-MM-DD), or pass --week N",
+  "reason": "nothing was fetched: TypeError. Its message is on stderr and deliberately not here: a contract violation quotes the payload values that broke it, and this file is committed",
+  "unfetched_since": "2026-10-06",
+  "escalate": false,
   "rows_by_endpoint": {},
   "quota": {
     "month": "2026-10",
-    "used": 0,
+    "used": 3,
     "limit": 1000
   }
 }

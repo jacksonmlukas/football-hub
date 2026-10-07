@@ -1,0 +1,147 @@
+{
+ "captured_at": "2026-10-07T17:40:01.072196",
+ "rows": [
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -1.5,
+   "close_total": 42.25,
+   "game_id": "2026_06_SEA_DEN",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -108.99082568807339,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 3.0,
+   "close_total": 43.0,
+   "game_id": "2026_06_HOU_JAX",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -1.5,
+   "close_total": 47.5,
+   "game_id": "2026_06_CHI_ATL",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -111.47982062780268,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -2.5,
+   "close_total": 40.0,
+   "game_id": "2026_06_BAL_CLE",
+   "polls_unmoved": 1,
+   "spread_price": -107.96296296296295,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 2.0,
+   "close_total": 42.5,
+   "game_id": "2026_06_CAR_PHI",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 6.5,
+   "close_total": 43.5,
+   "game_id": "2026_06_TEN_IND",
+   "polls_unmoved": 1,
+   "spread_price": -112.44444444444444,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 7.0,
+   "close_total": 43.0,
+   "game_id": "2026_06_NYJ_NE",
+   "polls_unmoved": 1,
+   "spread_price": -105.0,
+   "total_price": -109.49771689497717,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -1.5,
+   "close_total": 44.5,
+   "game_id": "2026_06_NO_NYG",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -2.5,
+   "close_total": 39.0,
+   "game_id": "2026_06_PIT_TB",
+   "polls_unmoved": 1,
+   "spread_price": -103.84615384615384,
+   "total_price": -112.49777777777778,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 10.5,
+   "close_total": 50.5,
+   "game_id": "2026_06_ARI_LA",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -4.5,
+   "close_total": 51.25,
+   "game_id": "2026_06_BUF_LV",
+   "polls_unmoved": 1,
+   "spread_price": -108.99082568807339,
+   "total_price": -109.49771689497717,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 7.5,
+   "close_total": 45.25,
+   "game_id": "2026_06_LAC_KC",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": -2.0,
+   "close_total": 50.0,
+   "game_id": "2026_06_DAL_GB",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -110.990990990991,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  },
+  {
+   "captured_at": "2026-10-07T17:40:01.072196",
+   "close_spread": 7.5,
+   "close_total": 49.5,
+   "game_id": "2026_06_WAS_SF",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.49771689497717,
+   "unmoved_since": "2026-10-07T17:40:01.072196"
+  }
+ ],
+ "season": 2026,
+ "week": 6
+}
