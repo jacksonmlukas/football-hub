@@ -4,8 +4,10 @@ interval was renamed; the projection did not change.
 `docs/weekly-forward.md` pins the arm under test by git blob and refuses a reading on any other
 blob. A move and a rename change the blob and nothing about what is computed, and the re-pin
 is legitimate only if that is *shown*, so this file shows it: `FROZEN` was computed on the
-pre-move code (`hub.models.weekly` at blob f6de17b2ca26a6dbaa2e606f567f8227456bc015) from the
+pre-move code (`hub.models.weekly` at blob e0ace601, the tree when the lane began) from the
 fixture below, before any file moved, and the moved module has to reproduce every figure. The
+originally pinned blob f6de17b2ca26a6dbaa2e606f567f8227456bc015 differs from e0ace601 only in
+a diagnostic's report prose (#309), and the same digest at it is identical. The
 fixture has four positions, games played from 1 to 15 so the shrinkage and the efficiency
 threshold both bite, and a training frame the shrinkage is fitted on, so it reaches `project`
 with and without a `Shrink`, `fit_shrink` under both objectives, `positional_sd` and

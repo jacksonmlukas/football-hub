@@ -47,15 +47,16 @@ class SeasonDropped(RuntimeError):
     """
 
 
-# No cycle: `hub.exhibits.weekly_projection` reaches `hub.cli`, `hub.config`, `hub.declare` and
-# three sibling `hub.models` modules and nothing under `hub.season` or `hub.draft`, so this import
+# No cycle: `hub.models.weekly` reaches `hub.cli`, `hub.config`, `hub.declare` and three
+# sibling `hub.models` modules and nothing under `hub.season` or `hub.draft`, so this import
 # was never lazy for a cycle -- it was lazy because it sat inside `assemble_universe` beside
-# `board_as_of`, `cohort` and `applied`, which *are* fold-of-a-different-kind lazy (see the in-body
-# imports still in `assemble_universe`: none of those has a cycle back here either, on the same
-# check, but moving them is not this ticket -- #342 is the projection arm only). This one has to be
-# a top-level import regardless of the cycle question, because `project` is now a default *argument
-# value*, and a default is evaluated when the module loads, not when the function runs -- an in-body
-# import cannot supply one.
+# `board_as_of`, `cohort` and `applied`, which *are* fold-of-a-different-kind lazy (see the
+# in-body imports still in `assemble_universe`: none of those has a cycle back here either, on
+# the same check, but moving them is not this ticket -- #342 is the projection arm only). This
+# one has to be a top-level import regardless of the cycle question, because `project` is now
+# a default *argument value*, and a default is evaluated when the module loads, not when the
+# function runs -- an in-body import cannot supply one.
+# *(Now `hub.exhibits.weekly_projection`, #430.)*
 
 
 def preseason_ranks(seasons: Sequence[int]) -> pl.DataFrame:  # pragma: no cover - network
@@ -198,14 +199,15 @@ def assemble_universe(seasons: Sequence[int], *, drafts: int = 20, seed: int = 0
     `weekly_gate.main`'s to print.
 
     `arm` is the projection under test, accepted rather than created (#342). Every fold calls
-    it the same way `weekly_gate.main` always called `hub.exhibits.weekly_projection.project` --
-    `now` and the `shrink` already fit on that fold's `past` -- so `project` is the default and
-    every existing caller sees the identical byte-for-byte universe it always did. Before this the
-    import sat inside this function's body and the arm under test was a name only this module bound,
-    so scoring anything else meant monkeypatching `hub.exhibits.weekly_projection.project` from
-    outside and hoping the patch landed on the module this file actually reads from -- which it once
-    did not, and scored the shipped arm twice with zero flips to show for it. A second adapter now
-    just is a second value for this parameter.
+    it the same way `weekly_gate.main` always called `hub.models.weekly.project` -- `now` and
+    the `shrink` already fit on that fold's `past` -- so `project` is the default and every
+    existing caller sees the identical byte-for-byte universe it always did. Before this the
+    import sat inside this function's body and the arm under test was a name only this module
+    bound, so scoring anything else meant monkeypatching `hub.models.weekly.project` from
+    outside and hoping the patch landed on the module this file actually reads from -- which
+    it once did not, and scored the shipped arm twice with zero flips to show for it. A second
+    adapter now just is a second value for this parameter.
+    *(Now `hub.exhibits.weekly_projection`, #430.)*
 
     `ecr` is the incumbent's weekly consensus, accepted rather than read (#432): the columns
     `weekly_consensus` returns (`season`, `week`, `key`, `ecr`). `None` is every caller before

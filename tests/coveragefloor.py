@@ -3,7 +3,7 @@
 CI gates on `--cov-fail-under=88`, which is a floor on the **total**. The repo sits near 94%,
 so there are roughly six points of slack and any single module can spend all of them alone.
 
-That is not hypothetical. PR #104 took `src/hub/exhibits/weekly_projection.py` from 98% to 22% -- 143
+That is not hypothetical. PR #104 took `src/hub/models/weekly.py` from 98% to 22% -- 143
 statements of the projection model stopped being exercised, because a feature branch wrote its
 tests into a file that belonged to a different module -- and the total only fell to 89.62%.
 The gate passed. The loss was invisible in CI and turned up because a human read the diff.

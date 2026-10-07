@@ -145,13 +145,27 @@ def test_the_weekly_projection_is_not_in_the_models_package():
 PRODUCT = ("hub.draft.board", "hub.draft.live", "hub.publish")
 GATES = ("hub.season.lineup_gate", "hub.season.weekly_gate", "hub.season.weekly_gate_data")
 
-# The exhibit a Gate may reach, because the Gate is that exhibit's measurement (#430). The
-# weekly gate is the gate that removed the Weekly projection, and re-running it means running
-# the projection; it is the only exemption, and it names one exhibit.
-MAY_REACH: dict[str, set[str]] = {
-    "hub.season.weekly_gate": {"hub.exhibits.weekly_projection"},
-    "hub.season.weekly_gate_data": {"hub.exhibits.weekly_projection"},
+# What a Gate may reach, derived from `HARNESS_OF` so a third exhibit is one row there (#441).
+# A Gate may reach an exhibit when the Gate is that exhibit's measurement (#430): the harness
+# module itself, and any module that runs it. The weekly gate is the gate that removed the
+# Weekly projection, and re-running it means running the projection. Runners are the only thing
+# declared apart from `HARNESS_OF`, because "reaches the harness" cannot be read off the harness.
+HARNESS_RUNNERS: dict[str, tuple[str, ...]] = {
+    "hub.season.weekly_gate_data": ("hub.season.weekly_gate",),
 }
+
+
+def _module_of(rel: str) -> str:
+    return "hub." + rel.removesuffix(".py").replace("/", ".")
+
+
+MAY_REACH: dict[str, set[str]] = {}
+for _exhibit, _harness in HARNESS_OF.items():
+    if _harness is None:
+        continue
+    _mod = _module_of(_harness)
+    for _gate in (_mod, *HARNESS_RUNNERS.get(_mod, ())):
+        MAY_REACH.setdefault(_gate, set()).add(_exhibit)
 
 
 def _path_of(module: str) -> pathlib.Path | None:
