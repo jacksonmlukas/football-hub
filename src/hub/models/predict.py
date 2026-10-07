@@ -207,14 +207,46 @@ def skewed(mean, sd, skew, z):
     Cornish-Fisher rather than a gamma, so that correlation can be applied to `z` before the
     transform: a Gaussian latent is trivially correlatable and a gamma is not. The quadratic
     term supplies the skew, and dividing by sqrt(1 + 2a^2) restores the variance the term
-    adds, so mean and spread come out exactly as asked.
+    adds. That makes the *unclipped* transform's mean and sd exactly the ones asked for, and
+    nothing more: this function clips at zero, and the clip moves both.
+
+    **What the clip does, measured at the shipped constants (#309).** A receiver with a mean of
+    three has the lower tail below zero in 21.8% of draws; the clipped draws then average 11%
+    above the mean asked for and spread 11% under the sd asked for. At a mean of six it is
+    11.2% clipped, +3% on the mean and -5% on the spread; at twelve, 2.5%, +0.3% and -0.8%. The
+    published tenth percentile is exactly zero for every RB and WR at a mean of six or below.
+    The clip is a bias in the mean upward, concentrated on low-mean players, which a
+    best-lineup rule -- a max over starters -- reads as free points off the end of the bench.
+    The mean and spread a caller *asked for* are therefore not the mean and spread of what
+    comes back below about a mean of ten; draw, then measure, if it matters. The weekly
+    interval no longer relies on this transform's lower tail: `hub.models.coverage` calibrates
+    it empirically (`docs/weekly-coverage.md`, 2026-10-06).
 
     Clipped at zero -- the transform has support below it and nobody scores negative points
-    often enough to matter.
+    often enough to matter. That last clause is true of the *points*, not of the clipped
+    *draw*: the lower tail is a point mass at zero for a low mean, which is the distribution
+    this repo serves.
     """
     a = np.maximum(skew, MIN_SKEW) / 6.0
     y = (z + a * (z ** 2 - 1.0)) / np.sqrt(1.0 + 2.0 * a ** 2)
     return np.clip(mean + sd * y, 0.0, None)
+
+
+def predictive_sd(sd, games):
+    """The sd of one more week when the mean was estimated from `games` earlier weeks.
+
+    `sd * sqrt(1 + 1/games)`: the shape law's variance plus the mean's estimation error,
+    `sd^2 / games` -- the weekly sd over `sqrt(n)` that `docs/parameter-uncertainty.md`
+    measured at +36% for one game against twelve, expressed in the law the interval already
+    uses rather than a positional constant (#309). It is the scale a *published interval*
+    needs. `moments`' own `sd` stays the outcome spread the simulators draw from, because
+    they carry their mean uncertainty separately and adding it there would count it twice.
+
+    `games` below one is read as one, as `weekly.standard_error` reads it: a mean built from no
+    games is not a mean, and the term must not divide by zero. NaN counts as no games.
+    """
+    n = np.clip(np.nan_to_num(np.asarray(games, dtype=float), nan=0.0), 1.0, None)
+    return np.asarray(sd, dtype=float) * np.sqrt(1.0 + 1.0 / n)
 
 
 # Above this share of a run's correlated blocks failing to factor, the draw refuses rather

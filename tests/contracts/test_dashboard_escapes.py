@@ -365,6 +365,18 @@ def test_the_record_shows_the_interval_claim_beside_its_verdict(node):
     assert "labelled 80%" in out and "10,536" in out
 
 
+def test_the_record_says_a_whole_board_figure_is_over_the_whole_board(node):
+    """#309: once the gate grades every scored week, the page says so, gives the clipped share
+    and the rows it could not score, and does not call the figure 'unclipped'. An artifact from
+    before (`COVERAGE` above) keeps its old wording, which the test above holds."""
+    whole = dict(COVERAGE, gate_subset="all", gate_n=15000, gate_cov80=0.8012,
+                 gate_clipped_share=0.31, n_uncalibrated=1061, verdict="OVER-COVERS")
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=whole))
+    assert "15,000 scored player-weeks" in out and "31.0% of them clipped at zero" in out
+    assert "1,061 more not scored" in out and "unclipped" not in out
+    assert "80.1%" in out and "OVER-COVERS" in out and "77.0%" in out
+
+
 def test_the_record_shows_every_survivor_bucket_and_marks_the_thin_one(node):
     """#293: five rows, the count beside each rate, and the twelve-game bucket present and
     marked rather than gone."""

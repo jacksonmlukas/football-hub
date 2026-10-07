@@ -530,6 +530,24 @@ def test_the_report_cites_the_coverage_measurement_rather_than_a_figure_typed_he
     assert "2026-09-13" in text, "a measurement with no date is not one that can go stale"
 
 
+def test_the_report_says_the_figure_is_over_the_whole_scored_board_with_its_clipped_share():
+    """#309: the gate stopped leaving the clipped weeks out, so the line says what population
+    it is over, how much of it was clipped, and how much of the board it could not score --
+    and a figure over the whole board must not be worded as 'unclipped'."""
+    from hub.models import coverage
+
+    published = {"centre": "prior", "lookahead": False, "n": 16061,
+                 "gate_subset": "all", "gate_n": 15000, "gate_cov80": 0.80,
+                 "gate_claim": 0.77, "band": 0.02, "verdict": "OVER-COVERS",
+                 "gate_clipped_share": 0.31, "n_uncalibrated": 1061,
+                 "generated_at": "2026-10-06"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(coverage, "published_summary", lambda *a, **k: published)
+        text = "\n".join(W.diagnostic(W.walk_forward(_panel())))
+    assert "15,000 scored player-weeks" in text and "31.0% of them clipped" in text
+    assert "1,061 of the board not scored" in text and "unclipped" not in text
+
+
 def test_an_artifact_written_before_the_claim_was_carried_reads_as_the_label():
     """The committed artifact of 2026-09-12 carried no `gate_claim`; its verdict was read
     against the label, `published_summary` says so on its behalf, and that is the number

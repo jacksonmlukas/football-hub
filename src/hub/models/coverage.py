@@ -36,10 +36,20 @@ actually picks at*, which are the big favourites and nowhere near the middle of 
 distribution. Graded by spread bucket rather than by probability bucket, because a miss
 concentrated in one spread range is what a pick rule would walk into.
 
-**What the gate holds the interval to** is the claim, not the label (#289). The interval is
-served as 80% and measured to cover 77.4% of the unclipped weeks; `CLAIMED_COV80` is that
-restated claim and the gate refuses when the deployed function leaves `BAND` of it in
+**What the gate holds the interval to** is the claim, not the label (#289). Until #309 the
+interval was served as 80% and measured to cover 77.4% of the unclipped weeks; `CLAIMED_COV80`
+is that restated claim and the gate refuses when the deployed function leaves `BAND` of it in
 either direction. The label is `LEVELS`, which has not moved.
+
+**What is graded since #309 is the published interval, conformalised, over the whole board.**
+The parametric interval above carried no estimation error and its lower bound was a clipped
+parametric one; the published interval is `predict.predictive_sd`'s scale
+(`sd * sqrt(1 + 1/n)`) with its bounds calibrated *empirically* on the rolling window of
+strictly earlier `(season, week)` cells -- within position, with a named fallback to the pooled
+window below 200 calibration rows (`hub.models.conformal.mondrian`). The gate grades every
+player-week that has a calibration, clipped or not, and says how many of the board it could
+not score. The parametric interval is kept in the result as `parametric` -- the prior values --
+and is what `--shape` still reads. The design is `docs/weekly-coverage.md`, 2026-10-06.
 
     uv run python -m hub.models.coverage --measure
     uv run python -m hub.models.coverage --measure --centre realised
@@ -67,7 +77,7 @@ from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.ledger import WIDTH_STATE, Ledger
 from hub.ledger import recipe as _recipe
-from hub.models import predict
+from hub.models import conformal, predict
 from hub.models.experiment import (
     Actions,
     GateRun,
@@ -150,11 +160,33 @@ BAND = not_an_input(
     "a pre-registered filter of the grading harness, which measures interval coverage "
     "of predictions already made and makes none of its own")
 
-# The gate is read off the weeks whose interval is *not* pinned at the zero floor. A clipped
-# lower bound cannot be fallen below, so those weeks report a coverage the model did not
-# earn, and pooling them in hides the miss -- which is the document's own diagnosis, used
-# here as the reason to exclude them rather than as a footnote.
-GATE_SUBSET = "unclipped"
+# The gate is read off every player-week that has a calibration -- the whole scored board,
+# clipped and unclipped (#309). Before it was the weeks whose parametric interval was *not*
+# pinned at the zero floor, on the reasoning that a clipped lower bound cannot be fallen below
+# and pooling those weeks in hides a miss. That excluded 5,525 of 16,061 player-weeks -- the
+# low-mean third of the board, where the interval was degenerate -- and made the gated figure
+# a statement about high-mean players. The remedy for a flattering subset is to measure the
+# population and report the clipped share beside the rate, not to measure the half that
+# cannot embarrass the interval. The floor split is still printed, as a diagnostic.
+GATE_SUBSET = "all"
+
+# The calibration window, in `(season, week)` cells: the span one season's scored weeks occupy
+# (week 5, the first with four earlier weeks, through week 18) -- "the prior full season", the
+# default #309 names, at which QB calibrates on ~370 rows. Chosen before the number
+# (`docs/weekly-coverage.md`, 2026-10-06) and not fitted: a window picked to make the gate
+# green is #287's fault.
+CAL_WINDOW = not_an_input(
+    14,
+    "a setting of the grading harness's rolling calibration, which measures coverage of "
+    "predictions already made and makes none of its own")
+
+# How the rows are cut by games of evidence behind the centre, as (label, low, high) inclusive.
+# The cuts `docs/weekly-coverage.md` printed in its 2026-09-07 restatement, kept so the two are
+# comparable: the estimation error's whole claim is that it matters at the thin end.
+PRIOR_BUCKETS: tuple[tuple[str, int, int | None], ...] = not_an_input(
+    (("4-5", 4, 5), ("6-8", 6, 8), ("9-12", 9, 12), ("13+", 13, None)),
+    "a pre-registered cut of the grading harness, which measures interval coverage of "
+    "predictions already made and makes none of its own")
 
 # Spread buckets for the survivor price, favourite-relative and in points: under 3, 3-7,
 # 7-10, 10-14, 14 and up (#293). Each bucket is closed at its low edge and open at its high
@@ -301,6 +333,19 @@ def graded(sample: pl.DataFrame) -> pl.DataFrame:
     # -- the clip is a separate effect and the floor split is where it is isolated.
     cols["n10"] = mu + sd * z10
     cols["n90"] = mu + sd * _z(LEVELS[0][1])
+    # The scale a published interval needs (#309): the shape law's sd plus the centre's
+    # estimation error. Only where the centre was estimated from earlier weeks -- the realised
+    # centre is the lookahead and has no estimation error to add, which is what it flatters.
+    if "n_prior" in m.columns:
+        n = m["n_prior"].cast(pl.Float64).to_numpy()
+        sd_pred = np.where(np.isnan(n), sd, predict.predictive_sd(sd, n))
+    else:
+        sd_pred = sd
+    cols["sd_pred"] = sd_pred
+    # The parametric interval at that scale, uncalibrated: separates what estimation error
+    # alone closes from what the empirical calibration adds on top.
+    cols["pe10"] = predict.skewed(mu, sd_pred, sk, z10)
+    cols["pe90"] = predict.skewed(mu, sd_pred, sk, _z(LEVELS[0][1]))
     return m.with_columns(**{k: pl.Series(k, v) for k, v in cols.items()})
 
 
@@ -353,6 +398,172 @@ def floor_split(g: pl.DataFrame) -> list[dict[str, Any]]:
             if g.filter(sel).height]
 
 
+def calibrate(g: pl.DataFrame, *, window: int | None = CAL_WINDOW,
+              floor: int = conformal.MIN_GROUP_CALIBRATION) -> pl.DataFrame:
+    """Attach the published interval: bounds calibrated on the rolling window, per position.
+
+    The score of a played week is `(points - mu) / sd_pred`, signed. For each `(season, week)`
+    cell the calibration is the scores of the cells strictly before it, the last `window`
+    (`conformal.history`, the module's own timeline), and a position is calibrated on its own
+    rows there when it has `floor` of them and on the pooled window otherwise
+    (`conformal.mondrian`). The bounds are `mu + sd_pred * q_lo` and `mu + sd_pred * q_hi`
+    at each of `LEVELS`; the lower bound is clipped at zero as the interval always has been
+    and `raw_lo` keeps it before the clip, because the clip is what `clipped` tests.
+
+    Added columns: `raw_lo`, `lo`, `hi`, `lo68`, `hi68`, `n_cal` (the position's own calibration
+    rows), `n_pool` (the pooled window's), `fell_back` and `scored`. A cell whose pooled
+    window is under `floor` is not a calibration and its rows come back `scored = False` with
+    null bounds -- named by the caller, never dropped here.
+    """
+    need = {"season", "week", "position", "points", "mu", "sd_pred"}
+    missing = sorted(need - set(g.columns))
+    if missing:
+        raise ValueError(f"calibrate needs {missing}")
+    n = g.height
+    season = g["season"].to_numpy().astype(int)
+    week = g["week"].to_numpy().astype(int)
+    pos = g["position"].to_numpy().astype(str)
+    mu = g["mu"].to_numpy().astype(float)
+    sdp = g["sd_pred"].to_numpy().astype(float)
+    score = (g["points"].to_numpy().astype(float) - mu) / sdp
+    cell_of = list(zip(season.tolist(), week.tolist(), strict=True))
+    by_cell: dict[tuple[int, int], np.ndarray] = {}
+    for c in sorted(set(cell_of)):
+        by_cell[c] = np.flatnonzero((season == c[0]) & (week == c[1]))
+    cells = sorted(by_cell)
+
+    nan = np.full(n, np.nan)
+    raw_lo, hi, lo68, hi68 = nan.copy(), nan.copy(), nan.copy(), nan.copy()
+    n_cal = np.zeros(n, dtype=np.int64)
+    n_pool = np.zeros(n, dtype=np.int64)
+    fell = np.zeros(n, dtype=bool)
+    scored = np.zeros(n, dtype=bool)
+    l80, u80 = LEVELS[0]
+    l68, u68 = LEVELS[1]
+    for c in cells:
+        past = conformal.history(cells, c, window)
+        if not past:
+            continue
+        pi = np.concatenate([by_cell[x] for x in past])
+        ps, pg = score[pi], pos[pi]
+        rows = by_cell[c]
+        for p_ in np.unique(pos[rows]):
+            r = rows[pos[rows] == p_]
+            cal80 = conformal.mondrian(ps, pg, str(p_), lower_p=l80, upper_p=u80, floor=floor)
+            cal68 = conformal.mondrian(ps, pg, str(p_), lower_p=l68, upper_p=u68, floor=floor)
+            n_pool[r] = ps.size
+            n_cal[r] = int((pg == p_).sum())
+            if cal80 is None or cal68 is None:
+                continue
+            scored[r] = True
+            fell[r] = cal80.fell_back
+            raw_lo[r] = mu[r] + sdp[r] * cal80.q_lo
+            hi[r] = mu[r] + sdp[r] * cal80.q_hi
+            lo68[r] = np.maximum(mu[r] + sdp[r] * cal68.q_lo, 0.0)
+            hi68[r] = mu[r] + sdp[r] * cal68.q_hi
+    return g.with_columns(
+        pl.Series("raw_lo", raw_lo), pl.Series("lo", np.maximum(raw_lo, 0.0)),
+        pl.Series("hi", hi), pl.Series("lo68", lo68), pl.Series("hi68", hi68),
+        pl.Series("n_cal", n_cal), pl.Series("n_pool", n_pool),
+        pl.Series("fell_back", fell), pl.Series("scored", scored))
+
+
+# sqrt(2) times the binomial standard error under p = 0.80, the form #310 pre-registered for a
+# group: the calibration draw's share of the variance equals the test binomial's. Printed
+# beside a group and decides nothing here -- whether a group may rule is #310's.
+_SIGMA_SCALE = math.sqrt(2.0)
+
+
+def _published_row(label: str, g: pl.DataFrame, position: str | None) -> dict[str, Any]:
+    """One line of the published interval's table, over the scored rows of `g`.
+
+    `position` is the group's own code, or `None` for a pool -- a row that carried only
+    `group` made a reader know the sizes to tell which 0.757 was QB (#309). `n_cal` is the
+    median of the rows' own-position calibration counts and `n_cal_min` the smallest;
+    `n_fallback` is how many rows borrowed the pooled window and `fallback_cells` names the
+    `(season, week)` cells they sit in, so a group on pooled calibration says so instead of
+    being read as a test of the conditional claim. `sigma` is the deviation from 0.80 over
+    sqrt(2) times the binomial standard error at 0.80.
+    """
+    g = g.filter(pl.col("scored"))
+    nn = int(g.height)
+    if not nn:
+        return {"group": label, "position": position, "n": 0}
+    y = g["points"].to_numpy()
+    lo, hi = g["lo"].to_numpy(), g["hi"].to_numpy()
+    cov = float(np.mean((y >= lo) & (y <= hi)))
+    nominal = LEVELS[0][1] - LEVELS[0][0]
+    se = _SIGMA_SCALE * math.sqrt(nominal * (1.0 - nominal) / nn)
+    fb = g.filter(pl.col("fell_back"))
+    cells = sorted({(int(a), int(b)) for a, b in zip(fb["season"], fb["week"], strict=True)})
+    return {
+        "group": label, "position": position, "n": nn,
+        "n_cal": int(np.median(g["n_cal"].to_numpy())),
+        "n_cal_min": int(np.min(g["n_cal"].to_numpy())),
+        "n_fallback": int(fb.height), "fallback_cells": [list(c) for c in cells],
+        "pooled_calibration": bool(fb.height),
+        "cov80": cov,
+        "cov68": float(np.mean((y >= g["lo68"].to_numpy()) & (y <= g["hi68"].to_numpy()))),
+        "below_p10": float(np.mean(y < lo)), "above_p90": float(np.mean(y > hi)),
+        "deviation": cov - nominal, "se": se, "sigma": (cov - nominal) / se,
+        "clipped_share": float(np.mean(g["raw_lo"].to_numpy() <= 0.0)),
+    }
+
+
+def published_table(g: pl.DataFrame) -> list[dict[str, Any]]:
+    """The published interval's coverage table: one row per position, then the pool."""
+    rows = [_published_row(p, g.filter(pl.col("position") == p), p) for p in POSITIONS
+            if g.filter(pl.col("position") == p).height]
+    rows.append(_published_row("all", g, None))
+    return rows
+
+
+def published_floor_split(g: pl.DataFrame) -> list[dict[str, Any]]:
+    """The same coverage split on whether the published lower bound is pinned at zero.
+
+    A diagnostic and not a population (#309): it says where the interval is working for a
+    reason other than being right, and it decides nothing.
+    """
+    out = []
+    for name, sel in (("clipped at zero", pl.col("raw_lo") <= 0.0),
+                      ("strictly positive", pl.col("raw_lo") > 0.0)):
+        part = g.filter(pl.col("scored") & sel)
+        if part.height:
+            out.append(_published_row(name, part, None))
+    return out
+
+
+def published_by_prior(g: pl.DataFrame) -> list[dict[str, Any]]:
+    """The published interval's coverage by games of evidence behind the centre.
+
+    The conditional the estimation error is *for*: a parametric interval built on four games
+    under-covers at the thin end and over-covers at the thick, and a marginal 80% hides the
+    cancellation. Only where the centre was estimated (`n_prior` is null under the lookahead
+    centre, and the cut has nothing to say there).
+    """
+    if "n_prior" not in g.columns or g["n_prior"].null_count() == g.height:
+        return []
+    out = []
+    for label, low, high in PRIOR_BUCKETS:
+        sel = pl.col("n_prior") >= low
+        if high is not None:
+            sel = sel & (pl.col("n_prior") <= high)
+        part = g.filter(sel)
+        if part.filter(pl.col("scored")).height:
+            out.append(_published_row(label, part, None))
+    return out
+
+
+def gate_population(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The row the gate reads: the pool of everything that was scored, clipped and unclipped.
+
+    Its own function so that "the gate measures the whole board" is a seam with a name -- a
+    gate that reads a subset of the board is one line changed here, and
+    `test_the_gate_reads_the_whole_scored_board_not_a_subset` is the control that plants it.
+    """
+    return next(r for r in rows if r["group"] == GATE_SUBSET)
+
+
 def verdict(row: dict[str, Any], claim: float = CLAIMED_COV80, band: float = BAND) -> str:
     """COVERS, UNDER-COVERS or OVER-COVERS, against the pre-registered band around the claim.
 
@@ -369,27 +580,80 @@ def verdict(row: dict[str, Any], claim: float = CLAIMED_COV80, band: float = BAN
     return "UNDER-COVERS" if gap < 0 else "OVER-COVERS"
 
 
+def _uncalibrated_cells(g: pl.DataFrame) -> list[list[int]]:
+    left = g.filter(~pl.col("scored"))
+    return [list(c) for c in sorted({(int(a), int(b)) for a, b in
+                                     zip(left["season"], left["week"], strict=True)})]
+
+
+def _estimation_only(g: pl.DataFrame) -> dict[str, Any]:
+    """Coverage of the parametric interval at the estimation-aware scale, uncalibrated.
+
+    The same rows the parametric table reads, the same clipped bounds, with only
+    `sd -> sd_pred` changed: what estimation error closes by itself, before the empirical
+    calibration is asked for anything.
+    """
+    y = g["points"].to_numpy()
+    cov = (y >= g["pe10"].to_numpy()) & (y <= g["pe90"].to_numpy())
+    clipped = g["p10_raw"].to_numpy() <= 0.0
+    return {"n": int(g.height), "cov80": float(np.mean(cov)),
+            "cov80_unclipped": float(np.mean(cov[~clipped])) if (~clipped).any() else None,
+            "cov80_clipped": float(np.mean(cov[clipped])) if clipped.any() else None}
+
+
 def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
             min_weeks: int = MIN_WEEKS, min_prior: int = MIN_PRIOR,
             min_mu: float = MIN_MU, band: float = BAND,
-            claim: float = CLAIMED_COV80) -> dict[str, Any]:
+            claim: float = CLAIMED_COV80, window: int | None = CAL_WINDOW,
+            floor: int = conformal.MIN_GROUP_CALIBRATION) -> dict[str, Any]:
     """The whole weekly-interval measurement, as one dict.
+
+    The graded interval is the *published* one (#309): `calibrate`'s conformalised bounds at
+    the estimation-aware scale, over every player-week that has a calibration. `by_position`,
+    `floor_split` and `gate_*` read it. The parametric interval the gate graded until #309 --
+    no estimation error, a clipped parametric lower bound, the unclipped weeks only -- is kept
+    whole under `parametric`, so the prior values are in the file and the two are on one set
+    of rows; `estimation_only` is the middle step.
 
     `nominal` is the label the interval is served under; `gate_claim` is what the doc says
     it covers and what `verdict` was read against. Both are carried because a reader of
     `COVERS` beside `77.4%` needs the number it was compared with on the same line (#289).
+    `n` is the board; `gate_n` is how much of it was scored and `n_uncalibrated` is the rest,
+    with the cells -- the gate says how much of the board it graded.
     """
     g = graded(centred(player_weeks(stats), centre, min_weeks=min_weeks,
                        min_prior=min_prior, min_mu=min_mu))
-    rows = table(g)
+    cal = calibrate(g, window=window, floor=floor)
+    if not int(cal["scored"].sum()):
+        raise NotEnoughWeeks(
+            f"no player-week had a calibration of at least {floor} rows in a window of "
+            f"{window} cells; the board has {g.height} player-weeks")
+    rows = published_table(cal)
     split = floor_split(g)
-    gated = next((r for r in split if r["group"] == "strictly positive"), rows[-1])
+    param_rows = table(g)
+    param_gated = next((r for r in split if r["group"] == "strictly positive"),
+                       param_rows[-1])
+    gated = gate_population(rows)
+    clipped_param = next((r["n"] for r in split if r["group"] == "clipped at zero"), 0)
     return {
-        "centre": centre, "lookahead": centre == "realised",
+        "centre": centre, "lookahead": centre == "realised", "interval": "conformal",
         "n": int(g.height), "nominal": {"cov80": 0.80, "cov68": 0.68},
-        "band": band, "by_position": rows, "floor_split": split,
+        "band": band, "by_position": rows, "floor_split": published_floor_split(cal),
+        "by_prior": published_by_prior(cal),
+        "calibration": {"window": window, "floor": floor, "scale": "sd*sqrt(1+1/n)",
+                        "unit": "(season, week) cells"},
+        "n_uncalibrated": int(g.height - gated["n"]),
+        "uncalibrated_cells": _uncalibrated_cells(cal),
         "gate_subset": GATE_SUBSET, "gate_n": gated["n"], "gate_cov80": gated["cov80"],
+        "gate_clipped_share": gated["clipped_share"],
         "gate_claim": claim, "verdict": verdict(gated, claim=claim, band=band),
+        "estimation_only": _estimation_only(g),
+        "parametric": {
+            "by_position": param_rows, "floor_split": split,
+            "gate_subset": "unclipped", "gate_n": param_gated["n"],
+            "gate_cov80": param_gated["cov80"],
+            "clipped_share": clipped_param / g.height,
+            "verdict": verdict(param_gated, claim=claim, band=band)},
     }
 
 
@@ -633,7 +897,11 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
         return None
     out = {k: got.get(k) for k in
            ("centre", "lookahead", "n", "gate_subset", "gate_n", "gate_cov80", "gate_claim",
-            "band", "verdict", "generated_at")}
+            "band", "verdict", "generated_at",
+            # #309: what the page needs to say that the number is the whole scored board and
+            # how much of the board that is. Absent in an artifact written before it, which
+            # the page then words as it always did.
+            "interval", "gate_clipped_share", "n_uncalibrated")}
     # An artifact written before the claim was carried (#289) had its verdict read against
     # the label, so that is the claim it is published with -- a reader printing `verdict`
     # beside `gate_claim` then says what that run actually compared.
@@ -642,6 +910,22 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
     if isinstance(got.get("survivor"), dict):
         out["survivor"] = got["survivor"]
     return out
+
+
+def _print_published(rows: list[dict[str, Any]]) -> None:
+    """The published interval's table: coverage, n_cal, and the deviation in sigma (#309)."""
+    print(f"    {'':<18}{'n':>7}{'n_cal':>7}{'80%':>8}{'68%':>8}{'<p10':>8}{'>p90':>8}"
+          f"{'clipped':>9}{'dev':>8}{'sigma':>7}")
+    for r in rows:
+        if not r["n"]:
+            print(f"    {r['group']:<18}{0:>7}   (nothing scored)")
+            continue
+        n_cal = f"{r['n_cal']:>7,}" if r.get("n_cal") else f"{'--':>7}"
+        pooled = ("  pooled calibration on " + f"{r['n_fallback']:,} rows"
+                  if r["n_fallback"] else "")
+        print(f"    {r['group']:<18}{r['n']:>7,}{n_cal}{r['cov80']:>8.1%}{r['cov68']:>8.1%}"
+              f"{r['below_p10']:>8.1%}{r['above_p90']:>8.1%}{r['clipped_share']:>9.1%}"
+              f"{r['deviation']:>+8.1%}{r['sigma']:>+7.1f}{pooled}")
 
 
 def _print_table(rows: list[dict[str, Any]]) -> None:
@@ -761,14 +1045,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"hub.models.coverage: {e}", file=sys.stderr)
             return 1
         lookahead = "  LOOKAHEAD CENTRE" if got["lookahead"] else ""
-        print(f"  weekly interval, centre={got['centre']}, {got['n']:,} player-weeks"
-              f"{lookahead}")
-        _print_table(got["by_position"])
-        print("    -- split on whether the model's own p10 survived the zero clip --")
-        _print_table(got["floor_split"])
-        print(f"    gate reads the {got['gate_subset']} weeks: {got['gate_cov80']:.1%} "
-              f"against the claimed {got['gate_claim']:.1%} +/- {got['band']:.0%} "
-              f"(interval labelled {got['nominal']['cov80']:.0%}) over {got['gate_n']:,} "
+        print(f"  weekly interval, centre={got['centre']}, {got['n']:,} player-weeks on the "
+              f"board, {got['gate_n']:,} scored{lookahead}")
+        print(f"    the published interval: conformal, calibrated within position on the last "
+              f"{got['calibration']['window']} cells (floor {got['calibration']['floor']}), "
+              f"scale {got['calibration']['scale']}")
+        _print_published(got["by_position"])
+        print("    -- split on whether the published lower bound is pinned at zero --")
+        _print_published(got["floor_split"])
+        if got["by_prior"]:
+            print("    -- by games of evidence behind the centre --")
+            _print_published(got["by_prior"])
+        par = got["parametric"]
+        print(f"    for the record, the parametric interval this replaced: "
+              f"{par['gate_cov80']:.1%} of {par['gate_n']:,} {par['gate_subset']} weeks "
+              f"({par['clipped_share']:.1%} of the board clipped) -> {par['verdict']}")
+        print(f"    {got['n_uncalibrated']:,} of {got['n']:,} player-weeks had no calibration "
+              f"and were not scored"
+              + (f" (cells {got['uncalibrated_cells']})" if got["uncalibrated_cells"] else ""))
+        pooled = [r["group"] for r in got["by_position"] if r.get("pooled_calibration")
+                  and r["position"]]
+        if pooled:
+            print(f"    on pooled calibration for part of the window, so not a test of the "
+                  f"conditional claim there: {', '.join(pooled)}")
+        print(f"    gate reads every week it scored ({got['gate_subset']}): "
+              f"{got['gate_cov80']:.1%} against the claimed {got['gate_claim']:.1%} "
+              f"+/- {got['band']:.0%} (interval labelled {got['nominal']['cov80']:.0%}) over "
+              f"{got['gate_n']:,}, {got['gate_clipped_share']:.1%} of them clipped "
               f"-> {got['verdict']}")
         if a.write:
             print(f"    written to {write_summary(got)}")

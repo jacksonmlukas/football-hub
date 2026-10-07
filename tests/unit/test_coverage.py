@@ -111,16 +111,25 @@ def test_a_week_is_not_scored_until_enough_earlier_weeks_exist():
 def test_the_harness_moves_when_the_deployed_spread_law_moves(monkeypatch):
     """`graded` must read `predict.moments`, not a copy of `WEEKLY_K` living here.
 
-    Doubling the shipped constant doubles every interval, so coverage must rise. A harness
+    Doubling the shipped constant doubles every parametric interval, so the parametric
+    coverage must rise, and the published interval's *width* must double with it. A harness
     that restated the law would return the identical table and this test would fail.
+
+    Not the published coverage: that is conformal, and a doubled scale is absorbed by the
+    calibration -- which is the construction working (#309), and why this test reads the
+    parametric block and the width instead.
     """
     stats = _drawn(n_players=120, seed=1)
-    before = coverage.measure(stats, "prior")["gate_cov80"]
+    before = coverage.measure(stats, "prior")
     monkeypatch.setattr(predict, "WEEKLY_K", {k: v * 2 for k, v in predict.WEEKLY_K.items()})
-    after = coverage.measure(stats, "prior")["gate_cov80"]
-    assert after > before + 0.05, (
+    after = coverage.measure(stats, "prior")
+    assert after["parametric"]["gate_cov80"] > before["parametric"]["gate_cov80"] + 0.05, (
         "the shipped spread law doubled and the graded coverage did not move, so the "
         "harness is grading its own copy of it")
+    g0 = coverage.graded(coverage.centred(coverage.player_weeks(stats), "prior"))
+    assert g0["sd"].to_list()[0] == pytest.approx(
+        predict.WEEKLY_K["WR"] * math.sqrt(g0["mu"].to_list()[0])), (
+        "the moments graded are the ones the (doubled) deployed function returns")
 
 
 def test_the_moments_it_grades_are_the_ones_moments_returns():
@@ -246,14 +255,15 @@ def test_the_published_summary_carries_the_claim_the_verdict_was_read_against(tm
     assert back is not None and back["gate_claim"] == coverage.CLAIMED_COV80
 
 
-def test_the_gate_reads_the_unclipped_weeks_not_the_pool():
-    """The clipped weeks report a coverage the interval did not earn, so pooling them in is
-    how a miss hides. The gate takes the strictly-positive split."""
-    stats = _drawn(n_players=200, seed=5)
-    got = coverage.measure(stats, "prior")
-    unclipped = next(r for r in got["floor_split"] if r["group"] == "strictly positive")
-    assert got["gate_cov80"] == unclipped["cov80"] and got["gate_n"] == unclipped["n"]
-    assert got["gate_n"] < got["n"]
+def test_the_parametric_gate_that_read_the_unclipped_weeks_is_kept_as_the_prior_value():
+    """Until #309 the gate took the strictly-positive split and left out the clipped third of
+    the board. That population is kept under `parametric`, labelled, so the prior values are
+    reproducible; the gate itself now reads the whole scored board (`test_coverage_conformal`)."""
+    got = coverage.measure(_drawn(n_players=200, seed=5), "prior")
+    par = got["parametric"]
+    unclipped = next(r for r in par["floor_split"] if r["group"] == "strictly positive")
+    assert par["gate_cov80"] == unclipped["cov80"] and par["gate_n"] == unclipped["n"]
+    assert got["gate_subset"] == "all"
 
 
 def test_the_summary_round_trips_for_the_publisher(tmp_path):
@@ -500,7 +510,7 @@ def test_the_cli_prints_the_table_and_the_verdict(capsys, monkeypatch):
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(n_players=80))
     assert coverage.main(["--measure"]) == 0
     out = capsys.readouterr().out
-    assert "centre=prior" in out and "gate reads the unclipped weeks" in out
+    assert "centre=prior" in out and "gate reads every week it scored" in out
     assert "LOOKAHEAD" not in out
 
 
@@ -510,42 +520,53 @@ def test_the_cli_says_so_when_the_centre_is_the_lookahead_one(capsys, monkeypatc
     assert "LOOKAHEAD CENTRE" in capsys.readouterr().out
 
 
+def _claiming(claim):
+    """`coverage.measure` read against another claim: `main` takes the module constant, bound
+    as a default at definition, so a CLI test that wants a different claim wraps the function."""
+    import functools
+    return functools.partial(coverage.measure, claim=claim)
+
+
 def test_the_gate_refuses_when_the_interval_leaves_the_band(capsys, monkeypatch):
     """The consumption. A measurement whose answer nothing acts on is the thing issue #176
-    was opened about, so the exit code is part of the contract."""
-    monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=300, spread=1.3, seed=9))
-    assert coverage.main(["--gate"]) == 1, (
-        "weeks drawn 30% wider than the model believes must not clear the band")
-    assert "does not cover" in capsys.readouterr().err
+    was opened about, so the exit code is part of the contract.
+
+    What the gate can refuse on since #309 is a shift the calibration has not seen: a later
+    season drawn 60% wider than the one the window holds. (Weeks drawn wider throughout are
+    absorbed by the conformal step, and refusing *those* would be refusing for the wrong
+    reason -- the stale 0.77 claim, which the next test is about.) Against a claim of 0.80."""
+    a = _drawn(n_players=250, weeks=17, seasons=(2023,), seed=5)
+    b = _drawn(n_players=250, weeks=17, spread=1.6, seasons=(2024,), seed=6)
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: pl.concat([a, b]))
+    monkeypatch.setattr(coverage, "measure", _claiming(0.80))
+    assert coverage.main(["--gate"]) == 1
+    out = capsys.readouterr()
+    assert "UNDER-COVERS" in out.out and "does not cover" in out.err
 
 
 def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, capsys):
-    """Same command, same band, weeks drawn so the interval covers the 77% it claims (#289).
-    A gate that only ever refuses is not reading anything.
-
-    `spread=1.07` is the width at which a nominal 80% normal interval covers about 77% --
-    `P(|z| < 1.2816 / 1.07)` -- so this is the deployed function measured to be what the doc
-    says it is. The seasons are absurdly long on purpose: even a correctly specified model
-    under-covers once the centre is *estimated*, because the residual carries the centre's
-    own error on top of the week's, and a hundred weeks is what makes that term vanish.
-    """
+    """Same command, same band, a stationary stream and a claim of 0.80: the published
+    interval is calibrated, so it covers 80% whatever width the weeks were drawn at, and the
+    gate passes. A gate that only ever refuses is not reading anything."""
     monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9,
-                                                      spread=1.07))
-    assert coverage.main(["--gate", "--min-prior", "100"]) == 0
+                        lambda seasons, cache: _drawn(n_players=250, weeks=17, seed=9,
+                                                      spread=1.3, seasons=(2023, 2024)))
+    monkeypatch.setattr(coverage, "measure", _claiming(0.80))
+    assert coverage.main(["--gate"]) == 0
     out = capsys.readouterr().out
-    assert "against the claimed 77.0%" in out and "labelled 80%" in out
+    assert "against the claimed 80.0%" in out and "labelled 80%" in out
+    assert "of them clipped" in out, "the clipped share is beside the rate"
 
 
-def test_an_interval_that_covers_its_label_fails_the_claim(monkeypatch, capsys):
-    """The other direction, and the one that says the gate reads the claim rather than the
-    label: weeks drawn at exactly the model's width cover 80%, and 80% is not what the doc
-    says, so the gate refuses -- the claim is stale upward, and a stale claim is the thing
-    to be told about whichever way it is stale."""
+def test_an_interval_that_covers_its_label_fails_the_stale_077_claim(monkeypatch, capsys):
+    """The claim is read, not the label: the conformal interval covers 80%, the committed
+    claim is still 0.77 until #310 decides it, and the gate says the claim is stale -- OVER
+    -- which is the verdict change #309 names rather than hides."""
     monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=40, weeks=200, seed=9))
-    assert coverage.main(["--gate", "--min-prior", "100"]) == 1
+                        lambda seasons, cache: _drawn(n_players=250, weeks=17, seed=9,
+                                                      seasons=(2023, 2024)))
+    assert coverage.CLAIMED_COV80 == 0.77
+    assert coverage.main(["--gate"]) == 1
     assert "OVER-COVERS" in capsys.readouterr().out
 
 
