@@ -121,7 +121,7 @@ FLOOR: dict[str, int] = {
     "src/hub/season/roster.py": 0,
     "src/hub/season/survivor.py": 9,
     "src/hub/season/weekly_gate.py": 1,
-    "src/hub/season/weekly_forward.py": 5,
+    "src/hub/season/weekly_forward.py": 4,
     "src/hub/season/weekly_gate_data.py": 0,
     "src/hub/store.py": 3,
     "src/hub/watchdog_gap.py": 2,

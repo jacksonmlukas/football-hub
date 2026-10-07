@@ -249,7 +249,7 @@ def capture_week(schedule: pl.DataFrame, archive: pl.DataFrame, season: int, now
     return write_capture(build(season, week, rows, scrape, first, now, digest), base), week
 
 
-def _fetch(  # pragma: no cover - network
+def _fetch(
         season: int) -> tuple[pl.DataFrame, pl.DataFrame, str | None]:
     from hub.fetch import nflverse
     schedule = nflverse.load("schedules", [season], cols=SCHEDULE_COLS)

@@ -192,19 +192,65 @@ def test_main_answers_a_failed_fetch_with_a_sentence_and_a_stale_page_with_anoth
     assert "nothing captured" in capsys.readouterr().err
 
 
-def test_the_columns_asked_of_the_loaders_satisfy_their_contracts():
-    """`_fetch` is network and uncovered, and its first live run failed with a contract
-    violation: the schedule was asked for four columns and the contract requires five. No
-    network is needed to see it -- the contract's required columns must be inside the ask.
-    Planted: the old four-column tuple is shown missing exactly the three the live run named."""
+@pytest.fixture
+def spy(monkeypatch):
+    """`nflverse.load` and friends replaced by a recorder: what each call site actually passes
+    as `cols`, with no network. Returns `{source: cols}` as the calls arrive."""
+    from hub.fetch import nflverse
+
+    asked: dict[str, tuple[str, ...]] = {}
+
+    def load(source, seasons, cols=None, **_kw):
+        asked[source] = tuple(cols or ())
+        if source == "schedules":
+            return _schedule()
+        return pl.DataFrame({"season": [2026], "week": [14]})
+
+    monkeypatch.setattr(nflverse, "load", load)
+    monkeypatch.setattr(nflverse, "load_rankings", lambda *a, **k: _archive())
+    monkeypatch.setattr(nflverse, "data_pin", lambda *a, **k: None)
+    return asked
+
+
+def _missing(cols, contract):
+    return sorted(set(contract.required) - set(cols))
+
+
+def test_the_columns_each_call_site_asks_for_satisfy_the_contracts(spy, monkeypatch, tmp_path):
+    """The fetch used to be uncovered, and its first live run failed with a contract violation:
+    the schedule was asked for four columns and the contract requires five. Here the call sites
+    themselves are driven against a spy and the `cols` each really passes is held against the
+    contract's required set -- not a constant beside them."""
     from hub.contracts import PLAYER_STATS, SCHEDULES
+    from hub.fetch import nflverse
     from hub.season import weekly_forward
 
-    def missing(cols, contract):
-        return sorted(set(contract.required) - set(cols))
+    consensus._fetch(2026)
+    assert _missing(spy["schedules"], SCHEDULES) == []
+    spy.clear()
+    assert weekly_forward.week14_loaded() is True
+    assert _missing(spy["player_stats"], PLAYER_STATS) == []
+    spy.clear()
+    monkeypatch.setattr(weekly_forward.consensus, "read_captures", lambda _s: [])
+    assert weekly_forward.main(["--as-of", "2026-10-07"]) == 0         # NOT-YET: nothing read
+    assert _missing(spy["schedules"], SCHEDULES) == []
+    assert "player_stats" not in spy            # the data is not asked about before the date
+    assert nflverse.load is not None
 
-    assert missing(consensus.SCHEDULE_COLS, SCHEDULES) == []
-    assert missing(weekly_forward.STATS_COLS, PLAYER_STATS) == []
-    old = ("season", "week", "game_type", "gameday")
-    assert missing(old, SCHEDULES) == ["away_team", "game_id", "home_team"]
-    assert missing(("season", "week"), PLAYER_STATS) != []
+
+def test_a_four_column_ask_at_the_call_site_is_seen_to_fail(spy):
+    """The plant. Rewrite `_fetch`'s own source so the schedule call carries the old inline
+    four-column tuple, run it against the same spy, and the check must go red naming the three
+    columns the live run named -- so the test above is able to see the defect at a call site."""
+    import inspect
+    import textwrap
+
+    from hub.contracts import SCHEDULES
+
+    src = textwrap.dedent(inspect.getsource(consensus._fetch))
+    assert "cols=SCHEDULE_COLS" in src
+    bad = src.replace("cols=SCHEDULE_COLS", 'cols=("season", "week", "game_type", "gameday")')
+    ns = dict(vars(consensus))
+    exec(bad, ns)
+    ns["_fetch"](2026)
+    assert _missing(spy["schedules"], SCHEDULES) == ["away_team", "game_id", "home_team"]

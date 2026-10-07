@@ -196,7 +196,8 @@ def test_a_week_with_no_capture_is_named_not_scored():
 
 def test_a_capture_first_committed_after_the_deadline_is_not_admitted():
     """The file says it was captured in time; git says it arrived late. The commit is the
-    timestamp. Where git cannot say (None) the file's own time stands."""
+    timestamp. Where git cannot say (None) the capture is not admitted (the
+    shallow-clone plant, at the end of this test)."""
     p = Path("state/consensus/2026/wk05/cap-x.json")
     cap = _cap(5, path=p)
     late = consensus.deadline_for(DAYS[5]) + timedelta(hours=2)

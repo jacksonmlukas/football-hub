@@ -308,7 +308,7 @@ def assemble_2026(admitted: dict[int, Capture]
     return paired.filter(pl.col("season") == SEASON), weekly_gate.coverage(g, weeks)
 
 
-def week14_loaded() -> bool:  # pragma: no cover - network
+def week14_loaded() -> bool:
     """Whether nflverse has any player-week row for the horizon week: presence only."""
     from hub.fetch import nflverse
     stats = nflverse.load("player_stats", [SEASON], cols=STATS_COLS)
