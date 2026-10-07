@@ -323,8 +323,28 @@ def by_source(games: pl.DataFrame) -> dict[str, int]:
             "unpriced": int(src.null_count())}
 
 
+def dead_poller(games: pl.DataFrame) -> str | None:
+    """Why the snapshot poller looks dead, or None if some game is priced from a live capture.
+
+    The agreement checks only compare `live` rows, so a poller that stopped leaves them
+    nothing to compare and they skip (#443). This is the check that fails in their place:
+    no live row means no capture within `STALE_AFTER_DAYS` of the as-of moment. Replayed at
+    the moment of the red CI run (2026-10-07 16:16 UTC, before that day's poll) it reports
+    live 0 / stale 179.
+    """
+    live = int((games["price_source"] == "live").sum())
+    if live:
+        return None
+    return (f"no game is priced from a live snapshot (none captured within "
+            f"{STALE_AFTER_DAYS} days of the as-of moment): the poller is dead or the "
+            f"store is stale; {by_source(games)}")
+
+
 class Agreement(NamedTuple):
-    """How closely the snapshot and the moving field agree over a set of comparable games."""
+    """How closely the snapshot and the moving field agree over a set of comparable games.
+
+    Used by the golden agreement test (`tests/golden/test_line_agreement.py`) only; it lives
+    here so the unit controls can plant failures in it without a store."""
     n: int
     mean_abs: float
     max_abs: float

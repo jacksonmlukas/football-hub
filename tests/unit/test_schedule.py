@@ -566,3 +566,12 @@ def test_control_a_planted_inversion_trips_the_check_a_stale_gap_does_not():
     broken = schedule.line_agreement(
         schedule.comparable_quotes(_quotes(inverted + stale)), pick_em=2.0)
     assert broken.mean_abs > 0.5 and len(broken.flipped) == 10
+
+
+def test_control_a_dead_poller_is_reported_and_a_live_one_is_not():
+    """#443: with no live row the agreement checks skip, so this is what must fail."""
+    fresh = _quotes([("a", "live", -3.0, -3.5), ("b", "schedule", 7.0, -2.5)])
+    stale = _quotes([("a", "stale", -3.0, -3.5), ("b", "schedule", 7.0, -2.5)])
+    assert schedule.dead_poller(fresh) is None
+    why = schedule.dead_poller(stale)
+    assert why is not None and "dead" in why

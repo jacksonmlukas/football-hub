@@ -47,6 +47,15 @@ from hub.config import SEASON_AHEAD
 # convention. The tolerance is NOT loosened: the comparison is scoped to `live` rows
 # (`schedule.comparable_quotes`), the only ones where both sources are the same quote at the
 # same time, and 0.138 sits under 0.5 as 0.159 did.
+#
+# Stale quotes are UNVALIDATED, not shown to be movement (#443). 2026_04_ARI_NYG reads +7.0
+# at every poll from 08-25 to 09-06 against -2.5 now: twelve identical days looks like a
+# frozen or placeholder lookahead quote as much as a market that moved. Stale snapshots price
+# nothing (`price_source` yields to the moving field), so their correctness is unchecked by
+# design here. Replaying `priced_games` at the CI run's moment (2026-10-07 16:16 UTC) gives
+# 93 games, mean 2.325 (CI 2.336, the residual being nflverse updating since) and 5 flips,
+# with 0 live rows; the local 1.344 / 1 was the same store after that day's 17:40 poll.
+# Scoping to live rows would hide a dead poller, so `test_the_coverage_report...` fails on it.
 MEAN_TOLERANCE = 0.5
 MAX_TOLERANCE = 5.0
 
@@ -116,8 +125,18 @@ def test_the_coverage_report_accounts_for_every_game(priced):
     games, _ = priced
     cov = schedule.by_source(games)
     assert sum(cov.values()) == games.height
-    assert cov["live"] or cov["stale"], (
-        "no game priced from a snapshot; the store or the as-of moment")
+    assert schedule.dead_poller(games) is None, schedule.dead_poller(games)
+
+
+@pytest.mark.golden
+def test_control_a_store_whose_newest_capture_is_old_is_a_dead_poller():
+    """Rule 18: the same real store read a fortnight after its newest capture must trip
+    `dead_poller`, and read now it must not."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC).replace(tzinfo=None)
+    assert schedule.dead_poller(schedule.priced_games(SEASON_AHEAD, at=now)) is None
+    later = schedule.priced_games(SEASON_AHEAD, at=now + timedelta(days=14))
+    assert schedule.dead_poller(later) is not None
 
 
 @pytest.mark.golden
