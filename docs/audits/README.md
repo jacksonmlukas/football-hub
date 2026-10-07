@@ -95,7 +95,8 @@ Phase 2/3 re-plan. Its own `schema.relation_to_audit_v` says the same; filed as 
   the dated restatement beside their originals. *(Restated 2026-10-06, #381, rule 13: under (C),
   ADR-0019's 2026-10-06 amendment, a re-run of the same recipe reads **REMOVE on 3 resolved of 4,
   1 abstained**; prior value SHOW. The same four places carry that restatement; the re-run is not
-  bit-for-bit #376's, see `docs/gate-power.md`.)*
+  bit-for-bit #376's, see `docs/gate-power.md`, where #429 attributes it to an unrecorded input,
+  not code or seeds; today's run stands and the verdict word is unchanged.)*
 - **`method_rule_to_add`, superseded 2026-09-21:** the drafted clause landed as `docs/method.md`
   rule 17. A fourth instance in three days -- a decision rule, a test fixture, an operational `gh`
   query and a power harness, each a check whose outcome could not vary with the thing it checked --

@@ -719,7 +719,10 @@ REMOVE on 3 resolved of 4, 1 abstained** -- on today's re-run, which is not a bi
 (2025's gain is −14.34 where #376 recorded −19.86, so the mean is −11.02 against −12.40 and the
 MDE 7.84 against 11.01; 2022-2024 and the ceiling +21.90 are identical; t interval [−17.22,
 −4.82]), and which #376's own recorded numbers (t interval [−21.11, −3.69], three losses and one
-Abstention) give the same reading on. `player_spread` own_k
+Abstention) give the same reading on. *(Attributed 2026-10-06, #429: the gap to #376 is an input
+that run held and did not record -- #376's own commit re-run on today's data gives today's numbers
+to the cent -- so today's run, replayed three times, is the one that stands; `docs/gate-power.md`.)*
+`player_spread` own_k
   and usage (SHOW; **0 resolved of 5, 5 abstained**: the reason moves from "a tie blocks ADOPT" to
   "no season resolved"), `injury_type` (SHOW, 3 resolved of 3, 0 abstained) and
   `component_calibration` (NOT-RUNNABLE) do not change status.

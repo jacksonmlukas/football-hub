@@ -54,6 +54,21 @@ reading `t` off `r` without one. Units are stated in every row for this reason.
 | 14 | Snap-share trend | screen | 0.0592 | 4 | 0.0296 | **0.119** (r) | closed-form; per-season partial r beyond ECR at the published anchor (week ≥ 8/10) +0.2540, +0.1496, +0.2815, +0.2616 ([snap-trend-signal.md](snap-trend-signal.md)). The paired-points decision test on the same signal (top-1/top-3 by snap delta vs ECR) publishes only a win count, not per-season values, so no second `delta` is computed for it |
 | 15 | Weekly projection vs weekly consensus rank (the weekly blend gate) | gate | 0.382 | 4 | **0.191 (published)** | **0.768** (pts/team-week, published directly) | current restated figure: per-season −0.452, −1.490, −0.868, −1.204, se and MDE printed directly ([weekly-blend-gate.md](weekly-blend-gate.md)); `s = se * sqrt(k)` reproduces #357's own table exactly |
 
+> **Row 6, restated 2026-10-06 (#429, rule 13; the row above is kept, not edited).** *Prior value:
+> **11.17** pts/team-game, the MDE of the 2026-09-16 hold-out re-run (#290).* That figure is the
+> **hold-out recipe's** (`--holdout`, constants fitted without the season, per-season −19.28 /
+> −6.72 / −8.61 / −18.24) and stands as that recipe's; it was not re-run, and it was measured
+> before the draft gate's input drift below was known. The same gate run **without** `--holdout`
+> (#376's ceiling-measurement recipe, which is the one the published REMOVE is now restated on)
+> gives **11.01** as #376 recorded it on 2026-09-21 and **7.84** on today's inputs (per-season
+> −15.35 / −8.41 / −5.99 / −14.34, k=4, m=20 rooms; ceiling +21.90 either way). Today's 7.84
+> stands as the no-hold-out recipe's figure, and it rests on the same cause `docs/gate-power.md`
+> (*the draft re-run, attributed*) names: #376's 2025 season does not reproduce, from an input
+> that run did not record. So this row's detectable effect for the draft gate is **not one number**:
+> 11.17 (hold-out, 2026-09-16), 11.01 (no hold-out, #376's inputs, unrecoverable), 7.84 (no
+> hold-out, today's inputs, reproduced). A reader quoting a detectable effect for this gate quotes
+> the recipe with it.
+
 ## Reading this table
 
 **Six rows have no `delta`: #2, #7, #8, #9, #10, #12.** Two shapes among them: #8 is closed as
