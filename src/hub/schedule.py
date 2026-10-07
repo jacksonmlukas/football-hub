@@ -323,6 +323,42 @@ def by_source(games: pl.DataFrame) -> dict[str, int]:
             "unpriced": int(src.null_count())}
 
 
+class Agreement(NamedTuple):
+    """How closely the snapshot and the moving field agree over a set of comparable games."""
+    n: int
+    mean_abs: float
+    max_abs: float
+    flipped: list[str]
+
+
+def comparable_quotes(games: pl.DataFrame) -> pl.DataFrame:
+    """The games on which the snapshot and `spread_line` are the same quote at the same time.
+
+    Only a `live` row (#440). The moving field is the current number and a snapshot is the
+    number as of its capture, so the two are comparable only while the capture is recent --
+    the same cut `live_price` draws for pricing. A game whose last poll is a month old
+    carries a lookahead quote against a line that has since moved (2026-10-07: 64 of 93
+    games, mean gap 1.89 against 0.14 on the 29 live ones, no orientation error in either),
+    and counting it as disagreement would flag the poller's silence as a sign convention.
+    """
+    return games.filter((pl.col("price_source") == "live")
+                        & pl.col("snapshot_spread").is_not_null()
+                        & pl.col("schedule_spread").is_not_null())
+
+
+def line_agreement(both: pl.DataFrame, pick_em: float) -> Agreement:
+    """Gap and favourite-side disagreement between the two spreads on `both`.
+
+    `flipped` lists games the two sources put on opposite sides of a pick-em band of
+    `pick_em` points either way; inside it a sign difference is not a disagreement.
+    """
+    a, b = both["snapshot_spread"], both["schedule_spread"]
+    gap = [abs(x - y) for x, y in zip(a.to_list(), b.to_list(), strict=True)]
+    clear = (a.abs() >= pick_em) & (b.abs() >= pick_em) & (a * b < 0)
+    return Agreement(both.height, sum(gap) / len(gap) if gap else 0.0,
+                     max(gap, default=0.0), both.filter(clear)["game_id"].to_list())
+
+
 # --- what a reader can obtain -------------------------------------------------
 
 class Provenance(NamedTuple):

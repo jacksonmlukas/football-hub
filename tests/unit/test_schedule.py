@@ -515,3 +515,54 @@ def test_a_row_priced_from_the_moving_field_carries_no_staleness(sched, tmp_path
     assert got["price_source"].to_list() == ["schedule"]
     assert got["polls_unmoved"].to_list() == [None]
     assert got["unmoved_since"].to_list() == [None]
+
+
+# --- the snapshot / moving-field agreement check (#440) ------------------------------------
+
+def _quotes(rows):
+    """(game_id, price_source, snapshot_spread, schedule_spread) rows."""
+    return pl.DataFrame({"game_id": [r[0] for r in rows], "price_source": [r[1] for r in rows],
+                         "snapshot_spread": [r[2] for r in rows],
+                         "schedule_spread": [r[3] for r in rows]},
+                        schema={"game_id": pl.Utf8, "price_source": pl.Utf8,
+                                "snapshot_spread": pl.Float64, "schedule_spread": pl.Float64})
+
+
+def test_only_live_snapshots_are_compared_against_the_moving_field():
+    """A month-old lookahead quote against a line that has since moved is movement, not a
+    sign convention: it must not reach the comparison (#440)."""
+    games = _quotes([("a", "live", -3.0, -3.5), ("b", "schedule", 7.0, -2.5),
+                     ("c", "stale", 7.0, -2.5), ("d", "live", None, -1.0),
+                     ("e", "live", -1.0, None), ("f", "live", 4.5, 4.5)])
+    assert sorted(schedule.comparable_quotes(games)["game_id"].to_list()) == ["a", "f"]
+
+
+def test_line_agreement_measures_gap_and_clear_favourite_flips():
+    both = _quotes([("a", "live", -3.0, -3.5), ("b", "live", 4.0, 4.0),
+                    ("c", "live", -1.5, 1.5),      # pick-em both ways: a sign, not a disagreement
+                    ("d", "live", 6.0, -6.0)])     # a real flip
+    got = schedule.line_agreement(both, pick_em=2.0)
+    assert got.n == 4 and got.flipped == ["d"]
+    assert got.max_abs == pytest.approx(12.0)
+    assert got.mean_abs == pytest.approx((0.5 + 0.0 + 3.0 + 12.0) / 4)
+
+
+def test_line_agreement_on_nothing_is_zeroes_not_an_error():
+    got = schedule.line_agreement(_quotes([]), pick_em=2.0)
+    assert (got.n, got.mean_abs, got.max_abs, got.flipped) == (0, 0.0, 0.0, [])
+
+
+def test_control_a_planted_inversion_trips_the_check_a_stale_gap_does_not():
+    """Rule 18: the check must be able to fail on what it guards (an inverted home/away or
+    sign convention) and must stay quiet on what it must not (aged lookahead quotes)."""
+    agree = [(f"g{i}", "live", s, s + 0.25) for i, s in
+             enumerate([-7.0, -3.5, 3.0, 6.5, -10.0, 2.5, -4.0, 8.0, -2.5, 5.5])]
+    stale = [(f"s{i}", "schedule", 7.0, -2.5) for i in range(20)]
+    clean = schedule.line_agreement(
+        schedule.comparable_quotes(_quotes(agree + stale)), pick_em=2.0)
+    assert clean.mean_abs == pytest.approx(0.25) and clean.flipped == []
+
+    inverted = [(g, src, -a, b) for g, src, a, b in agree]
+    broken = schedule.line_agreement(
+        schedule.comparable_quotes(_quotes(inverted + stale)), pick_em=2.0)
+    assert broken.mean_abs > 0.5 and len(broken.flipped) == 10
