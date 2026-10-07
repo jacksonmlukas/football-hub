@@ -1447,6 +1447,14 @@ def stamped_for_publication(paired: pl.DataFrame,
     return stamped, said
 
 
+def _inputs_read() -> list[dict]:
+    """Each source the open run has read, as the ledger records it (#429): `source`, `as_of`
+    and `digest`, the digest being `unpinned` for a read with no pin. The aggregate
+    `data_digest` is `unpinned` as soon as one read is, so on its own it cannot say which."""
+    from hub.fetch.nflverse import pins_this_run
+    return [{"source": p.source, "as_of": p.as_of, "digest": p.digest} for p in pins_this_run()]
+
+
 def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
              actions: Actions, name: str, arm_a: str, arm_b: str,
              unit: str = "points per team game", places: int = 2, show_n: bool = True,
@@ -1519,7 +1527,8 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
                        lo=float(summary.get("lo", float("nan"))),
                        hi=float(summary.get("hi", float("nan"))),
                        verdict=verdict[0], seasons=_season_records(seasons),
-                       resolved=core.resolved, abstained=core.abstained)
+                       resolved=core.resolved, abstained=core.abstained,
+                       inputs=_inputs_read())
     comparison = writer.record(entry)
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,

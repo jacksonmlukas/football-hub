@@ -92,6 +92,11 @@ class WidthEntry:
     # count; then neither key is written, the same additive shape as `seasons`.
     resolved: int | None = None
     abstained: int | None = None
+    # #429: what the run read, one `{"source", "as_of", "digest"}` per source, `digest` being
+    # `"unpinned"` for a read with no pin. `data_digest` folds these into one string and turns
+    # the whole of it into `unpinned` if any one is, which is why the draft gate's entry could
+    # not say what its re-run read differently from #376's. Beside the digest, never in the key.
+    inputs: list[dict] | None = None
 
     @property
     def key(self) -> tuple[str, str | None, str, str]:
@@ -131,6 +136,8 @@ class WidthEntry:
             out["resolved"] = self.resolved
         if self.abstained is not None:
             out["abstained"] = self.abstained
+        if self.inputs is not None:
+            out["inputs"] = self.inputs
         return out
 
     @staticmethod
@@ -162,6 +169,7 @@ class WidthEntry:
                              if isinstance(d.get("requires_review"), bool) else None),
             resolved=_count(d.get("resolved")),
             abstained=_count(d.get("abstained")),
+            inputs=_inputs(d.get("inputs")),
         )
 
 
@@ -205,6 +213,13 @@ def _num(v: object, missing: float = float("nan")) -> float:
 def _count(v: object) -> int | None:
     """A season count read off disk, or `None` -- never a raise, for the reason `_num` gives."""
     return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _inputs(v: object) -> list[dict] | None:
+    """A run's recorded reads off disk, or `None` unless it is a list of dicts."""
+    if isinstance(v, list) and all(isinstance(r, dict) for r in v):
+        return v
+    return None
 
 
 class Comparison(NamedTuple):

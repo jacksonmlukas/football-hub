@@ -263,6 +263,8 @@ CHECKED: dict[str, Rule] = {
 }
 
 UNCHECKED: dict[str, str] = {
+    "shipped quantiles": "`hub.models.weekly.shipped_quantiles` carries the name until #430 "
+                         "renames it when the Weekly projection becomes an exhibit",
     "tie": "a tied game (`DROP_TIES`, `n_tied`) and the Gate's `ties` counter are real and "
            "correctly named; the entry forbids the word only for a season's disposition",
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "

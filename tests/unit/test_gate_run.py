@@ -262,6 +262,35 @@ def test_the_ledger_entry_and_the_run_carry_the_abstention_count():
     assert recorded[-1].verdict == "ADOPT"
 
 
+def test_the_ledger_entry_names_each_source_the_run_read_even_when_the_digest_is_unpinned():
+    """#429: the draft gate's re-run of #376's recipe did not reproduce it, and nothing the run
+    recorded could say why -- one read with no pin turns the whole `data_digest` into `unpinned`,
+    which discriminates nothing. The entry now carries the run's reads one by one (source, as-of,
+    digest; `unpinned` where there is no pin), so a later replay can be diffed source by source
+    and the unpinned read is named. Rule 18: with the field dropped this fails on the entry."""
+    from dataclasses import dataclass
+
+    from hub.config import UnpinnedRead
+    from hub.fetch import nflverse as nv
+
+    @dataclass(frozen=True)
+    class _Pin:
+        source: str
+        as_of: str | None
+        digest: str
+
+    ledger = Ledger(path=None)
+    with nv.reads_of_one_run() as reads:
+        reads.remember("a", _Pin("ff_rankings", "2025-08-31", "abc123"))
+        reads.remember("b", UnpinnedRead("player_stats", None))
+        got = _run(_paired(), ledger=ledger)
+    assert got.verdict[0] in {"SHOW", "ADOPT", "REMOVE", "NOT-RUNNABLE"}
+    recorded = ledger._read()
+    assert recorded is not None and recorded[-1].inputs == [
+        {"source": "ff_rankings", "as_of": "2025-08-31", "digest": "abc123"},
+        {"source": "player_stats", "as_of": None, "digest": "unpinned"}]
+
+
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
     """The weekly gate's `compare` returns a frame with no rows and no columns when nothing
     is covered. The run must still answer rather than fall over on a season column that is

@@ -72,7 +72,7 @@ import datetime as dt
 import math
 import statistics
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -83,7 +83,7 @@ from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
-from hub.fetch import nfeloqb, odds
+from hub.fetch import nfeloqb, nflverse, odds
 from hub.ledger import Ledger
 from hub.ledger import recipe as _recipe
 from hub.models import experiment, quarterback
@@ -198,12 +198,28 @@ def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:
     id, so a frame built here joins the source's values through `with_values` and never by
     name. The standard `PBP_COLS` slice does not carry the passer, and a cache without it is
     refused by the column's name rather than read for a starter it cannot hold.
+
+    **Regular season only (#420)**: the question is regular-season by pre-registration, and a
+    playoff game would otherwise be a team's "previous game" for the next season's week 1.
+    `season_type` is therefore required, and refused by name like the passer.
+
+    **The rule is the passer of the first pass play, whoever he is.** Reconciled against
+    nfeloqb's starter column on 2022-2025 (docs/qb-adjustment.md, 2026-10-06): 6 of 2,174
+    team-games differ. It does not know a position, so a trick play that opens a game names
+    its thrower as the starter and reads as a change out and a change back. One of the six
+    disagreements is a brief first appearance (the first passer threw under three pass plays,
+    the file's starter eight or more), and six team-games in all have a first passer who threw
+    two or fewer. A guard against them would be a second definition of "starter" chosen after
+    the numbers, which rule 1 forbids; the count is the standing cost of the rule.
     """
-    if PASSER not in pbp.columns:
-        raise ValueError(f"play-by-play carries no '{PASSER}' column; the first pass attempt "
-                         f"cannot name a starter without it (the cached PBP_COLS slice does "
-                         f"not include it)")
-    passes = pbp.filter((pl.col("play_type") == "pass") & pl.col(PASSER).is_not_null())
+    for column in (PASSER, "season_type"):
+        if column not in pbp.columns:
+            raise ValueError(f"play-by-play carries no '{column}' column; the first pass "
+                             f"attempt cannot name a regular-season starter without it "
+                             f"(the PBP_COLS slice does not include it; the study's own is "
+                             f"nflverse.STARTER_PBP_COLS)")
+    passes = pbp.filter((pl.col("season_type") == "REG") & (pl.col("play_type") == "pass")
+                        & pl.col(PASSER).is_not_null())
     return (passes.sort("game_id", "posteam", "play_id")
                   .group_by("game_id", "posteam", maintain_order=True).first()
                   .select(pl.col("game_id"), pl.col("season").cast(pl.Int64),
@@ -278,17 +294,121 @@ def with_values(ev: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
     """Events built off play-by-play, given the source's ex-ante values by (team, game): the
     arriving starter's value and adjustment off the event row, the departing starter's
     value off the previous game's row, and the two dates. The pinned file is the one
-    quality measure both readers use, so a starter identified elsewhere still prices here."""
-    here = tg.select(pl.col("team"), pl.col("game_id"), pl.col("date"),
+    quality measure both readers use, so a starter identified elsewhere still prices here.
+
+    **Dates the events already carry are kept (#420)**: events built off the schedule
+    (`team_games_from_pbp`) have a date for every game the season plays, and the file has
+    dates only for the games it holds -- one week of 2026 -- so overwriting them from it
+    would erase the dates of exactly the games the file cannot see. Events with no dates
+    (a bare starters frame) still take them from the file. A value the file does not hold is
+    null, and so is the gap built from it: `event_games` refuses to read a null as zero."""
+    dated = {"date", "prev_date"}.issubset(ev.columns)
+    here = tg.select(pl.col("team"), pl.col("game_id"),
+                     *([] if dated else [pl.col("date")]),
                      pl.col("value").alias("arriving_value"), pl.col("adj").alias("arriving_adj"))
     there = tg.select(pl.col("team"), pl.col("game_id").alias("prev_game_id"),
-                      pl.col("date").alias("prev_date"),
+                      *([] if dated else [pl.col("date").alias("prev_date")]),
                       pl.col("value").alias("departing_value"))
-    return (ev.drop([c for c in ("date", "prev_date", "departing_value", "arriving_value",
-                                 "gap", "arriving_adj") if c in ev.columns])
+    dropped = ["departing_value", "arriving_value", "gap", "arriving_adj",
+               *([] if dated else ["date", "prev_date"])]
+    return (ev.drop([c for c in dropped if c in ev.columns])
               .join(here, on=["team", "game_id"], how="left")
               .join(there, on=["team", "prev_game_id"], how="left")
               .with_columns((pl.col("arriving_value") - pl.col("departing_value")).alias("gap")))
+
+
+# --- the event source for the study: play-by-play (#420, ADOPTED (B) on #421) --------------------
+#
+# The study's in-season events used to come from nfeloqb's starter column, and that file is
+# pinned (`hub.fetch.nfeloqb.COMMIT`, 2026-09-13): it holds one week of 2026 and cannot hold a
+# change made after the pin, so "2026: 0 changes" was a fact about the file (V2, #420). Moving
+# the pin moves `config_digest` and the model version on every published prediction, for an
+# adjustment that is off the published path; the maintainer's disposition (#421) is to leave
+# it and observe the starter from play-by-play, which the slate's nflverse store carries
+# through the week just played. The adjustment, the gate and the pinned input read the file
+# exactly as before; only the study and the event counts read this.
+
+SCHEDULE_COLS: tuple[str, ...] = ("game_id", "season", "week", "game_type", "gameday",
+                                  "home_team", "away_team", "home_score", "away_score")
+
+
+def schedule_team_games(sched: pl.DataFrame) -> pl.DataFrame:
+    """One row per (team, regular-season game) the schedule holds, played or not, in
+    `TEAM_GAME_SCHEMA`'s shape plus the previous-game link `events` reads: `date` is the game
+    day, `score`/`opp_score` the result (null until it is played), and `prev_game_id`,
+    `prev_season`, `prev_date` the team's actual previous game on the schedule -- a bye never
+    makes it the game before. `qb`, `value`, `adj` and the two probabilities are null: this
+    frame names no starter, `team_games_from_pbp` does, and the file's values join on later."""
+    missing = [c for c in SCHEDULE_COLS if c not in sched.columns]
+    if missing:
+        raise ValueError(f"the schedule carries no {missing} column(s); the study cannot "
+                         f"date or settle a game without them")
+    reg = sched.filter(pl.col("game_type") == "REG")
+    side = {"home": ("home_team", "away_team", "home_score", "away_score"),
+            "away": ("away_team", "home_team", "away_score", "home_score")}
+    long = pl.concat([
+        reg.select(pl.col("game_id"), pl.col("season").cast(pl.Int64),
+                   pl.col("week").cast(pl.Int64), pl.col("gameday").cast(pl.Utf8).alias("date"),
+                   pl.col(t).alias("team"), pl.lit(name == "home").alias("home"),
+                   pl.col(s).cast(pl.Int64).alias("score"),
+                   pl.col(o).cast(pl.Int64).alias("opp_score"))
+        for name, (t, _, s, o) in side.items()])
+    prev = {c: pl.col(c).shift(1).over("team")
+            for c in ("game_id", "season", "date")}
+    return (long.sort("team", "date", "game_id")
+                .with_columns(prev["game_id"].alias("prev_game_id"),
+                              prev["season"].alias("prev_season"),
+                              prev["date"].alias("prev_date"),
+                              pl.lit(None, dtype=pl.Utf8).alias("qb"),
+                              *(pl.lit(None, dtype=pl.Float64).alias(c)
+                                for c in ("value", "adj", "base_prob", "qb_prob")))
+                .select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date"))
+
+
+def team_games_from_pbp(pbp: pl.DataFrame, sched: pl.DataFrame) -> pl.DataFrame:
+    """The schedule's team-games with each one's observed starter: the passer of the first
+    pass play, null for a game with no pass play yet (not yet played, or in flight before
+    its first pass) -- those rows are kept, because they are what tells a played week from
+    one not yet read, and `events` is handed only the rows with a starter."""
+    starters = starters_from_pbp(pbp).select("game_id", "team", pl.col("qb").alias("_qb"))
+    return (schedule_team_games(sched)
+            .join(starters, on=["game_id", "team"], how="left")
+            .with_columns(pl.col("_qb").alias("qb")).drop("_qb")
+            .select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date"))
+
+
+def observed(tg: pl.DataFrame) -> pl.DataFrame:
+    """The team-games whose starter has been observed -- what `events` is handed."""
+    return tg.filter(pl.col("qb").is_not_null())
+
+
+class Reconciliation(NamedTuple):
+    """The two sources' in-season changes, counted over the team-games both observed: the
+    pinned file's, play-by-play's, and those both name. `compared` is those team-games."""
+
+    compared: int
+    file: int
+    pbp: int
+    both: int
+
+
+def reconcile(pbp_tg: pl.DataFrame, file_tg: pl.DataFrame) -> Reconciliation:
+    """Compare the two definitions of "starter" where both exist (#420's adopted acceptance):
+    each source's in-season changes over the team-games both observed. Counts, never rows.
+    A game one source does not hold is outside the comparison rather than a disagreement --
+    the pinned file holds one week of 2026, and counting every later game as a miss would
+    read its horizon as unreliability."""
+    both_rows = observed(pbp_tg).join(file_tg.select("game_id", "team"),
+                                      on=["game_id", "team"], how="semi")
+    shared = both_rows.select("game_id", "team")
+    file_rows = file_tg.join(shared, on=["game_id", "team"], how="semi")
+
+    def keys(frame: pl.DataFrame) -> set[tuple[str, str]]:
+        found = in_season_events(events(frame)).select("game_id", "team")
+        return set(zip(found["game_id"], found["team"], strict=True))
+    mine, theirs = keys(both_rows), keys(file_rows)
+    return Reconciliation(compared=both_rows.height, file=len(theirs), pbp=len(mine),
+                          both=len(mine & theirs))
 
 
 def in_season_events(ev: pl.DataFrame) -> pl.DataFrame:
@@ -307,7 +427,14 @@ EVENT_GAME_SCHEMA: dict[str, Any] = {
 def event_games(ev: pl.DataFrame) -> pl.DataFrame:
     """One row per event game: the home and away gaps (null where that side did not change),
     the net gap home minus away, how many sides changed, and `frozen_before` -- the earliest
-    previous game day among the changes, before which no change could have been known."""
+    previous game day among the changes, before which no change could have been known.
+
+    **`net_gap` is null when a side that changed has no gap (#420)**, not zero. A side that
+    did not change contributes nothing, and that is a real zero; a side that changed to or
+    from a starter the pinned file holds no value for contributes an unknown, and reading it
+    as zero would enter a game as "no quality difference" -- the manufactured zero the
+    study's week-mean refusal already exists to prevent. Events off the pinned file always
+    have both values, so this only bites events it cannot see."""
     if ev.is_empty():
         return pl.DataFrame(schema=EVENT_GAME_SCHEMA)
     parts = pl.col("game_id").str.split("_")
@@ -320,9 +447,11 @@ def event_games(ev: pl.DataFrame) -> pl.DataFrame:
                   pl.col("gap").filter(pl.col("_home")).first().alias("home_gap"),
                   pl.col("gap").filter(~pl.col("_home")).first().alias("away_gap"),
                   pl.len().alias("changes"),
+                  pl.col("gap").is_null().any().alias("_unvalued"),
                   pl.col("prev_date").min().alias("frozen_before"))
-              .with_columns((pl.col("home_gap").fill_null(0.0)
-                             - pl.col("away_gap").fill_null(0.0)).alias("net_gap"))
+              .with_columns(pl.when(pl.col("_unvalued")).then(None)
+                              .otherwise(pl.col("home_gap").fill_null(0.0)
+                                         - pl.col("away_gap").fill_null(0.0)).alias("net_gap"))
               .select(*EVENT_GAME_SCHEMA)
               .sort("season", "week", "game_id"))
 
@@ -361,14 +490,25 @@ def priced(polls: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
     `never_polled` tells the two apart -- true when the game's id appears nowhere in `polls`,
     false when it does (whether or not any of those polls precede `frozen_before`) -- so a
     caller can report "never polled" and "polled only after the change" as the separate
-    counts they are rather than one number that could be either."""
+    counts they are rather than one number that could be either.
+
+    `windowless` is a third fact (#420): a game whose frozen price is also its only price
+    before the game day. It is not censored, since a snapshot predates the change; and it
+    is not a move of zero, since nothing was observed moving. A back-filled lookahead from
+    before the season is exactly this for every 2026 week the in-season captures have not
+    reached."""
     days = polls.with_columns(_poll_day().alias("poll_day"))
     out = _last_before(days, games, "frozen_before", "frozen")
     out = _last_before(days, out, "date", "close")
     polled_ids = polls["game_id"].unique().to_list()
     return out.with_columns(
         pl.col("frozen").is_null().alias("censored"),
-        (~pl.col("game_id").is_in(polled_ids)).alias("never_polled"))
+        (~pl.col("game_id").is_in(polled_ids)).alias("never_polled"),
+        # #420: the frozen poll is also the last one before the game day -- the same capture,
+        # so there is no window in which a move could have been seen. Not censored (a price
+        # predates the change), and not a zero move either: `study_rows` refuses it.
+        (pl.col("frozen_at").is_not_null()
+         & (pl.col("frozen_at") == pl.col("close_at"))).alias("windowless"))
 
 
 def _log_loss(prob: float, y: float, eps: float = 1e-15) -> float:
@@ -406,11 +546,34 @@ def unplayed_study_games(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFr
     """How many uncensored, priced event games `study_rows` excludes as unplayed (#303) --
     off the same `priced` frame `study_rows` itself filters, so the count and the exclusion
     can never disagree about which games they mean. Reported on the run line rather than
-    left to shrink `n` silently."""
-    have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
+    left to shrink `n` silently. Counted among the valued games, so this and
+    `unvalued_study_games` partition what `study_rows` drops and never both claim a game."""
+    have = _valued(_priced_both_ways(polls, games))
     if have.is_empty():
         return 0
     return have.height - _exclude_unplayed(have, tg).height
+
+
+def _priced_both_ways(polls: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
+    """Event games with a frozen price and a *later* pre-game one: what `study_rows` starts
+    from. A windowless game (`priced`) is out -- it would enter the regression as a move of
+    zero that nobody observed (#420)."""
+    return priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null()
+                                       & ~pl.col("windowless"))
+
+
+def _valued(have: pl.DataFrame) -> pl.DataFrame:
+    """The priced games whose net gap is known; a game it is null for is `unvalued`."""
+    return have.filter(pl.col("net_gap").is_not_null())
+
+
+def unvalued_study_games(polls: pl.DataFrame, games: pl.DataFrame) -> int:
+    """How many uncensored, priced event games `study_rows` excludes because the pinned
+    file holds no value for a starter who changed (#420) -- a play-by-play event in a week
+    the file does not reach has a price and a result and no regressor. Reported on the run
+    line, so the coefficient's `n` is never short for a reason it does not say."""
+    have = _priced_both_ways(polls, games)
+    return have.height - _valued(have).height
 
 
 # --- the gate ---------------------------------------------------------------------------------
@@ -691,8 +854,9 @@ def study_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
     last one before a move that has finished happening, and reading it as the move would
     truncate the regressor. `unplayed_study_games` reports how many, off the same frame this
     filters. **A row whose week has no game left to serve as a control is refused**, not
-    fitted at a manufactured zero week-mean (`_week_means`'s own null `week_mean`)."""
-    have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
+    fitted at a manufactured zero week-mean (`_week_means`'s own null `week_mean`). **A game
+    whose net gap is unknown is refused too (#420)**, counted by `unvalued_study_games`."""
+    have = _valued(_priced_both_ways(polls, games))
     if have.is_empty():
         return pl.DataFrame(schema=STUDY_SCHEMA)
     have = _exclude_unplayed(have, tg)
@@ -912,6 +1076,50 @@ def verdict(fit: dict[str, float]) -> tuple[str, str]:
 
 # --- the entry point --------------------------------------------------------------------------
 
+class PbpGames(NamedTuple):
+    """`team_games_from_pbp`'s frame, and the sources it was served from last-good rather
+    than refreshed (named, so a run line can say so)."""
+
+    tg: pl.DataFrame
+    stale: tuple[str, ...]
+
+
+def _last_good(source: str, seasons: Sequence[int], cols: Sequence[str] | None, *,
+               fresh: bool, cache: Path | None) -> tuple[pl.DataFrame, bool]:
+    """One `nflverse.load`, refreshed when `fresh` and served from the cache when the wire
+    will not answer -- last-good rather than an error (CLAUDE.md, graceful degradation). The
+    flag is whether last-good was what came back after a refresh was asked for."""
+    if fresh:
+        try:
+            return nflverse.load(source, seasons, cols, refresh=True, cache=cache), False
+        except Exception:
+            pass
+    return nflverse.load(source, seasons, cols, cache=cache), fresh
+
+
+def pbp_team_games(seasons: Sequence[int], *, cache: Path | None = None) -> PbpGames:
+    """The study's events source, read through `hub.fetch.nflverse.load`: play-by-play for
+    each season (one per call -- the cache's own grain, and the slate's -- never a loop over
+    teams or games) and the schedule for dates and results. The season in progress is
+    refreshed, since it is the one that changes between runs; a completed season is a cache
+    hit after its first read. Raises when neither the wire nor the cache has a source, and
+    `main` then reads the pinned file instead and says so."""
+    stale: list[str] = []
+    frames = []
+    for season in seasons:
+        frame, was_stale = _last_good("pbp", [season], list(nflverse.STARTER_PBP_COLS),
+                                       fresh=season >= SEASON_AHEAD, cache=cache)
+        frames.append(frame)
+        if was_stale:
+            stale.append(f"play-by-play {season}")
+    sched, was_stale = _last_good("schedules", seasons, None,
+                                  fresh=max(seasons) >= SEASON_AHEAD, cache=cache)
+    if was_stale:
+        stale.append("schedules")
+    tg = team_games_from_pbp(pl.concat(frames), sched.select(*SCHEDULE_COLS))
+    return PbpGames(tg, tuple(stale))
+
+
 def archive(season: int, base: Path | None) -> pl.DataFrame:
     """The season's polls off the store, in the shape the readers take; empty on a fresh
     clone. `store.lines` is the one reader of every poll; this takes its four columns."""
@@ -1001,15 +1209,75 @@ def season_event_summaries(ev: pl.DataFrame, games: pl.DataFrame) -> list[Season
     return out
 
 
-def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int) -> list[str]:
-    lines = [f"  starter changes since {since}, observed off the source's starter column "
-             f"(never the injury report); an event is a change between two games of one "
-             f"season:"]
-    for s in season_event_summaries(ev, games):
-        lines.append(f"    {s.season}: {s.changes} changes on {s.games} event games, "
-                     f"gap sd {s.gap_sd:.1f} value units (n={s.n_gaps}); {s.offseason} "
-                     f"offseason change(s) not events")
+def _event_lines(ev: pl.DataFrame, games: pl.DataFrame, since: int, *,
+                 source: str = "the source's starter column",
+                 beyond: Mapping[int, Beyond] | None = None) -> list[str]:
+    """The event-count report. `beyond` names each season whose played games extend past
+    what `source` has seen (#420): that season's count is not a count of the season, so it
+    is printed as **not established past <date>**, with what was seen through that date
+    beside it, rather than as a number that reads the same whether or not anything
+    happened after it -- rule 18's shape, and what "2026: 0 changes" was."""
+    beyond = beyond or {}
+    lines = [f"  starter changes since {since}, observed off {source} (never the injury "
+             f"report); an event is a change between two games of one season:"]
+    summaries = {s.season: s for s in season_event_summaries(ev, games)}
+    for season in sorted(summaries.keys() | beyond.keys()):
+        s = summaries.get(season) or SeasonEventSummary(season, 0, 0, float("nan"), 0, 0)
+        seen = (f"{s.changes} changes on {s.games} event games, gap sd {s.gap_sd:.1f} value "
+                f"units (n={s.n_gaps}); {s.offseason} offseason change(s) not events")
+        if season in beyond:
+            past = beyond[season]
+            through = past.through if past.through is not None else "its first game"
+            after = ("games after it are not in the source" if past.unseen is None else
+                     f"{past.unseen} played team-game(s) after it have no observed starter")
+            lines.append(f"    {season}: NOT ESTABLISHED past {through} -- {after}; "
+                         f"through it: {seen}")
+        else:
+            lines.append(f"    {season}: {seen}")
     return lines
+
+
+class Beyond(NamedTuple):
+    """A season whose played games run past a source's horizon: the last game day the source
+    has a starter for (`through`, None when it has none), and how many played team-games lie
+    beyond it (None where the source cannot say, the pinned file having no schedule)."""
+
+    through: str | None
+    unseen: int | None
+
+
+def beyond_event_horizon(tg: pl.DataFrame) -> dict[int, Beyond]:
+    """Per season, whether a played team-game has no observed starter (#420): the schedule
+    says the game has a result and the source names nobody. The horizon is the season's last
+    game day with a starter. A season whose every played game has one is absent -- it is
+    established; a season with no played game is too, because nothing was played past
+    anything."""
+    out: dict[int, Beyond] = {}
+    for season in sorted(set(tg["season"].to_list())):
+        part = tg.filter(pl.col("season") == season)
+        unseen = part.filter(pl.col("score").is_not_null() & pl.col("qb").is_null()).height
+        if unseen:
+            through = part.filter(pl.col("qb").is_not_null())["date"].max()
+            out[int(season)] = Beyond(None if through is None else str(through), unseen)
+    return out
+
+
+def beyond_price_horizon(polls: pl.DataFrame, tg: pl.DataFrame) -> dict[int, Beyond]:
+    """The same question for prices: per season with polls, the played team-games whose game
+    day is after the last poll's Eastern day (#420). A game after the archive's last poll
+    cannot have a frozen price, whatever the events say; `through` is that last poll day."""
+    out: dict[int, Beyond] = {}
+    if polls.is_empty():
+        return out
+    last = (polls.with_columns(_poll_day().alias("_day"))
+                 .join(tg.select("game_id", "season").unique(), on="game_id", how="inner")
+                 .group_by("season").agg(pl.col("_day").max().alias("through")))
+    for season, through in zip(last["season"], last["through"], strict=True):
+        late = tg.filter((pl.col("season") == season) & pl.col("score").is_not_null()
+                         & (pl.col("date") > through)).height
+        if late:
+            out[int(season)] = Beyond(str(through), late)
+    return out
 
 
 def same_quarterback_floor_label(n_seasons: int, not_applied: Sequence[int],
@@ -1055,6 +1323,7 @@ class StudyReport(NamedTuple):
     n_typical: int
     mde: float
     unplayed: int
+    unvalued: int
     fit: dict[str, float]
     established: bool
     n_events: int
@@ -1084,6 +1353,7 @@ def study_report(study_parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | N
     restatement_flag = gap_sd_restatement_flag(sd_gap)
     mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
     unplayed = unplayed_study_games(polls, season_games, tg)
+    unvalued = unvalued_study_games(polls, season_games)
     rows_ = study_rows(polls, season_games, tg,
                        floor_per_root_day=floor if math.isfinite(floor) else None)
     fit = study_fit(rows_, floor_per_root_day=used)
@@ -1101,18 +1371,88 @@ def study_report(study_parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | N
     return StudyReport(label=label, qb_note=qb_note, floor=floor, floor_games=floor_games,
                        used=used, sd_gap=sd_gap, n_gaps=len(gaps),
                        restatement_flag=restatement_flag, n_typical=n_typical, mde=mde,
-                       unplayed=unplayed, fit=fit, established=established,
+                       unplayed=unplayed, unvalued=unvalued, fit=fit, established=established,
                        n_events=rows_.height, verdict_label=verdict_label,
                        verdict_sentence=verdict_sentence, benchmark_sentence=benchmark_sentence,
                        n_change_seen=n_change_seen, change_point_median=change_point_median)
 
 
+def horizon_line(season: int, study_tg: pl.DataFrame, file_tg: pl.DataFrame,
+                 polls: pl.DataFrame) -> str:
+    """Each source's horizon beside the season's played weeks (#420): the last game with a
+    result, the last game a starter was observed for, the pinned file's last game, and the
+    archive's last poll day. The four dates in one sentence, because a count printed without
+    them cannot be told from a count of a season the sources have not reached."""
+    mine = study_tg.filter(pl.col("season") == season)
+    played = mine.filter(pl.col("score").is_not_null())
+    last_played = played["date"].max() if played.height else None
+    seen = mine.filter(pl.col("qb").is_not_null())["date"].max()
+    file_last = file_tg.filter(pl.col("season") == season)["date"].max()
+    ours = polls.filter(pl.col("game_id").str.starts_with(f"{season}_"))
+    last_poll = None if ours.is_empty() else ours.select(_poll_day().max().alias("d"))["d"][0]
+    last_week = played["week"].max()
+    week = last_week if isinstance(last_week, int) else None
+    return (f"  horizons {season}: played through {last_played} (week {week}); starters "
+            f"observed through {seen}; the pinned file's last game {file_last}; the "
+            f"archive's last poll {last_poll}")
+
+
+class StudyEvents(NamedTuple):
+    """The events the study and the event counts read, and what to say about where they came
+    from: `tg` the team-games they were built on (results and dates included), `ev` the
+    events with the pinned file's values joined, `games` the event games, `source` a phrase for
+    the report, `beyond` the seasons whose played games run past the source, `notes` the lines
+    to print first."""
+
+    tg: pl.DataFrame
+    ev: pl.DataFrame
+    games: pl.DataFrame
+    source: str
+    beyond: dict[int, Beyond]
+    notes: list[str]
+
+
+def study_events(a: argparse.Namespace, rows: pl.DataFrame, tg: pl.DataFrame,
+                 ev: pl.DataFrame, games: pl.DataFrame, seasons: Sequence[int]) -> StudyEvents:
+    """The study's event source (#420, ADOPTED (B) on #421): the passer of each team's first
+    pass play, off the nflverse store, reconciled against the pinned file where both exist.
+    `tg`, `ev` and `games` are the pinned file's own, handed back unchanged when the study is
+    not asked for (the gate alone reads only the file) and when play-by-play cannot be read --
+    in which case the season in progress is named as not established past the file's last
+    game, because a pinned file cannot hold a change made after its pin, and a count of zero
+    from it is a fact about the file."""
+    file_only = StudyEvents(tg, ev, games, "the pinned file's starter column", {}, [])
+    if not (a.events or a.study):
+        return file_only
+    try:
+        got = pbp_team_games(seasons, cache=None)
+    except Exception as exc:
+        through = tg["date"].max()
+        return file_only._replace(
+            beyond={s: Beyond(None if through is None else str(through), None)
+                    for s in seasons if s >= SEASON_AHEAD},
+            notes=[f"  play-by-play unavailable ({type(exc).__name__}: {exc}); events read off "
+                   f"the pinned file, which cannot hold a change made after its pin"])
+    notes = [f"  {name} refresh failed; served last-good from the cache" for name in got.stale]
+    pbp_ev = events(observed(got.tg))
+    rec = reconcile(got.tg, tg)
+    notes.append(f"  reconciliation against the pinned file: over {rec.compared} team-games both "
+                 f"observe, {rec.file} in-season change(s) by the file, {rec.pbp} by "
+                 f"play-by-play, {rec.both} by both")
+    valued = with_values(pbp_ev, tg)
+    return StudyEvents(got.tg, valued, event_games(in_season_events(valued)),
+                       "the first pass play's passer in play-by-play",
+                       beyond_event_horizon(got.tg), notes)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog=PROG,
-        description="Starter-change events off the pinned nfeloqb file, the quarterback "
-                    "adjustment's gate over the frozen line (#291), and the line-move study "
-                    "(#221). Reads the caches; fetches nothing.")
+        description="Starter-change events, the quarterback adjustment's gate over the "
+                    "frozen line (#291), and the line-move study (#221). The gate reads "
+                    "the pinned nfeloqb file; the events and the study read play-by-play "
+                    "(#420), refreshing the season in progress and serving last-good if the "
+                    "wire is down.")
     ap.add_argument("--events", action="store_true", help="count the events per season")
     ap.add_argument("--gate", action="store_true",
                     help="run the pre-registered gate on the archive's event games")
@@ -1129,7 +1469,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="the first season the event counts, the pilot cover, and the "
                          "gate's archive assembles from")
     ap.add_argument("--cache", type=Path, default=None, help="the nfeloqb cache directory")
-    ap.add_argument("--store", type=Path, default=None, help="the processed store")
+    ap.add_argument("--store", type=Path, default=None,
+                    help="the processed store; omit to read the repo's, which also unions "
+                         "the committed state/odds snapshots (#383). A store elsewhere reads "
+                         "the _state/odds tree inside it, not the repo's")
     a = ap.parse_args(argv)
     if not (a.events or a.gate or a.study):
         ap.print_usage()
@@ -1144,10 +1487,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return unavailable(PROG, "the cached nfeloqb file",
                            FileNotFoundError("nothing cached; run hub.fetch.nfeloqb --refresh"))
     since_rows = rows.filter(pl.col("season") >= a.since)
+    # The pinned file's own events: the gate's, and the adjustment's. Never moved by this
+    # ticket -- the study's events are the next block's (#420).
     tg = team_games(since_rows)
     ev = events(tg)
     games = event_games(in_season_events(ev))
-    for line in _event_lines(ev, games, a.since):
+    seasons = list(range(a.since, a.season + 1))
+    study = study_events(a, rows, tg, ev, games, seasons)
+    for line in study.notes:
+        print(line)
+    for line in _event_lines(study.ev, study.games, a.since, source=study.source,
+                             beyond=study.beyond):
         print(line)
     unreadable = unreadable_games(since_rows)
     print(f"  {unreadable} team-game(s) since {a.since} a blank side made unreadable (that "
@@ -1157,7 +1507,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # rather than only --season's -- with `games` filtered to match. A gate over one
     # season's polls can never reach the three-season floor no matter how many the caches
     # hold; assembling the whole asked-for range is what lets it.
-    seasons = list(range(a.since, a.season + 1))
     parts = [archive(s, a.store) for s in seasons]
     have_seasons = [s for s, p in zip(seasons, parts, strict=True) if not p.is_empty()]
     polls = pl.concat(parts)
@@ -1171,15 +1520,30 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{polls['captured_at'].min():%Y-%m-%d} to {polls['captured_at'].max():%Y-%m-%d}, "
               f"{len(have_seasons)} of {len(seasons)} season(s) asked for have polls "
               f"({', '.join(str(s) for s in have_seasons)})")
+    # #420: `store.lines` unions the committed `state/odds/` tree (#383) under the repo's own
+    # store -- and a `--store` somewhere else carries its own `_state/odds`, so it is counted
+    # here, where a run that read none looks different from one that read them.
+    committed = store.committed_snapshots(a.store)
+    print(f"  committed snapshots read: {committed} file(s) under "
+          f"{store.snapshot_root(a.store)}"
+          + ("" if committed or a.store is None else
+             " (a --store carries its own _state/odds; omit --store to read the repo's)"))
     season_games = games.filter(pl.col("season").is_in(seasons))
-    seen = priced(polls, season_games)
+    study_games = study.games.filter(pl.col("season").is_in(seasons))
+    seen = priced(polls, study_games)
     never_polled = int(seen["never_polled"].sum())
     polled_after = int((seen["censored"] & ~seen["never_polled"]).sum())
-    print(f"  {span}: {season_games.height} event games; "
+    print(f"  {span}: {study_games.height} event games; "
           f"{int(seen['censored'].sum())} censored (no snapshot before the change could be "
           f"known: {never_polled} never polled at all, {polled_after} polled only after the "
           f"change), {seen.filter(~pl.col('censored') & pl.col('close').is_not_null()).height} "
-          f"with a frozen price and a pre-game one")
+          f"with a frozen price and a pre-game one, of which "
+          f"{int(seen['windowless'].sum())} windowless (the frozen poll is the only one before "
+          f"the game day, so no move was observed)")
+    print(horizon_line(a.season, study.tg, tg, polls))
+    for season, past in sorted(beyond_price_horizon(polls, study.tg).items()):
+        print(f"  prices: {season} NOT ESTABLISHED past {past.through} -- {past.unseen} "
+              f"played team-game(s) after the archive's last poll cannot have a frozen price")
 
     if a.gate:
         pil = pilot(tg, games)
@@ -1230,7 +1594,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             except Exception as exc:                         # pragma: no cover - network
                 qb_notes.append(f"{s} ({type(exc).__name__}: {exc})")
             study_parts.append((s, p, chart))
-        rep = study_report(study_parts, qb_notes, ev, games, polls, season_games, tg)
+        rep = study_report(study_parts, qb_notes, study.ev, study.games, polls,
+                           study_games, study.tg)
         print(f"  study: {rep.label} {rep.floor:.3f} points per root-day off {rep.floor_games} "
               f"live games of this archive{rep.qb_note} (#214 recorded 0.40 on 12; used "
               f"{rep.used:.2f}); gap sd {rep.sd_gap:.1f} value units over {rep.n_gaps} events "
@@ -1241,6 +1606,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  MDE before the run at a season of {rep.n_typical} event games, a 7-day "
               f"window: {rep.mde:.4f} points per value unit against a benchmark of "
               f"{BENCHMARK:.3f}")
+        print(f"  {rep.unvalued} uncensored, priced event game(s) excluded as unvalued -- the "
+              f"pinned file holds no value for a starter who changed, so the game has no "
+              f"regressor and is refused rather than read as a zero gap")
         print(f"  {rep.unplayed} uncensored, priced event game(s) excluded as unplayed -- an "
               f"in-flight game's last snapshot before its own game day is not the last one "
               f"before a move that has finished happening")

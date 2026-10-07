@@ -342,6 +342,12 @@ to consensus rank at −0.304 points a team-week, see
 _Avoid_: projection unqualified — say weekly projection or xFP, since the whole open question
 is whether the week adds anything.
 
+**Shipped interval**:
+The range a player's weekly points are published with on the page, and the one the coverage
+claim is graded on. It is the only interval "shipped" refers to. A model's own interval that
+the product does not publish is that model's interval, not a shipped one.
+_Avoid_: shipped quantiles — for an interval the page does not publish
+
 **Share**:
 A player's fraction of his **Team volume** of one count type — targets, carries, attempts —
 over the **Active set**, the shares summing to one. Measured week to week it is the stable

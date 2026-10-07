@@ -523,55 +523,230 @@
       "width": 7.644285714285715
     },
     {
-      "abstained": 0,
-      "clusters": 5.0,
+      "abstained": 1,
+      "clusters": 4.0,
       "config_digest": "c4606f91",
-      "data_digest": "b1a14540",
-      "gate": "interval_shape",
-      "hi": -0.0296116414969188,
-      "lo": -0.042331431540016895,
-      "recipe": "min_mu=2,min_prior=4,min_weeks=8,seed=0",
-      "resolved": 5,
+      "data_digest": "unpinned",
+      "gate": "draft",
+      "hi": -7.198857142857143,
+      "inputs": [
+        {
+          "as_of": null,
+          "digest": "08cee3c9",
+          "source": "ff_opportunity"
+        },
+        {
+          "as_of": "2022-08-31",
+          "digest": "54f46299",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "eefdb17a",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "f6fe15f0",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": "2021-09-01",
+          "digest": "c34d084c",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "94349a0a",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "c59b7659",
+          "source": "ff_opportunity"
+        },
+        {
+          "as_of": "2023-08-31",
+          "digest": "9b073c82",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "939c3cdc",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "b2f3c47e",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": "2022-09-01",
+          "digest": "11c21337",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "cb24bd8c",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "5371d78e",
+          "source": "ff_opportunity"
+        },
+        {
+          "as_of": "2024-08-31",
+          "digest": "58f9cbd2",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "3e88bb9b",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "31d7ff1e",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": "2023-09-01",
+          "digest": "c2e6dfb1",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "dda26e1e",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "01cfe326",
+          "source": "ff_opportunity"
+        },
+        {
+          "as_of": "2025-08-31",
+          "digest": "a9daa60c",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "1076e5d5",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "f77b121d",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        },
+        {
+          "as_of": "2024-09-01",
+          "digest": "c1ac1bab",
+          "source": "ff_rankings"
+        },
+        {
+          "as_of": null,
+          "digest": "2c87e1b0",
+          "source": "schedules"
+        },
+        {
+          "as_of": null,
+          "digest": "unpinned",
+          "source": "player_stats"
+        }
+      ],
+      "lo": -14.843142857142858,
+      "recipe": "ceiling=yes,draft_sims=12,drafts=20,holdout=no,rounds=14,season_sims=250,seasons=2022+2023+2024+2025,seed=0",
+      "resolved": 3,
       "seasons": [
         {
           "disposition": "loss",
-          "gain": -0.043617632054457504,
-          "m": 267,
-          "se": 0.006306481051037508,
-          "season": 2021
-        },
-        {
-          "disposition": "loss",
-          "gain": -0.042754522145761004,
-          "m": 253,
-          "se": 0.00651686652418983,
+          "gain": -15.345571428571429,
+          "m": 20,
+          "se": 3.3076881831199225,
           "season": 2022
         },
         {
           "disposition": "loss",
-          "gain": -0.03239476709571642,
-          "m": 234,
-          "se": 0.00641308966214881,
+          "gain": -8.41021428571429,
+          "m": 20,
+          "se": 3.1085957287079515,
           "season": 2023
         },
         {
-          "disposition": "loss",
-          "gain": -0.02430297274770553,
-          "m": 249,
-          "se": 0.006240368279065969,
+          "disposition": "tie",
+          "gain": -5.987499999999998,
+          "m": 20,
+          "se": 3.754078439683241,
           "season": 2024
         },
         {
           "disposition": "loss",
-          "gain": -0.03891284929964748,
-          "m": 246,
-          "se": 0.00633827479749164,
+          "gain": -14.340714285714288,
+          "m": 20,
+          "se": 2.032648861605044,
           "season": 2025
         }
       ],
-      "timestamp": "2026-10-07T01:37:39+00:00",
-      "verdict": "NOT-RUNNABLE",
-      "width": 0.012719790043098096
+      "timestamp": "2026-10-07T02:53:44+00:00",
+      "verdict": "REMOVE",
+      "width": 7.644285714285715
     }
   ]
 }

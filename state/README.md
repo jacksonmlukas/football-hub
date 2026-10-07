@@ -81,6 +81,13 @@ What this repo has spent against two metered third-party accounts:
   not zero (`0 abstained` would be a claim about a run that never counted). The `seasons` records
   say which seasons abstained; these two say how many without a reader counting.
 
+  **`inputs`, since #429.** Every entry written from a gate run records what the run read, one
+  `{source, as_of, digest}` per source, `digest` being `unpinned` for a read with no pin sidecar.
+  `data_digest` folds the run's pins into one string and is `unpinned` as soon as one is, so on its
+  own it cannot say *which* read could not be named; this can. It is what let #429 say that the
+  draft gate reads twelve unpinned `player_stats` cache entries, and what a replay is diffed
+  against. Optional and additive: absent on an older entry, which is unrecorded, not empty.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362
@@ -144,3 +151,11 @@ accounts; `tests/contracts/test_quota_state_survives_a_runner.py` holds that lin
 > season's pre-#383 polls survived, by `hub.store.write_snapshot` keyed on each poll's own
 > `captured_at`. They predate #211, so they carry `close_spread` only; every other snapshot
 > column reads null.
+>
+> **Basis, checked 2026-10-07:** The Odds API's terms (https://the-odds-api.com/terms-and-conditions.html)
+> list "storing our data and retaining it indefinitely" and "calculating and displaying values you
+> derive from our data" as permitted uses, and prohibit redistributing the data "as a standalone
+> data product". `odds/` holds derived values (medians across books) in a private repository. The
+> terms are silent on private storage specifically and do not differ by plan. **If this repository
+> is ever made public, re-examine `odds/` first**: a public archive of these medians starts to read
+> as a data product.

@@ -229,6 +229,24 @@ def test_a_ledger_entry_round_trips_the_abstention_count(tmp_path):
     assert "resolved" not in second and "abstained" not in second
 
 
+def test_a_ledger_entry_round_trips_the_inputs_it_read(tmp_path):
+    """#429: the per-source reads survive the write and the read, an entry without them carries
+    no key, and a malformed value on disk reads as unrecorded rather than raising."""
+    path = tmp_path / "gate-width.json"
+    reads = [{"source": "ff_rankings", "as_of": "2025-08-31", "digest": "abc"},
+             {"source": "player_stats", "as_of": None, "digest": "unpinned"}]
+    ledger = Ledger(path)
+    got = ledger.record(_entry(width=1.0, lo=-1.0, hi=1.0, inputs=reads))
+    assert got.entry.inputs == reads
+    ledger.record(_entry(width=1.1, lo=-1.0, hi=1.0))
+    first, second = json.loads(path.read_text())["entries"]
+    assert first["inputs"] == reads and "inputs" not in second
+    first["inputs"] = "not a list"
+    path.write_text(json.dumps({"entries": [first, second]}))
+    entries = Ledger(path)._read()
+    assert entries is not None and all(e.inputs is None for e in entries)
+
+
 def test_a_row_with_no_abstention_count_reads_as_unrecorded_not_zero(tmp_path):
     """Every entry before #381 carries neither key, and `0 abstained` would be a claim about
     them. `None` stays `None` through a rewrite; a non-integer on disk reads as `None` too."""
