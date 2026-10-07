@@ -245,7 +245,7 @@ jobs:
           CFBD=site/data/cfbd.json
           [ -f "$CFBD" ] || exit 0
           if [ "$(jq -r '.escalate // false' "$CFBD")" = "true" ]; then
-            echo "::error::CFBD has fetched nothing since $(jq -r '.unfetched_since' "$CFBD"), more than a week into the college season. $(jq -r '.reason' "$CFBD")"
+            echo "::error::CFBD has fetched nothing since $(jq -r '.unfetched_since' "$CFBD"), which is more than a week of the college season. $(jq -r '.reason' "$CFBD")"
             exit 1
           fi
 
