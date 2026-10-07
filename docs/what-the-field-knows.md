@@ -40,6 +40,14 @@ across 5/5 seasons in [weekly-screen.md](weekly-screen.md): a player whose point
 touchdowns rather than yards scores *less* next week. That is FPOE regressing, found by a
 different route, and then the model was built on the regressing quantity anyway.
 
+> **Corrected 2026-10-07 (#312); the paragraph above is kept as written.** Do not read it as
+> an independent proof. The −0.040 across 5/5 seasons was taken on a control basis that
+> contained the feature's own numerator and was withdrawn under #229: on the settled basis it
+> is −0.012 at −2.45 se across 4/5 seasons, and under the corrected bar (the two-sided p, not a
+> flat 2 se) the pre-stated null **holds**, at p 0.071 (`docs/weekly-screen.md`, "Restated
+> 2026-10-07"). The literature's claim about expected points stands on its own sources, not on
+> this screen.
+
 What the current model structurally cannot see: **a six-target week at three yards downfield
 and a six-target week at fifteen yards downfield are identical to it.** Expected points encode
 air yards, target depth and field position — the *quality* of an opportunity, where the model
