@@ -764,3 +764,30 @@ It does not repair power (see the table); it is not #375, which replaces the ver
 posterior and supersedes (C); and it does not touch NOT-RUNNABLE, VOID, the precondition, the
 t interval of #357 or the `2·SE` / `TIE_MIN_CLUSTERS` choices of #335, which the 2026-09-21
 amendment said were not the lever and still are not.
+
+
+# Amendment, 2026-10-07: the injury comparisons' within-season unit is the player (#360)
+
+**Amended rather than replaced.** Nothing above is withdrawn; the per-gate table in the
+2026-09-21 amendment is kept as written, including its `injury type` row (`season`, a declared
+no-op, "deliberately so" while `#360` was frozen), and this section is what supersedes that row.
+
+**What it discharges.** The 2026-09-21 amendment landed the injury type comparison with its
+within-season unit set to `season`, one cluster a season, so every season read on its sign alone,
+and said that was #360's to choose. #360 chose it on 2026-10-07: the unit is **`gsis_id`, the
+player** (method.md rule 3: a player is designated in many weeks of one season), the unit #335
+adopted for this gate. `injury.HARNESS` (type-adjusted against retention) now declares
+`within=("gsis_id",)`.
+
+**What it adds.** `injury.verdict` was not a Gate: an argmin over four candidates with no
+interval and no every-season half, the lowest bar in the repo, and the module's one ADOPT rested
+on it. It is now `experiment.run_gate` over two arms, `retention` against `out_zero` (`table` and
+`baseline` are diagnostics, reported and not gated), declared as `injury.RETENTION_HARNESS`,
+`within=("gsis_id",)`, with the in-sample per-cell retention as its declared ceiling arm and the
+three actions pre-registered in `docs/weekly-injury.md` before the run. The rule itself
+(`experiment.gate`) is unchanged.
+
+| gate | within-season unit | why |
+|---|---|---|
+| injury type (`hub.models.injury.HARNESS`) | `gsis_id` | the player; supersedes the declared no-op |
+| injury retention (`hub.models.injury.RETENTION_HARNESS`) | `gsis_id` | the player |
