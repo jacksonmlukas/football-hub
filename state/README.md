@@ -114,7 +114,9 @@ What this repo has spent against two metered third-party accounts:
 - `interval_coverage.json` — what `hub.models.coverage --measure --survivor --write` last
   measured: whether the weekly player interval covers at nominal, and the survivor
   favourite's price. `hub.publish` carries it into `track_record.json` and the slate commits
-  it before gating on it (#273).
+  it before gating on it (#273). Since #309 the graded interval is the conformalised one over
+  the whole scored board; each group row carries its `position`, `n`, `n_cal`, deviation and
+  sigma, and the parametric interval it replaced is kept under `parametric`.
 
 **Committed on purpose.** Both lived under `data/raw/`, which `.gitignore` excludes as
 redistributed third-party data — correct for a cached payload and fatal for a counter. Every

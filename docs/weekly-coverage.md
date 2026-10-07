@@ -6,6 +6,12 @@
 > supersedes, and the restatement of 2026-09-13 -- what the interval is now *claimed* to
 > cover, and what the gate holds it to -- sits directly below this note.
 >
+> **Restated 2026-10-06 (#309):** the published interval now carries estimation error, is
+> conformalised within position, and the gate grades the whole scored board. The design and the
+> restated figures, with the prior values, are the two sections directly below the 2026-09-17
+> pre-registration. The 2026-09-13 section and everything under it remain the record of the
+> parametric interval.
+>
 > **Pre-registered 2026-09-17 (#310), ahead of #309's measurement:** what the claim becomes
 > once the interval is conformalised, and what the gate becomes. It sits directly below this
 > note, above the 2026-09-13 restatement it will supersede when #309 lands. Nothing in
@@ -148,6 +154,105 @@ the games of evidence where the term matters; a gate that measures only part of 
 caught; the explicit order statistics must differ from the interpolated ones where it matters; a
 group under the floor must name its fallback. Each is mutated and seen red before it is trusted,
 in the commits below.
+
+## Restated 2026-10-06 (#309): the published interval, measured as designed above
+
+> **What moved, in one line.** The gate's figure went from **77.4% of 10,536 unclipped
+> player-weeks** (parametric interval, no estimation error) to **80.0% of 15,678 scored
+> player-weeks** (conformal, estimation-aware, clipped and unclipped), and its verdict from
+> **COVERS to OVER-COVERS** against the unchanged claim of 0.77 -- which #310 re-decides. The
+> design is the section above, committed before this run. Every prior value is kept in the table
+> and in `state/interval_coverage.json` under `parametric`.
+
+Run 2026-10-06 on the five seasons 2021-2025, prior centre, window 14 cells, floor 200:
+`uv run python -m hub.models.coverage --measure --write`.
+
+| | prior (2026-09-13) | now (2026-10-06) |
+|---|---|---|
+| interval graded | parametric `skewed(mu, K sqrt(mu))`, clipped | conformal on `(y - mu) / (sd sqrt(1 + 1/n))`, within position |
+| population | **10,536** unclipped of 16,061 | **15,678 scored** of 16,061, clipped and unclipped |
+| rows not scored | 5,525 (the clipped third, by design) | **383**, named: 2021 weeks 5-6, no calibration yet |
+| clipped share of the board | 34.4% (5,525 / 16,061) | **27.8%** of scored weeks have a published lower bound pinned at zero |
+| **gate figure** | **77.4%** | **80.0%** (80.04) |
+| whole board (the pool) | 79.8% on 16,061 | 80.0% on 15,678 |
+| verdict vs the claim 0.77 +/- 0.02 | COVERS | **OVER-COVERS** |
+
+**By position** (prior, parametric, all 16,061 -> now, conformal, scored rows). `n_cal` is the
+median of the position's own calibration rows in the window, `min` the smallest; a position
+below 200 borrows the pooled window for those rows, which are named.
+
+| | n now | coverage prior -> now | sigma now | n_cal (min) | rows on the pooled window, and when |
+|---|---|---|---|---|---|
+| QB | 1,805 (was 1,862) | 75.7% -> **78.8%** | -0.9 | 367 (57) | 152 rows, 2021 weeks 7-12 (6 cells) |
+| RB | 4,099 (was 4,197) | 79.0% -> **79.9%** | -0.1 | 836 (98) | 107 rows, 2021 weeks 7-8 |
+| WR | 6,616 (was 6,775) | 80.8% -> **80.2%** | +0.3 | 1,337 (159) | 72 rows, 2021 week 7 |
+| TE | 3,158 (was 3,227) | 81.2% -> **80.5%** | +0.5 | 635 (69) | 173 rows, 2021 weeks 7-10 |
+| all | 15,678 (was 16,061) | 79.8% -> **80.0%** | +0.1 | 838 (57) | 504 rows, all in 2021 |
+
+sigma is the deviation from 0.80 over sqrt(2) times the binomial standard error at 0.80 -- the
+form #310 pre-registered, and nothing here rules on it: **QB, which the 2026-09-17 note put at
+3.3 sigma under 0.80, is now -0.9 sigma at 78.8%**, on 1,805 rows against the 8,377 #310
+requires before any group may rule. Every position was on the pooled window for part
+of 2021 only; from 2022 week 5 every position calibrates on its own rows, so for the
+position's own conditional claim the first season is not a test of it, and the rows say so.
+
+**What estimation error did alone.** The parametric interval at the estimation-aware scale,
+before any calibration, on the same 16,061 rows and the same clip: **82.5%** over the board
+(was 79.8%); **80.9%** on the 10,536 unclipped weeks (was 77.4%); 85.6% on the clipped ones (was
+84.5%). So on the weeks the old gate measured, the term the repo already knew how to compute
+and had no caller for moved the figure from 2.6 points under 80 to 0.9 over it, a gain of
+3.5 -- #309's claim that estimation error is "almost certainly most of the 80-to-77.4 gap" is
+confirmed, and it overshoots slightly, which the conformal step then takes back.
+
+**By games of evidence behind the centre** (the cut the 2026-09-07 restatement printed, there
+as unclipped-only parametric coverage: 75.5% at 4-5 prior weeks, 77.6% at 6-8, 77.9% at 9-12,
+78.0% at 13+). Published interval, scored rows: **81.1%** at 4-5, **80.5%** at 6-8, **79.8%**
+at 9-12, **78.6%** at 13+. The thin-end under-coverage the estimation error is for is gone and
+the slope has reversed: the thick end now runs about a point and a half short, the calibration
+mixing a scale that is right on average and a little narrow where the centre is well known.
+That is a conditional the marginal 80 hides, and it is reported, not decided.
+
+**What the marginal hides, and #310 should read.** Split on whether the published lower bound
+is pinned at zero, the pool of 80.0% is a cancellation: the clipped weeks (4,352) cover
+**86.8%** and the strictly positive weeks (11,326) cover **77.4%**, -4.8 sigma on the
+sqrt(2) form. The parametric interval had the same shape (84.5% and 77.4%); the conformal step
+fixed the position margins and the marginal, not this one, because the score is not
+conditioned on the clip. The gate now reads the whole board and reports the clipped share
+beside the rate, as #309 asked; whether a clip-conditional bar is wanted is #310's.
+
+**The verdict change, named.** `verdict` COVERS -> **OVER-COVERS**, because the claim constant
+is still the 2026-09-13 restatement (0.77) and the interval now covers 80.0%, 3.0 points above
+it -- the stale-claim-upward case the 2026-09-13 section wrote the gate to catch.
+`--gate` exits 1 on this tree, and the scheduled slate's gate step is red until #310 lands the
+claim at 0.80 and the verdict at audits; **that is the sequence the ticket chain
+specified**, not a defect in the interval. `CLAIMED_COV80` and `coverage.verdict` are untouched
+here.
+
+**Beside it, the other gate.** `--shape` (the skew law under CRPS, pre-registered in
+[gate-power.md](gate-power.md)) is unchanged on purpose and reads the parametric interval; re-run
+2026-10-06 it returns the same **NOT RUNNABLE** (MDE +0.0117 against a ceiling of +0.0081;
+skew-free scores worse by 0.031 pooled, every season a loss). Its ledger entry --
+`interval_shape`, recipe `min_mu=2,min_prior=4,min_weeks=8,seed=0`, 5 resolved seasons, 0
+abstained, width 0.0127 -- is the first with a recipe and abstention counts; the entry of
+2026-09-13 predates the ledger's recipe and is not comparable to it
+(`state/gate-width.json`).
+
+**Published figures that moved.** `state/interval_coverage.json` (the artifact: new rows with
+`position`, `n_cal`, deviation and sigma; the prior table under `parametric`);
+`site/data/track_record.json` `interval_coverage` (`gate_subset` unclipped -> all, `gate_n`
+10,536 -> 15,678, `gate_cov80` 0.7737 -> 0.8004, `verdict` COVERS -> OVER-COVERS, plus
+`gate_clipped_share` 0.2776 and `n_uncalibrated` 383); the page's sentence under the
+calibration curve, which now says "scored player-weeks" with the clipped share and the rows it
+could not score; `weekly.py`'s report line for the same figure. The 2026-09-13 section below,
+`docs/gate-power.md`'s "77.4% with the skew and 79.5% without" and the 2026-09-07 restatement
+are the record of the parametric interval and are not edited.
+
+**Not touched, and said.** `conformal.interval` (#371) is not changed and not fixed;
+`weekly.shipped_quantiles` and the Gate A CRPS table are the parametric law and did not move;
+`predict.moments` is unchanged, so no draft, lineup or roster number moved.
+`predict.skewed`'s docstring now states the clip's measured effect: a receiver at a mean of three
+clips in 21.8% of draws and the clipped draws average 11% above the mean asked for and spread
+11% under the sd asked for.
 
 ## Restated 2026-09-13: the interval labelled 80% covers 77%, and that is now the claim
 

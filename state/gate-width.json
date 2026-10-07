@@ -521,6 +521,57 @@
       "timestamp": "2026-10-06T23:48:37+00:00",
       "verdict": "REMOVE",
       "width": 7.644285714285715
+    },
+    {
+      "abstained": 0,
+      "clusters": 5.0,
+      "config_digest": "c4606f91",
+      "data_digest": "b1a14540",
+      "gate": "interval_shape",
+      "hi": -0.0296116414969188,
+      "lo": -0.042331431540016895,
+      "recipe": "min_mu=2,min_prior=4,min_weeks=8,seed=0",
+      "resolved": 5,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -0.043617632054457504,
+          "m": 267,
+          "se": 0.006306481051037508,
+          "season": 2021
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.042754522145761004,
+          "m": 253,
+          "se": 0.00651686652418983,
+          "season": 2022
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.03239476709571642,
+          "m": 234,
+          "se": 0.00641308966214881,
+          "season": 2023
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.02430297274770553,
+          "m": 249,
+          "se": 0.006240368279065969,
+          "season": 2024
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.03891284929964748,
+          "m": 246,
+          "se": 0.00633827479749164,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-07T01:37:39+00:00",
+      "verdict": "NOT-RUNNABLE",
+      "width": 0.012719790043098096
     }
   ]
 }

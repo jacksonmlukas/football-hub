@@ -208,8 +208,9 @@ def test_the_gate_reads_the_whole_scored_board_not_a_subset():
     """The control for a gate that measures only part of the board (#309). A table whose pool
     covers 0.60 and whose unclipped half covers 0.80 must gate at 0.60.
 
-    Mutation: `gate_population` returning the `strictly positive` row instead of the pool --
-    the 2026-09-13 gate -- reads 0.80 and this is red."""
+    Mutation (observed): `measure` building the pool from `raw_lo > 0` rows only -- the
+    2026-09-13 gate, a subset of the board -- is red in the next test, which counts both
+    halves; this one pins that the gate reads the pool row and that `GATE_SUBSET` is "all"."""
     rows = [{"group": "QB", "cov80": 0.79, "n": 10}, {"group": "all", "cov80": 0.60, "n": 30}]
     assert coverage.gate_population(rows)["cov80"] == 0.60
     assert coverage.GATE_SUBSET == "all"
