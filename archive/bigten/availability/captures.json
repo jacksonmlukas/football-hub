@@ -1,0 +1,16 @@
+[
+ {
+  "deadline": "2026-10-07T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-07T07:41:19+00:00",
+  "season": 2026,
+  "kind": "page",
+  "url": "https://bigten.org/fb/availability-reports/",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "3e4d96cd6e61807ac02f96ec74ae28976268796054376adcc2c6f84b41084481",
+  "bytes": 389844,
+  "path": "availability/2026/page/3e4d96cd6e61807a.html",
+  "new_content": true
+ }
+]
