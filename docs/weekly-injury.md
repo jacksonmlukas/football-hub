@@ -226,7 +226,7 @@ and no every-season half; this section replaces it with the Gate every other com
 > |---|---|---|---|
 > | held-out player-weeks | 3,687 | 1,963 | **1,963** |
 > | retention vs `out_zero`, mean gain | +0.170 at 3.8 se | +0.0623, t = +1.06 on 2 df, p = 0.40 | **+0.0623**, t interval **[−0.1889, +0.3135]** (percentile [−0.0529, +0.1957]) |
-> | seasons (2023 / 2024 / 2025) | all three won, on the argmin's mean | +0.0441, −0.0529, +0.1957 | same gains; **2023 tie (se 0.1323), 2024 tie (se 0.1298), 2025 win (se 0.0846)** over 241 / 229 / 245 players; **1 resolved of 3, 2 abstained** |
+> | seasons (2023 / 2024 / 2025) | all three won, on the argmin's mean | +0.0441, −0.0529, +0.1957 | same gains; **2023 abstained (se 0.1323), 2024 abstained (se 0.1298), 2025 won (se 0.0846)** over 241 / 229 / 245 players; **1 resolved of 3, 2 abstained** |
 > | MDE at 80% power | not computed | not computed | **+0.3004** |
 > | declared ceiling (in-sample per-cell retention, minus `out_zero`) | none | none | **+0.1202** |
 > | verdict | ADOPT (argmin) | n/a | **NOT-RUNNABLE** |
@@ -249,7 +249,8 @@ and no every-season half; this section replaces it with the Gate every other com
 > still read `baseline` 6.2024, `table` 5.1901, `out_zero` 4.3067, `retention` 4.2444 (mean
 > held-out MAE, 2023-25), so the additive table's failure against `out_zero` stands and is
 > not gated. A fourth held-out season (2026, once the injury reports exist for it) lowers the MDE
-> by about a third at the same noise (to roughly 0.20); it does not by itself reach 0.12.
+> by about a third at the same noise (a projection, not a measurement: roughly 0.20, scaling the
+> t quantile and se for four clusters); it would not by itself reach 0.12.
 >
 > **What moves and what does not.** Nothing about what the product wires moves: `retention` is
 > not in the lineup path (`roster.availability` reads ESPN, #361's finding) and stays out of it.
@@ -262,8 +263,8 @@ and no every-season half; this section replaces it with the Gate every other com
 > amendment of 2026-10-07). The pooled figures do not move: **+0.0399, t interval
 > [−0.0531, +0.1328], MDE +0.1111 against the ceiling +0.3852**. The seasons' reading does:
 > *prior: "won 2, lost 1" (3 resolved, 0 abstained, on the sign alone)* **now: 2023 −0.0041
-> tie (se 0.0250), 2024 +0.0867 win (se 0.0222), 2025 +0.0370 tie (se 0.0264), won 1, tied 2,
-> lost 0: 1 resolved of 3, 2 abstained.** **SHOW — KEEP `retention`, unchanged.**
+> abstained (se 0.0250), 2024 +0.0867 won (se 0.0222), 2025 +0.0370 abstained (se 0.0264),
+> won 1, lost 0: 1 resolved of 3, 2 abstained.** **SHOW — KEEP `retention`, unchanged.**
 
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 
