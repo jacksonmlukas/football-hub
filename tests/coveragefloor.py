@@ -79,6 +79,7 @@ FLOOR: dict[str, int] = {
     "src/hub/fetch/replay.py": 2,
     "src/hub/holdout.py": 4,
     "src/hub/inspect.py": 5,
+    "src/hub/instrument_check.py": 4,
     "src/hub/jsonio.py": 0,
     "src/hub/league.py": 0,
     "src/hub/ledger.py": 1,

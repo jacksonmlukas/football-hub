@@ -91,9 +91,28 @@ QUOTA = STATE_DIR / "cfbd-quota.json"
 # everything under `site/data` is committed to a repo intended to go public.
 STATUS = SITE / "cfbd.json"
 
-# The season's first game, as a date. The whole of this module's configuration; the argument
-# for it being a date rather than a week number is in `configured_week`.
+# The first game of **week 1**, as a date -- not Week 0 (#424). ESPN, and so CFB numbering,
+# calls the Week-0 games (2026-08-29) and the 09-03/09-05 games alike week 1; anchored on the
+# Week-0 date this module counts one week ahead of that numbering all season, so the value is
+# 2026-09-03. The whole of this module's configuration; the argument for it being a date
+# rather than a week number is in `configured_week`.
 CFB_WEEK_ONE_ENV = "CFB_WEEK_ONE"
+
+# How long a source may stay unfetched, during the college season, before the slate stops
+# calling it a warning (#424). Twenty-five identical reds went unread on `bigten.yml`, and the
+# same warning sat on every slate run for four weeks: an annotation that repeats is not read.
+ESCALATE_AFTER_DAYS = 7
+
+# The regular season as a calendar fact, (month, day) inclusive: late August's Week 0 through
+# the conference championships, which end before mid-December. After that `configured_week`
+# legitimately fetches nothing (week 16 on is a seasonType, not a week), so an unfetched
+# record in the postseason or the summer is the design and never escalates.
+SEASON_WINDOW = ((8, 24), (12, 10))
+
+
+def season_in_progress(today: date) -> bool:
+    """Whether `today` falls in the regular-season window above."""
+    return SEASON_WINDOW[0] <= (today.month, today.day) <= SEASON_WINDOW[1]
 
 # The last college week that is a *week*. Weeks 1-15 are the regular season through the
 # conference championships; past that is the postseason, which CFBD asks for as a
@@ -501,8 +520,8 @@ class WeekChoice(NamedTuple):
 
 
 def week_one_opens() -> tuple[date | None, date | None, str]:
-    """The season's first game, the Tuesday its week opens, and the sentence if there is
-    neither.
+    """Week 1's first game, the Tuesday its week opens, and the sentence if there is
+    neither. Week 1, not Week 0: see `CFB_WEEK_ONE_ENV`.
 
     Factored out of `configured_week` for `hub.fetch.bigten`, which counts its report
     deadlines from the same anchor rather than stating a second one -- two dates for one
@@ -514,8 +533,8 @@ def week_one_opens() -> tuple[date | None, date | None, str]:
     if not raw:
         return None, None, (
             f"nothing was fetched: {CFB_WEEK_ONE_ENV} is not set, so nothing here knows "
-            f"which college week it is. Set it to the date of the season's first game "
-            f"(YYYY-MM-DD), or pass --week N")
+            f"which college week it is. Set it to the date of week 1's first game "
+            f"(YYYY-MM-DD; not Week 0), or pass --week N")
     try:
         first = date.fromisoformat(raw)
     except ValueError:
@@ -550,10 +569,10 @@ def configured_week(now: datetime | None = None) -> WeekChoice:
     side and the sentence holds here: a weekly refresh that needs a live API to decide what
     week it is has one more way to fail on a Sunday.
 
-    So configuration -- and specifically **the date of the season's first game rather than a
-    week number**. A pinned number (`CFB_WEEK=3`) is right for seven days and silently wrong
-    for the rest of the season: in November it would still fetch week 3, cache it, and
-    record a successful refresh. A start date stated once in August stays true through
+    So configuration -- and specifically **the date of week 1's first game (not Week 0's)
+    rather than a week number**. A pinned number (`CFB_WEEK=3`) is right for seven days and
+    silently wrong for the rest of the season: in November it would still fetch week 3, cache
+    it, and record a successful refresh. A start date stated once in August stays true through
     January, which is the difference between a system that needs somebody every Wednesday
     and one that does not -- and CLAUDE.md is blunt that the first kind dies in October.
 
@@ -580,7 +599,7 @@ def configured_week(now: datetime | None = None) -> WeekChoice:
     today = (now or datetime.now(UTC)).date()
     if today < opens:
         return WeekChoice(None, (
-            f"nothing was fetched: the season has not started -- its first game is "
+            f"nothing was fetched: the season has not started -- week 1's first game is "
             f"{first.isoformat()}, whose week opens {opens.isoformat()}"))
     # Whole weeks since week 1 opened, one-based. Counted in UTC while the games are played
     # in North America, which moves the Monday-to-Tuesday boundary by a few hours; the
@@ -594,10 +613,32 @@ def configured_week(now: datetime | None = None) -> WeekChoice:
     return WeekChoice(n, "")
 
 
+def unfetched_since(path: Path, *, fetched: bool, today: date) -> str | None:
+    """The date this source first went unfetched, carried forward from the last record.
+
+    `None` when this run fetched. Otherwise the previous record's `unfetched_since` if that
+    record was also unfetched; a previous unfetched record from before this field existed
+    falls back to its `generated_at` date, and no readable previous record starts the count
+    today. Unreadable is read as "no history", never as an error: this decorates the record
+    and must not be a new way for it to fail to be written.
+    """
+    if fetched:
+        return None
+    try:
+        prev = json.loads(Path(path).read_text())
+        if prev.get("fetched") is False:
+            carried = prev.get("unfetched_since") or str(prev["generated_at"])[:10]
+            return date.fromisoformat(carried).isoformat()
+    except Exception:
+        pass
+    return today.isoformat()
+
+
 def record_run(season: int, week_no: int | None, *,
                rows: Mapping[str, int] | None = None, why: str | None = None,
                error: BaseException | None = None,
-               path: Path | None = None, quota_path: Path | None = None) -> dict[str, Any]:
+               path: Path | None = None, quota_path: Path | None = None,
+               now: datetime | None = None) -> dict[str, Any]:
     """Write what this run did, in the three states `publish.Artifact.record` writes.
 
     That mapping, because a reader who has learned to read the manifest should not have to
@@ -655,6 +696,14 @@ def record_run(season: int, week_no: int | None, *,
         stale, reason = True, (f"week {week_no} of {season} was read and came back empty")
     else:
         stale, reason = False, None
+    at = now or datetime.now(UTC)
+    p = Path(path or STATUS)
+    since = unfetched_since(p, fetched=fetched, today=at.date())
+    # Escalation (#424): decided here, in the module that owns the calendar, because a workflow
+    # cannot read a window out of a sentence. `escalate` is true only for a source that has
+    # been unfetched for more than a week *while the season is on*.
+    escalate = bool(since and season_in_progress(at.date())
+                    and (at.date() - date.fromisoformat(since)).days > ESCALATE_AFTER_DAYS)
     # Through `jsonio.summary`, which stamps `shape: "summary"`. This envelope reports what
     # was fetched without carrying it -- `rows_by_endpoint` is counts, not rows -- and saying
     # so here is what #227 replaced `NOT_ROW_SHAPED` with. The first publish of this file, by
@@ -664,11 +713,11 @@ def record_run(season: int, week_no: int | None, *,
         "cfbd", "hub.fetch.cfbd",
         season=season, week=week_no, fetched=fetched,
         stale=stale, reason=reason,
+        unfetched_since=since, escalate=escalate,
         rows_by_endpoint=counts,
         quota={"month": _month_key(), "used": quota_used(quota_path),
                "limit": FREE_TIER_MONTHLY},
     )
-    p = Path(path or STATUS)
     atomic.write_text(p, jsonio.dumps(got, indent=2))
     # The reason already opens with what happened -- "nothing was fetched: ...", "week 2 of
     # 2026 was read and came back empty" -- so prefixing it with a verdict only stutters.
