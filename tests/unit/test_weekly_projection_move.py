@@ -17,7 +17,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from hub.models import weekly as W
+from hub.exhibits import weekly_projection as W
 
 # name -> (sum, position-weighted sum). The weighted sum is what a reordering would move.
 FROZEN: dict[str, tuple[float, float]] = {
@@ -107,7 +107,7 @@ def _computed() -> dict[str, tuple[float, float]]:
     out["positional_sd"] = _digest([sigma[k] for k in sorted(sigma)])
     out["standard_error"] = _digest(W.standard_error(now, sigma))
     mu = base["mu"].to_numpy()
-    out["quantiles"] = _digest(W.shipped_quantiles(mu, now["position"].to_list()))
+    out["quantiles"] = _digest(W.parametric_quantiles(mu, now["position"].to_list()))
     return out
 
 

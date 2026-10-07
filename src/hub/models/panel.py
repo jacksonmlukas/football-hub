@@ -1,10 +1,10 @@
 """The **Panel**: one row per player-week, every feature measured before its outcome.
 
 The substrate three modules read -- `hub.models.weekly_screen` measures signals on it,
-`hub.models.weekly` fits the Weekly projection from it, and `hub.season.weekly_gate_data`
-assembles a gate from it. It used to live *inside* the screen, and the other two reached in with
-**function-local imports** to get at it, which `docs/improvements.md` #17 already named as the
-tell: what a caller does when an import feels wrong.
+`hub.exhibits.weekly_projection` fits the Weekly projection from it, and
+`hub.season.weekly_gate_data` assembles a gate from it. It used to live *inside* the screen, and the
+other two reached in with **function-local imports** to get at it, which `docs/improvements.md` #17
+already named as the tell: what a caller does when an import feels wrong.
 
 The seam is between **fetching** and **assembling**. Everything under `build_panel` is
 implementation -- eleven sources, each `pragma: no cover - network`, each narrowed at its own
@@ -86,8 +86,8 @@ MIN_GAMES_BEFORE = 3
 
 # The trend is dark before this. docs/snap-trend-signal.md finds anchors 4 and 6 null with the
 # sign flipping between seasons: the trend needs about eight weeks of snaps before it says
-# anything. So before week 8 `hub.models.weekly`'s multiplier is exactly 1 and the projection is
-# the flat one -- that is not a fallback, it is the measurement.
+# anything. So before week 8 `hub.exhibits.weekly_projection`'s multiplier is exactly 1 and the
+# projection is the flat one -- that is not a fallback, it is the measurement.
 #
 # **This is the model's threshold and nothing else's** -- #178. It used to be the weekly
 # screen's `min_week` as well, and that was one constant doing two jobs: 8 is the earliest of
@@ -98,11 +98,11 @@ MIN_GAMES_BEFORE = 3
 # `hub.models.weekly_screen` no longer reads it. The screen sweeps its own anchors and
 # publishes the sensitivity -- `weekly_screen.SCREEN_TREND_ANCHORS`.
 #
-# **Restated 2026-09-11 -- and `hub.models.weekly` no longer reads it either (#248).** #233
-# revoked the trend's licence and the Usage multiplier is exactly 1 at every week, not only
-# before this one. The constant keeps its measured value as the record of where the trend was
-# found to exist; nothing in `src/` gates on it now, and `tests/unit/test_weekly_screen.py`
-# holds the value.
+# **Restated 2026-09-11 -- and `hub.exhibits.weekly_projection` no longer reads it either (#248).**
+# #233 revoked the trend's licence and the Usage multiplier is exactly 1 at every week, not only
+# before this one. The constant keeps its measured value as the record of where the trend was found
+# to exist; nothing in `src/` gates on it now, and `tests/unit/test_weekly_screen.py` holds the
+# value.
 TREND_MIN_WEEK = 8
 
 
@@ -128,7 +128,8 @@ USAGE: tuple[str, ...] = ("targets", "receptions", "carries", "attempts", "tds")
 
 # Yardage is not Usage -- it is Usage times an efficiency the repo deliberately does not
 # project (yards per carry persists at r = 0.108). Its prior is carried anyway because
-# `hub.models.weekly` needs a per-unit rate to turn projected counts into projected yards.
+# `hub.exhibits.weekly_projection` needs a per-unit rate to turn projected counts into projected
+# yards.
 YARDS: tuple[str, ...] = ("receiving_yards", "rushing_yards", "passing_yards")
 
 
@@ -779,11 +780,11 @@ def best_per_week(joined: pl.DataFrame) -> pl.DataFrame:
 # so `targets`, `receptions`, `offense_pct`, `tds`, `yds` and a dozen more of week w's own
 # outcome ride along to the return.
 #
-# **They are kept on purpose and the keeping is not the defect.** `hub.models.weekly` fitted
-# its multiplier with `targets` on the left-hand side until #248 and its shrinkage priors
-# still read the realised counts, `weekly_screen.screen_usage` screens against **Usage**, and
-# Gate B scores a lineup on realised points. Every one of those is
-# reading a realised column *as an outcome*, which is the only thing it is.
+# **They are kept on purpose and the keeping is not the defect.** `hub.exhibits.weekly_projection`
+# fitted its multiplier with `targets` on the left-hand side until #248 and its shrinkage priors
+# still read the realised counts, `weekly_screen.screen_usage` screens against **Usage**, and Gate B
+# scores a lineup on realised points. Every one of those is reading a realised column *as an
+# outcome*, which is the only thing it is.
 #
 # The defect was that the return said nothing about which was which, so using the Panel
 # correctly meant knowing from suffix convention alone which of sixty columns were safe. A
@@ -827,7 +828,7 @@ PRE_KICKOFF: tuple[str, ...] = (
     # -- the confound `docs/weekly-screen.md` reads the whole screen against. `preseason_ecr`
     # is an August **Consensus** opinion about a September season. Both have to stay
     # reachable: `ecr` is half of `weekly_screen.CONTROLS`, and `preseason_ecr` is what
-    # `hub.models.weekly`'s consensus-anchored shrinkage regresses toward.
+    # `hub.exhibits.weekly_projection`'s consensus-anchored shrinkage regresses toward.
     "ecr", "lead_days", "preseason_ecr")
 """Facts published *for* week w, which `docs/method.md` rule #2 counts as week-w information.
 
@@ -848,11 +849,11 @@ it. Issue #170, finding B12 of the 2026-09-07 re-audit.
 
 **Why a fourth side rather than putting it in `OUTCOMES`.** `require_features` refuses both, so
 either would have satisfied the ticket's first two criteria. But `OUTCOMES` means *this row's
-own realised play* -- the thing `hub.models.weekly` fits against and Gate B scores -- and wind
-is not that. It is a property of the fixture that this player's row shares with fifty others,
-legitimately describable as an explanatory variable after the fact and never usable as a
-predictor of the week it was measured on. Filing it as an outcome would have made `yds` and
-`wind` the same kind of thing, which is how a classification stops carrying information.
+own realised play* -- the thing `hub.exhibits.weekly_projection` fits against and Gate B scores --
+and wind is not that. It is a property of the fixture that this player's row shares with fifty
+others, legitimately describable as an explanatory variable after the fact and never usable as a
+predictor of the week it was measured on. Filing it as an outcome would have made `yds` and `wind`
+the same kind of thing, which is how a classification stops carrying information.
 
 So the two roles say two different sentences and one refusal reads both: `NON_FEATURE_ROLES`.
 A column here stays reachable -- a caller may still describe a week by the conditions it was
@@ -909,8 +910,8 @@ OUTCOMES: tuple[str, ...] = (
     "pass_rate", *SCHEME)
 """Week w's own outcome, kept as an intermediate and never usable as a feature for week w.
 
-Legitimate to read *as an outcome* -- `hub.models.weekly` fits against these and the Usage
-screen measures against them -- which is what `require_features` refuses and
+Legitimate to read *as an outcome* -- `hub.exhibits.weekly_projection` fits against these and the
+Usage screen measures against them -- which is what `require_features` refuses and
 `cell_correlations`' `outcome=` parameter is for.
 """
 
@@ -983,8 +984,8 @@ def require_features(p: pl.DataFrame, names: Sequence[str]) -> None:
 
     The refusal criterion 2 of #203 asks for, at the seam where a column becomes a feature.
     A caller that means a realised column as an **outcome** says so by another route --
-    `weekly_screen.cell_correlations` takes it as `outcome=`, `hub.models.weekly` puts it on
-    the left-hand side of a fit -- and neither goes through here.
+    `weekly_screen.cell_correlations` takes it as `outcome=`, `hub.exhibits.weekly_projection` puts
+    it on the left-hand side of a fit -- and neither goes through here.
 
     **Both non-feature roles, not only the outcome.** `NON_FEATURE_ROLES` is what is refused,
     which since #170 means a `recorded` condition as well as an `outcome`: `wind` is observed
@@ -1128,11 +1129,11 @@ def build_panel(seasons: Sequence[int] = SEASONS,
         # account of the week that happened. `docs/expected-and-routes.md` measured it null.
         #
         # So under this spec the Panel carries two yardage measurements, on purpose. The
-        # components' priors are expected, because `hub.models.weekly` divides each by a count
-        # to hold an efficiency. `yds_prior` is realised, because it is the touchdown rate's
-        # denominator and the numerator beside it is. Those two do not add up to each other
-        # and are not meant to; the totals that do have to agree are the ones inside a single
-        # measurement, which is what `test_panel` asserts under each spec.
+        # components' priors are expected, because `hub.exhibits.weekly_projection` divides each by
+        # a count to hold an efficiency. `yds_prior` is realised, because it is the touchdown rate's
+        # denominator and the numerator beside it is. Those two do not add up to each other and are
+        # not meant to; the totals that do have to agree are the ones inside a single measurement,
+        # which is what `test_panel` asserts under each spec.
         counted = counted.with_columns(
             [pl.coalesce(pl.col(exp), pl.col(real)).alias(real)
              for real, exp in EXPECTED.items()])

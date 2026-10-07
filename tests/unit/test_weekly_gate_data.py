@@ -25,9 +25,9 @@ import panelarchive as arc
 import polars as pl
 import pytest
 
+from hub.exhibits.weekly_projection import Shrink, project
 from hub.league import REG_SEASON_WEEKS
 from hub.models import experiment
-from hub.models.weekly import Shrink, project
 from hub.names import player_key
 from hub.season import weekly_gate as G
 from hub.season import weekly_gate_data as wgd
@@ -471,7 +471,7 @@ def test_the_fallback_reaches_no_result_on_a_real_assembly(universe):
 
 # --- the projection arm is accepted, not created (issue #342) ---------------
 #
-# Before this, `assemble_universe` imported `hub.models.weekly.project` inside its own body
+# Before this, `assemble_universe` imported `hub.exhibits.weekly_projection.project` inside its own body
 # and called it directly, so an arm other than the shipped one could only reach this function
 # by monkeypatching that module attribute from outside -- and a patch landed on the wrong
 # module once scored the shipped arm twice and printed zero flips. `arm` is now a parameter,

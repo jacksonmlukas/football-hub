@@ -3,7 +3,7 @@
 CI gates on `--cov-fail-under=88`, which is a floor on the **total**. The repo sits near 94%,
 so there are roughly six points of slack and any single module can spend all of them alone.
 
-That is not hypothetical. PR #104 took `src/hub/models/weekly.py` from 98% to 22% -- 143
+That is not hypothetical. PR #104 took `src/hub/exhibits/weekly_projection.py` from 98% to 22% -- 143
 statements of the projection model stopped being exercised, because a feature branch wrote its
 tests into a file that belonged to a different module -- and the total only fell to 89.62%.
 The gate passed. The loss was invisible in CI and turned up because a human read the diff.
@@ -67,6 +67,7 @@ FLOOR: dict[str, int] = {
     "src/hub/exhibits/__init__.py": 0,
     "src/hub/exhibits/championship_equity.py": 0,
     "src/hub/exhibits/leverage.py": 1,
+    "src/hub/exhibits/weekly_projection.py": 3,
     "src/hub/fetch/__init__.py": 0,
     "src/hub/fetch/bigten.py": 3,
     "src/hub/fetch/cached.py": 0,
@@ -106,7 +107,6 @@ FLOOR: dict[str, int] = {
     "src/hub/models/spread.py": 9,
     "src/hub/models/starter_change.py": 7,
     "src/hub/models/volume.py": 1,
-    "src/hub/models/weekly.py": 3,
     "src/hub/models/weekly_screen.py": 0,
     "src/hub/names.py": 0,
     "src/hub/paths.py": 0,

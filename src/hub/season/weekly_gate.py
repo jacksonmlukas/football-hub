@@ -1,6 +1,6 @@
 """Does a lineup set off the **Weekly projection** beat one set off weekly consensus rank?
 
-This is **the** gate for `hub.models.weekly`.
+This is **the** gate for `hub.exhibits.weekly_projection`.
 [ADR-0015](../../../docs/adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md)
 records why it has to be a decision and not an accuracy test: six seasons of historical
 weekly FantasyPros consensus ship `ecr` and no `r2p_pts`, so the only incumbent worth beating
@@ -16,7 +16,7 @@ the season, because weekly historical projections do not exist."* They do now.
 THE ARMS, and they see the same information.
 
     consensus  fill each slot with your highest-ranked rostered player by `weekly-op` ECR
-    weekly     fill each slot by `hub.models.weekly`'s projection for that week
+    weekly     fill each slot by `hub.exhibits.weekly_projection`'s projection for that week
 
 The search is fixed at *start your highest* in both, per ADR-0012. Both are restricted to the
 same roster and score against the same realised grid.

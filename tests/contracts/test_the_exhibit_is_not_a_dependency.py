@@ -9,6 +9,14 @@ only production importer of an exhibit is `hub.draft.backtest`, the harness ADR-
 as the way to reopen the question; and that no exhibit is imported by the two draft-night
 tools or the publisher, which is the exact wiring REMOVE undid.
 
+#430 added the second exhibit, `hub.exhibits.weekly_projection`, and with it the rule's real
+shape: **each exhibit has its own harness**, and an exhibit's harness is the only production
+module that may import it. The weekly gate removed the Weekly projection from the product
+(REMOVE under #381); `hub.season.weekly_gate_data` is what re-runs that gate and the 2026
+forward measurement (`docs/weekly-forward.md`), so it may import the projection and nothing
+else may. It may not import championship equity, and `hub.draft.backtest` may not import the
+projection.
+
 Read off the AST, never off the text, for the reason `test_avoided_terms.py` gives: a grep
 fires on the docstring explaining the rule, and a gate that fires on its own explanation is
 one somebody deletes.
@@ -22,12 +30,18 @@ import pytest
 
 SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub"
 
-# The one production reader an exhibit may have. `hub.draft.backtest` is the P0b harness --
-# ADR-0007's "committed, tested and re-runnable" -- and ADR-0009's *"reopening this means
-# re-running `hub.draft.backtest`"*. Everything else in `src/` that wants championship
-# equity is wiring it back into the product, which is the decision ADR-0009 made and a
-# re-run has to unmake first.
-HARNESS = "draft/backtest.py"
+# The one production reader each exhibit may have, keyed by the exhibit module.
+# `hub.draft.backtest` is the P0b harness -- ADR-0007's "committed, tested and re-runnable" --
+# and ADR-0009's *"reopening this means re-running `hub.draft.backtest`"*. Everything else in
+# `src/` that wants championship equity is wiring it back into the product, which is the
+# decision ADR-0009 made and a re-run has to unmake first. `hub.season.weekly_gate_data` is
+# the weekly gate's assembly, the way ADR-0016's forward measurement reaches the projection
+# (#430); `leverage` is a CLI with no importer, which is the state it was found in.
+HARNESS_OF: dict[str, str | None] = {
+    "hub.exhibits.championship_equity": "draft/backtest.py",
+    "hub.exhibits.weekly_projection": "season/weekly_gate_data.py",
+    "hub.exhibits.leverage": None,
+}
 
 # The removed arm, by name. Each was reachable only from the harness on the 2026-09-06
 # census, and each now lives in `hub.exhibits.championship_equity`. `tag_for` is not here:
@@ -37,42 +51,61 @@ REMOVED_ARM = ("win_probability", "champion_probability", "rank_tiers", "_lift_f
 
 
 def _imports_of(path: pathlib.Path) -> list[tuple[int, str]]:
-    """Every `hub.exhibits...` import in one file, as (line, module)."""
+    """Every `hub.exhibits...` import in one file, as (line, module). `from hub.exhibits import
+    leverage` names the module it imports, not the package."""
     out = []
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.ImportFrom) and node.module \
                 and node.module.startswith("hub.exhibits"):
-            out.append((node.lineno, node.module))
+            if node.module == "hub.exhibits":
+                out += [(node.lineno, f"hub.exhibits.{a.name}") for a in node.names]
+            else:
+                out.append((node.lineno, node.module))
         elif isinstance(node, ast.Import):
             out += [(node.lineno, a.name) for a in node.names
                     if a.name.startswith("hub.exhibits")]
     return out
 
 
-def test_the_only_production_reader_of_an_exhibit_is_the_harness():
+def test_every_exhibit_module_has_a_declared_harness():
+    """A new exhibit that is not in `HARNESS_OF` would be read by nobody the contract has
+    heard of, which is the census this file replaces."""
+    on_disk = {f"hub.exhibits.{p.stem}" for p in (SRC / "exhibits").glob("*.py")
+               if p.stem != "__init__"}
+    assert on_disk == set(HARNESS_OF), (
+        f"exhibits on disk {sorted(on_disk)} and exhibits with a declared harness "
+        f"{sorted(HARNESS_OF)} differ: name the new exhibit's harness (or None)")
+
+
+def test_the_only_production_reader_of_an_exhibit_is_its_harness():
     """Anything else importing `hub.exhibits` has put a removed measurement back on a path
-    the product reads, without the re-run ADR-0009 requires first."""
+    the product reads, without the re-run its ADR requires first. And each exhibit has one
+    harness: the weekly gate's assembly reading championship equity is as wrong as the draft
+    backtest reading the Weekly projection."""
     readers = {}
     for path in sorted(SRC.rglob("*.py")):
         rel = str(path.relative_to(SRC))
-        if rel.startswith("exhibits/") or rel == HARNESS:
+        if rel.startswith("exhibits/"):
             continue
-        if found := _imports_of(path):
-            readers[rel] = found
+        stray = [(line, mod) for line, mod in _imports_of(path)
+                 if HARNESS_OF.get(mod) != rel]
+        if stray:
+            readers[rel] = stray
     assert not readers, (
-        f"a module outside `hub.exhibits` and the harness imports an exhibit: {readers}. "
-        f"That is championship equity wired back into the product; ADR-0009 says a re-run "
-        f"of `hub.draft.backtest` comes first, and its verdict decides.")
+        f"a module outside `hub.exhibits` and the exhibit's own harness imports an exhibit: "
+        f"{readers}. That is a removed measurement wired back into the product; its ADR says "
+        f"a re-run comes first, and its verdict decides.")
 
 
-def test_the_harness_does_read_the_exhibit():
+@pytest.mark.parametrize("exhibit,harness", [(e, h) for e, h in HARNESS_OF.items() if h])
+def test_the_harness_does_read_the_exhibit(exhibit, harness):
     """The rule above is only a rule if the harness is the exception to it. A harness that
     stopped importing the exhibit would leave the measurement with no re-runner, which is
     the ADR-0007 failure this package exists to prevent."""
-    found = _imports_of(SRC / HARNESS)
-    assert found, (
-        "hub.draft.backtest no longer reaches championship equity through the exhibit, so "
-        "nothing re-runs the measurement ADR-0009 rests on")
+    found = [mod for _, mod in _imports_of(SRC / harness)]
+    assert exhibit in found, (
+        f"{harness} no longer reaches {exhibit}, so nothing re-runs the measurement its ADR "
+        f"rests on")
 
 
 @pytest.mark.parametrize("name", REMOVED_ARM)
@@ -95,6 +128,14 @@ def test_the_removed_arm_is_defined_in_the_exhibit_and_nowhere_in_the_draft_pack
         f"defined in the exhibit and a copy left behind puts the census back")
 
 
+def test_the_weekly_projection_is_not_in_the_models_package():
+    """#430: the projection moved out of `hub.models`, and a module of that name there would
+    be the copy a reader of the product cannot tell from the exhibit."""
+    assert (SRC / "exhibits" / "weekly_projection.py").exists()
+    assert not (SRC / "models" / "weekly.py").exists(), (
+        "`hub/models/weekly.py` is back: the Weekly projection is an exhibit (ADR-0016)")
+
+
 # What ships, and what the product's verdicts are measured on. The first three are the
 # draft-night tools and the publisher, the wiring REMOVE undid. The last three are the season
 # Gates -- the lineup gate, the weekly gate and the weekly gate's universe assembly -- which
@@ -103,6 +144,14 @@ def test_the_removed_arm_is_defined_in_the_exhibit_and_nowhere_in_the_draft_pack
 # on, whether or not anything reads it (#257).
 PRODUCT = ("hub.draft.board", "hub.draft.live", "hub.publish")
 GATES = ("hub.season.lineup_gate", "hub.season.weekly_gate", "hub.season.weekly_gate_data")
+
+# The exhibit a Gate may reach, because the Gate is that exhibit's measurement (#430). The
+# weekly gate is the gate that removed the Weekly projection, and re-running it means running
+# the projection; it is the only exemption, and it names one exhibit.
+MAY_REACH: dict[str, set[str]] = {
+    "hub.season.weekly_gate": {"hub.exhibits.weekly_projection"},
+    "hub.season.weekly_gate_data": {"hub.exhibits.weekly_projection"},
+}
 
 
 def _path_of(module: str) -> pathlib.Path | None:
@@ -188,7 +237,8 @@ def test_nothing_that_ships_or_gates_can_load_the_exhibit_by_any_import(target):
     depends on context it cannot see. This one sees the function bodies.
     """
     reach = _reach(target)
-    hit = sorted(m for m in reach if m.startswith("hub.exhibits"))
+    hit = sorted(m for m in reach
+                 if m.startswith("hub.exhibits") and m not in MAY_REACH.get(target, set()))
     chain = []
     if hit:
         step: str | None = hit[0]
@@ -217,8 +267,9 @@ def test_the_draft_night_tools_and_the_publisher_do_not_reach_the_exhibit_transi
     import sys
 
     code = (f"import sys; import {target}; "
-            f"print(sorted(m for m in sys.modules if m.startswith('hub.exhibits')))")
+            f"print(sorted(m for m in sys.modules if m.startswith('hub.exhibits.')))")
     run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          timeout=120, check=True)
-    assert run.stdout.strip() == "[]", (
-        f"importing {target} loaded {run.stdout.strip()}: the exhibit is on a product path")
+    loaded = [m for m in ast.literal_eval(run.stdout.strip()) if m not in MAY_REACH.get(target, set())]
+    assert not loaded, (
+        f"importing {target} loaded {loaded}: the exhibit is on a product path")
