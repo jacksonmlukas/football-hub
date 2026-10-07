@@ -29,15 +29,28 @@ def _stats(rows):
         "week": pl.Int32, "season_type": pl.Utf8, "fantasy_points_ppr": pl.Float64})
 
 
-def _drawn(n_players=250, weeks=17, pos="WR", mu=12.0, seed=0, spread=1.0, seasons=(2023, 2024)):
+def _drawn(n_players=250, weeks=17, mu=12.0, seed=0, spread=1.0, seasons=(2023, 2024),
+           positions=("WR", "QB", "RB", "TE")):
+    """Weeks drawn through the shipped law for every position the weekly run expects, so the
+    smoke alarm's every-position clause has nothing to complain about unless a test drops one."""
     rng = np.random.default_rng(seed)
-    sd = predict.WEEKLY_K[pos] * math.sqrt(mu) * spread
-    sk = predict.WEEKLY_SKEW[pos]
     rows = []
-    for season in seasons:
-        for p in range(n_players):
-            rows += _player(f"p{p}", pos, season, predict.skewed(mu, sd, sk, rng.standard_normal(weeks)))
+    for pos in positions:
+        m = 18.0 if pos == "QB" else mu
+        sd = predict.WEEKLY_K[pos] * math.sqrt(m) * spread
+        sk = predict.WEEKLY_SKEW[pos]
+        for season in seasons:
+            for p in range(n_players):
+                rows += _player(f"{pos}{p}", pos, season,
+                                predict.skewed(m, sd, sk, rng.standard_normal(weeks)))
     return _stats(rows)
+
+
+@pytest.fixture(autouse=True)
+def _own_artifact(tmp_path, monkeypatch):
+    """No test here writes, or reads the audit looks of, the committed artifact: a look is
+    spent when it is recorded, and this file must never spend one (#438)."""
+    monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "interval_coverage.json")
 
 
 def _row(group, n, cov):
@@ -133,17 +146,16 @@ def test_the_audit_exits_nonzero_on_a_marginal_the_window_has_not_seen(monkeypat
 def test_the_audit_writes_the_claim_the_look_and_every_group_to_the_artifact(
         monkeypatch, tmp_path):
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(seed=3))
-    monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "ic.json")
     assert coverage.main(["--audit", "--look", "1", "--write"]) == 0
     import json
-    block = json.loads((tmp_path / "ic.json").read_text())["audit"]
+    block = json.loads(coverage.ARTIFACT.read_text())["audit"]
     assert block["look"] == 1 and block["looks"] == 3 and block["claim"] == 0.80
     g = block["groups"][0]
     for key in ("position", "n", "n_cal", "cov80", "sigma", "verdict"):
         assert key in g
     # a later weekly write must not erase the audit
     assert coverage.main(["--measure", "--write"]) == 0
-    assert json.loads((tmp_path / "ic.json").read_text())["audit"]["look"] == 1
+    assert json.loads(coverage.ARTIFACT.read_text())["audit"]["look"] == 1
 
 
 # --- the weekly run reports and never gates --------------------------------
@@ -166,8 +178,9 @@ def test_the_smoke_alarm_fires_on_a_broken_pipeline_beyond_ten_points():
     rows = [_row("QB", 1000, 0.65), _row("all", 15000, 0.65)]
     assert coverage.smoke_alarm({"by_position": rows, "gate_cov80": 0.65,
                                  "gate_claim": 0.80})
-    assert not coverage.smoke_alarm({"by_position": [_row("all", 15000, 0.72)],
-                                     "gate_cov80": 0.72, "gate_claim": 0.80})
+    four = [_row(p, 4000, 0.72) for p in ("QB", "RB", "WR", "TE")] + [_row("all", 16000, 0.72)]
+    assert not coverage.smoke_alarm({"by_position": four, "gate_cov80": 0.72,
+                                     "gate_claim": 0.80})
 
 
 def test_the_smoke_alarm_fires_on_a_group_with_nothing_scored():
@@ -226,3 +239,69 @@ def test_the_published_summary_carries_the_audit_block_the_page_reads(tmp_path):
                              "audit": {"look": 1, "looks": 3, "marginal": "COVERS"}}))
     got = coverage.published_summary(p)
     assert got is not None and got["audit"]["look"] == 1
+
+
+# --- #438: the alarm sees an absent position; a look is spent once --------------------
+
+def test_the_smoke_alarm_fires_when_a_position_is_absent_from_measures_real_output():
+    """The reachable case: a board with no TE rows at all. `published_table` emits only
+    positions that have rows, so `measure` never produces an n = 0 TE row -- it produces no TE
+    row -- and the alarm must read the expected positions, not the table.
+
+    Mutation (observed): iterate `got["by_position"]` instead of `POSITIONS` in `smoke_alarm`
+    and the missing position raises nothing, i.e. this is red."""
+    got = coverage.measure(_drawn(seed=3, positions=("WR", "QB", "RB")), "prior")
+    assert "TE" not in {r["group"] for r in got["by_position"]}, "the fixture drops a position"
+    reasons = coverage.smoke_alarm(got)
+    assert any(r.startswith("TE") and "missing" in r for r in reasons)
+    full = coverage.measure(_drawn(seed=3), "prior")
+    assert coverage.smoke_alarm(full) == [], "a normal board raises nothing"
+
+
+def test_the_weekly_gate_exits_one_for_an_absent_position(monkeypatch, capsys):
+    monkeypatch.setattr(coverage, "_stats",
+                        lambda seasons, cache: _drawn(seed=3, positions=("WR", "QB", "RB")))
+    assert coverage.main(["--gate"]) == 1
+    assert "TE is missing" in capsys.readouterr().err
+
+
+def test_a_position_with_no_calibration_rows_of_its_own_alarms():
+    rows = [_row(p, 5000, 0.80) for p in ("QB", "RB", "WR")]
+    rows.append(dict(_row("TE", 5000, 0.80), n_cal=0))
+    reasons = coverage.smoke_alarm({"by_position": [*rows, _row("all", 20000, 0.80)],
+                                    "gate_cov80": 0.80, "gate_claim": 0.80})
+    assert any("TE" in r and "zero calibration rows" in r for r in reasons)
+
+
+def test_audit_requires_an_explicit_look(monkeypatch, capsys):
+    """Mutation: give `--look` a default of 1 and a bare `--audit` runs a look."""
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(seed=3))
+    assert coverage.main(["--audit"]) == 1
+    assert "needs --look" in capsys.readouterr().err
+
+
+def test_a_look_already_recorded_is_refused_and_the_record_is_untouched(monkeypatch, capsys):
+    """The control the review asked for: write look 1, then writing look 1 again is refused
+    and does not overwrite it. Writes go to tmp_path only (`_own_artifact`).
+
+    Mutation (observed): delete the `looks_taken` guard in `main` and `write_audit`, and the
+    second write succeeds and replaces `taken_at`."""
+    import json
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(seed=3))
+    assert coverage.main(["--audit", "--look", "1", "--write"]) == 0
+    first = json.loads(coverage.ARTIFACT.read_text())
+    assert [r["look"] for r in first["audit_looks"]] == [1] and coverage.looks_taken() == [1]
+    capsys.readouterr()
+    assert coverage.main(["--audit", "--look", "1", "--write"]) == 1
+    assert "already recorded" in capsys.readouterr().err
+    assert json.loads(coverage.ARTIFACT.read_text()) == first, "the recorded look is untouched"
+    assert coverage.main(["--audit", "--look", "2", "--write"]) == 0, "the next look is open"
+    assert coverage.looks_taken() == [1, 2]
+
+
+def test_the_write_seam_refuses_a_recorded_look_even_if_the_cli_does_not():
+    got = coverage.measure(_drawn(seed=3), "prior")
+    audit = coverage.audit_verdict(got["by_position"])
+    coverage.write_audit(got, audit, 1)
+    with pytest.raises(coverage.LookAlreadyTaken):
+        coverage.write_audit(got, audit, 1)

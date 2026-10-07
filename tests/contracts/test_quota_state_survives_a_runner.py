@@ -95,13 +95,29 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # is the only file with its own.
 #
 # The coverage measurement has its own budget since #309. It is a *summary of one run*, rewritten
-# in place (not appended), and it grew from 3.2 KB to 8.5 KB when every group row began carrying
-# its `position`, `n`, `n_cal`, deviation, sigma and the named cells that fell back to pooled
+# in place (not appended), and it grew from 3.2 KB when every group row began carrying its
+# `position`, `n`, `n_cal`, deviation, sigma and the named cells that fell back to pooled
 # calibration, beside the parametric table it replaced (the prior values, kept in the file).
-# **Sized from the measured file**: 8,544 bytes serialised, so 16 KiB is about twice today's,
-# room for a longer window or a sixth season without being room for a payload. Still no third
-# party's data in it -- coverage rates of this repo's own interval.
+# **Sized from the measured file, re-measured in #438** (the first figure here, 8,544, was taken
+# before the rows gained their verdicts and was stale on arrival): 8,935 bytes serialised the way
+# this test measures them, and **10,899 with all three audit looks recorded** -- the file's whole
+# life under #310's rule, an `audit` block plus about 145 bytes a look in `audit_looks`. 16 KiB is
+# 1.5 times that end-of-life size: room for a sixth season's rows or a longer window, not room
+# for a payload. Still no third party's data in it -- coverage rates of this repo's own interval.
 LEDGER_CAPS = {"state/gate-width.json": 262144, "state/interval_coverage.json": 16384}
+
+
+def test_the_coverage_artifacts_cap_and_its_comment_agree_with_the_file():
+    """#438: the comment above sized the cap from a figure that was stale on arrival, and
+    nothing noticed. The cap must sit within a factor of 2.5 of the file as measured the way
+    `test_the_state_directory_carries_no_third_party_payload` measures it -- 1.5x the file at its
+    three-look end of life is the intent -- so a cap left 10x too slack, or a file that has
+    outgrown its reasoning, fails here rather than in a comment.
+
+    Mutation (observed): `"state/interval_coverage.json": 163840` is red."""
+    cap = LEDGER_CAPS["state/interval_coverage.json"]
+    size = len(json.dumps(json.loads((ROOT / "state" / "interval_coverage.json").read_text())))
+    assert 1.0 < cap / size <= 2.5, f"cap {cap} against a file of {size}: resize it and its comment"
 
 
 def test_the_state_directory_carries_no_third_party_payload():

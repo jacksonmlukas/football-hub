@@ -686,8 +686,19 @@ def smoke_alarm(got: dict[str, Any]) -> list[str]:
     if abs(miss) > SMOKE_BAND:
         reasons.append(f"marginal coverage {got['gate_cov80']:.1%} is {abs(miss):.1%} from the "
                        f"claimed {got['gate_claim']:.0%}, further than {SMOKE_BAND:.0%}")
-    reasons += [f"{r['group']} reported zero calibration rows (nothing scored)"
-                for r in got["by_position"] if not r["n"]]
+    # Every position the weekly laws are fitted for, not only the ones the table happens to
+    # carry: `published_table` emits a position only if it has board rows, so a position with
+    # nothing at all never appears and an alarm over the table alone is blind to it (#438).
+    have = {r["group"]: r for r in got["by_position"]}
+    for pos in POSITIONS:
+        r = have.get(pos)
+        if r is None:
+            reasons.append(f"{pos} is missing from the table (no rows at all, so none "
+                           f"calibrated)")
+        elif not r["n"]:
+            reasons.append(f"{pos} reported zero calibration rows (nothing scored)")
+        elif not r.get("n_cal"):
+            reasons.append(f"{pos} reported zero calibration rows of its own")
     return reasons
 
 
@@ -979,7 +990,7 @@ def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
     have = _existing(p)
     # The survivor block and the last audit are not this run's to erase: a weekly write is a
     # report, and the audit's verdict stands until the next audit replaces it (#310).
-    keep = {k: have[k] for k in ("survivor", "audit") if have.get(k)}
+    keep = {k: have[k] for k in ("survivor", "audit", "audit_looks") if have.get(k)}
     atomic.write_text(p, jsonio.dumps({"name": "interval_coverage",
                                        "generated_at": jsonio.stamp(), **result, **keep},
                                       indent=2))
@@ -1001,8 +1012,29 @@ def write_audit(got: dict[str, Any], audit: dict[str, Any], look: int,
              "n": audit["n"], "cov80": audit["cov80"], "mde": audit["mde"],
              "season_coverage": got.get("season_coverage"), "groups": audit["groups"]}
     have = _existing(p)
-    atomic.write_text(p, jsonio.dumps({**have, "audit": block}, indent=2))
+    taken = looks_taken(p)
+    # Refuse, never overwrite: a look is spent when it is written, and the three looks are
+    # the claim's whole alpha budget (#310). The CLI refuses earlier; this is the seam.
+    if look in taken:
+        raise LookAlreadyTaken(f"look {look} is already recorded in {p.name}")
+    record = {"look": look, "taken_at": block["taken_at"], "marginal": block["marginal"],
+              "passes": block["passes"], "cov80": block["cov80"], "n": block["n"],
+              "claim": block["claim"]}
+    atomic.write_text(p, jsonio.dumps({**have, "audit": block,
+                                       "audit_looks": [*have.get("audit_looks", []), record]},
+                                      indent=2))
     return p
+
+
+class LookAlreadyTaken(Exception):
+    """The audit look asked for is already recorded; a look is never taken twice."""
+
+
+def looks_taken(path: Path | None = None) -> list[int]:
+    """The audit looks already recorded in the artifact, in the order they were taken."""
+    got = _existing(path or ARTIFACT).get("audit_looks")
+    return [int(r["look"]) for r in got if isinstance(r, dict) and "look" in r] \
+        if isinstance(got, list) else []
 
 
 def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
@@ -1109,8 +1141,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--audit", action="store_true",
                     help="the audit-time verdict (#310): marginal 80 +/- 2 on the whole board, "
                          "per position only at N >= 8,377; exit 1 if it fails")
-    ap.add_argument("--look", type=int, default=1,
-                    help=f"which of the {LOOKS} audit looks this is, for --audit")
+    ap.add_argument("--look", type=int, default=None,
+                    help=f"which of the {LOOKS} audit looks this is; required by --audit, "
+                         f"and a look already recorded in the artifact is refused (#438)")
     ap.add_argument("--shape", action="store_true",
                     help="the skew law under CRPS, season-clustered, as pre-registered (#292)")
     ap.add_argument("--centre", default="prior", choices=("prior", "realised"),
@@ -1188,6 +1221,15 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{pooled['n']:,}  (a diagnostic; the verdict reads the unclipped rows)")
         print(f"\n  {run.verdict[1]}")
 
+    if a.audit and a.look is None:
+        print("hub.models.coverage: --audit needs --look k; a look is spent when it is taken, "
+              "so there is no default to take by accident (#438)", file=sys.stderr)
+        return 1
+    if a.audit and a.look in looks_taken():
+        print(f"hub.models.coverage: look {a.look} is already recorded in {ARTIFACT.name} "
+              f"(taken: {looks_taken()}); a look is never taken twice, and a recorded one is "
+              f"never overwritten", file=sys.stderr)
+        return 1
     if a.audit and not 1 <= a.look <= LOOKS:
         print(f"hub.models.coverage: look {a.look} is outside the {LOOKS} looks a claim is "
               f"allowed to live through; a claim that outlives them is a restatement trigger "

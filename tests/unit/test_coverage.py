@@ -30,6 +30,15 @@ from hub.ledger import Ledger
 from hub.models import coverage, predict
 
 
+@pytest.fixture(autouse=True)
+def _never_the_committed_artifact(request, tmp_path, monkeypatch):
+    """The audit refuses a look already recorded in the artifact (#438), so no test here may
+    read the committed one's looks: a recorded look would make `--audit --look 1` refuse.
+    The one test that asserts *where* the artifact lives reads the real constant."""
+    if request.node.name != "test_the_artifact_lives_where_a_commit_can_carry_it":
+        monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "interval_coverage.json")
+
+
 def _stats(rows):
     """nflverse-shaped weekly stats: what `player_weeks` is handed."""
     return pl.DataFrame(rows, schema={
@@ -547,9 +556,12 @@ def test_the_gate_passes_an_interval_that_covers_what_it_claims(monkeypatch, cap
     """Same command, same band, a stationary stream and a claim of 0.80: the published
     interval is calibrated, so it covers 80% whatever width the weeks were drawn at, and the
     gate passes. A gate that only ever refuses is not reading anything."""
-    monkeypatch.setattr(coverage, "_stats",
-                        lambda seasons, cache: _drawn(n_players=250, weeks=17, seed=9,
-                                                      spread=1.3, seasons=(2023, 2024)))
+    # Every position the weekly run expects (#438): the smoke alarm reads them all.
+    board = pl.concat([
+        _drawn(n_players=250, weeks=17, seed=9, spread=1.3, seasons=(2023, 2024), pos=pos,
+               mu=18.0 if pos == "QB" else 12.0).with_columns(pl.col("player_id") + pos)
+        for pos in ("WR", "QB", "RB", "TE")])
+    monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: board)
     monkeypatch.setattr(coverage, "measure", _claiming(0.80))
     assert coverage.main(["--gate"]) == 0
     out = capsys.readouterr().out

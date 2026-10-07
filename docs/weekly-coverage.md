@@ -194,6 +194,13 @@ a conformalised one; that section is kept whole below.
   ticket with its own pre-registered threshold, because adding it now would change an adopted
   rule after seeing its numbers.
 
+**Two guards added on review, 2026-10-07 (#438).** The smoke alarm's "a group scored nothing"
+clause reads the four expected positions, not the table, because the table carries only
+positions that have rows and so could never show an absent one. And a look is spent once:
+`--look` has no default, `--write` records each look under `audit_looks` in the artifact, a look
+already recorded is refused (and never overwritten), so three looks per claim-life cannot be
+reused by re-running one.
+
 **One number to flag.** The adopted minimum is **N = 8,377**. The formula the rule gives,
 (z_alpha + z_0.8)^2 x 0.32 / 0.02^2 at alpha = 0.0167, is **8,375.3** (`derived_n_min()`); the
 adopted figure is two weeks more conservative and **binds**. Re-deriving it to the formula after
