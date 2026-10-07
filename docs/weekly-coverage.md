@@ -68,6 +68,87 @@ layer that gets a verdict this season, and the conditional bar's job is to repor
 and say it cannot yet rule. That is thinner than #310 set out to build, and **the thinness was
 chosen**: the alternative was a bar that fires on calibration luck and is read as a finding.
 
+## Design 2026-10-06 (#309): how estimation error enters, and what the conformal step calibrates
+
+Written and committed **before** the run that produces the number (rule 1 of [method.md](method.md)).
+Nothing below has a measurement behind it; the 2026-09-13 restatement stands, and the section it
+will move is restated in its own dated box when the number exists. #310 owns the verdict -- the
+claim constant and `coverage.verdict` are not touched here.
+
+**1. Estimation error: a variance term, not a t.** The interval's scale is
+`sd_pred = sd * sqrt(1 + 1/n)`, where `sd = K[position] * sqrt(mu)` is the shape law and `n` is
+the games of evidence behind the mean (`n_prior` under the prior centre). That is the shape
+law's variance plus the mean's estimation error, `sd^2 / n`, and adds no fitted constant. Two
+alternatives were considered and set aside. *A t on n - 1 degrees of freedom* does not compose
+with the Cornish-Fisher transform, which is a map from a normal draw. *`weekly.standard_error`*
+(`sigma_pos / sqrt(n)`, the quantity `docs/parameter-uncertainty.md` measured) uses a positional
+median sd; a low-mean player's weekly sd is the shape law's `K * sqrt(mu)`, well under it, so the
+positional constant overstates his estimation error and understates a star's. The player's own
+`sd / sqrt(n)` is the same quantity expressed in the law the interval already uses. `n` is
+clipped to at least one game, as `standard_error` does. `predict.moments` is **not** changed:
+its `sd` is the outcome spread the draft and lineup simulators draw from, which carry their own
+mean uncertainty (`TALENT_CV` at season level; `docs/parameter-uncertainty.md` Experiment B for
+the lineup), and adding the term there would count it twice and move every simulation. The
+inflation is a separate function, `predict.predictive_sd`.
+
+**2. Conformalisation: scaled split conformal on the signed standardised residual.** The
+nonconformity score of a played week is `(points - mu) / sd_pred`. The published bounds are
+`mu + sd_pred * q_lo` and `mu + sd_pred * q_hi`, with `q_lo` and `q_hi` the *empirical* lower and
+upper order statistics of the calibration scores -- so the lower bound is empirical, not the
+clipped parametric one, and the skew is whatever the window shows rather than the fitted law.
+The two tails are separate one-sided ranks: the upper is the `ceil(p (n + 1))`-th smallest score,
+the lower the `floor((1 - p) (n + 1))`-th, at `(p_lo, p_hi) = (0.10, 0.90)` and `(0.16, 0.84)`
+(`LEVELS`, unchanged -- the label did not move). The ranks are taken explicitly rather than
+through `conformal.interval`, whose quantile call is #371's open defect: **this ticket does not
+touch `conformal.interval`** and does not fix it; the new function states its own ranks and has
+its own planted test. The published lower bound is clipped at zero, as the interval always has
+been, and **coverage is graded on the clipped bounds** -- a week at minus one point is a miss of
+a lower bound pinned at zero, which is the distribution the repo serves.
+
+**3. The window is the one the conformal module builds.** The walk is over `(season, week)`
+cells in time order and a cell's calibration is the cells strictly before it, bounded to the last
+**14** cells -- the span one season's scored weeks (week 5, the first with four earlier weeks,
+through week 18) occupy, i.e. "the prior full season" #309 names as the default. The cell
+history is `conformal`'s own, factored out so the two modules cannot disagree about what "strictly
+earlier" means (#262).
+
+**4. Calibration is within position (Mondrian), and a thin group says so.** A position is
+calibrated on its own rows in the window when there are at least **200** (the floor #309
+adopted: split conformal's realised coverage is Beta-distributed, sd 0.055 at 50 and 0.028 at
+200). Below it the position's rows in that cell are calibrated on the **pooled** window of every
+position, and the result carries the fallback: per position, `n_cal` (the median calibration
+size its rows had), `n_cal_min`, the count of rows that fell back and **which `(season, week)`
+cells they were**. A pooled window below 200 rows too is not a calibration: those rows are not
+scored, and the gate reports how many (`n_uncalibrated`) and which cells beside the scored count.
+A position that ran on pooled calibration is not testing the conditional claim, and the row
+says so.
+
+**5. The gate grades the whole board it scored.** The gate population is every player-week that
+has a calibration, clipped and unclipped; `GATE_SUBSET` is `"all"`. The clipped share -- the share
+of scored weeks whose published lower bound is pinned at zero -- is reported beside the rate, and
+the floor split stays as a diagnostic, not a population. The rows that could not be scored for
+want of calibration (the first weeks of the first season) are named, not silently dropped: the
+board is 16,061 player-weeks and the gate says how many of them it scored.
+
+**6. What each group row reports** (and nothing more is decided here): `position`, `n`, `n_cal`,
+the coverage, its deviation from 0.80, and sigma, the deviation over the binomial standard error
+at `p = 0.80` scaled by sqrt(2) -- the form #310 pre-registered. Whether a group may rule, the
+MDE beside it and the look count are #310's.
+
+**7. What is deliberately not done.** `hub.models.weekly.shipped_quantiles` -- the CRPS
+diagnostic's distribution for the walk-forward arms -- and the shape gate's comparison
+(`--shape`, pre-registered in [gate-power.md](gate-power.md)) are the *parametric* law and
+stay so: the shape decision is about that law, which the draft and lineup simulators still draw
+from, and changing its arms after the sign could be seen is rule 16's sibling. The conformal
+interval is the published claim; the parametric one is kept beside it in the artifact as the
+prior values.
+
+**Controls, planted first (rule 18).** An interval that omits estimation error must go red at
+the games of evidence where the term matters; a gate that measures only part of the board must be
+caught; the explicit order statistics must differ from the interpolated ones where it matters; a
+group under the floor must name its fallback. Each is mutated and seen red before it is trusted,
+in the commits below.
+
 ## Restated 2026-09-13: the interval labelled 80% covers 77%, and that is now the claim
 
 Under [method.md rule 13](method.md) and issue #289, the decision recorded there on
