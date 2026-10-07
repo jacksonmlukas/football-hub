@@ -1,13 +1,32 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-10-06T17:57:27+00:00",
+  "generated_at": "2026-10-07T17:40:08+00:00",
   "shape": "summary",
   "n_scored": 80,
   "n_tied": 0,
-  "n_preregistered": 0,
+  "n_preregistered": 64,
   "is_backtest": true,
-  "note": "No pre-registered predictions yet. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "note": "64 of 80 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "late_game_ids": [
+    "2025_18_ARI_LA",
+    "2025_18_BAL_PIT",
+    "2025_18_CAR_TB",
+    "2025_18_CLE_CIN",
+    "2025_18_DAL_NYG",
+    "2025_18_DET_CHI",
+    "2025_18_GB_MIN",
+    "2025_18_IND_HOU",
+    "2025_18_KC_LV",
+    "2025_18_LAC_DEN",
+    "2025_18_MIA_NE",
+    "2025_18_NO_ATL",
+    "2025_18_NYJ_BUF",
+    "2025_18_SEA_SF",
+    "2025_18_TEN_JAX",
+    "2025_18_WAS_PHI"
+  ],
+  "unverified_game_ids": [],
   "seasons": [
     {
       "season": 2026,
@@ -151,7 +170,9 @@
           "actual": null,
           "gap": null
         }
-      ]
+      ],
+      "n_preregistered": 64,
+      "n_backtest": 0
     },
     {
       "season": 2025,
@@ -174,7 +195,7 @@
         "2025_18_TEN_JAX",
         "2025_18_WAS_PHI"
       ],
-      "log_loss": 0.5562546215330759,
+      "log_loss": 0.556254621533076,
       "brier": 0.19402081023712744,
       "bins": [
         {
@@ -247,7 +268,9 @@
           "actual": null,
           "gap": null
         }
-      ]
+      ],
+      "n_preregistered": 0,
+      "n_backtest": 16
     }
   ],
   "bins": [
@@ -401,7 +424,7 @@
         }
       ],
       "min_bucket": 50,
-      "generated_at": "2026-10-03T17:53:09+00:00"
+      "generated_at": "2026-10-06T17:57:28+00:00"
     }
   }
 }
