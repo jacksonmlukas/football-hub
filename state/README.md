@@ -10,6 +10,16 @@ What this repo has spent against two metered third-party accounts:
   per week, append-only, written by `hub.store.write_snapshot` from `hub.fetch.odds` and
   committed by the `slate` workflow. `hub.store.connect` unions it under `lines`, so a fresh
   checkout reads every capture a scheduled run made. Never edit or delete one.
+- `consensus/<season>/wk<NN>/cap-<ts>.json` — **the weekly consensus captures** (#432): one file
+  per capture, append-only, written by `hub.fetch.consensus` before the week's first game day
+  (Eastern) and committed by the `consensus` workflow. One FantasyPros `weekly-op` page, the
+  incumbent of the 2026 forward measurement (`docs/weekly-forward.md`), as its newest scrape in
+  the DynastyProcess archive stood: `player`, `pos`, `team`, `ecr`, with the capture time, the
+  first game day, the deadline and the archive's digest. `hub.fetch.consensus.write_capture`
+  refuses a capture at or after the deadline, and `hub.season.weekly_forward.admit` excludes
+  one that reaches the tree any other way. Never edit or delete one. **The licence basis of this
+  directory has not been checked**, unlike `odds/`'s: if this repository is ever made public,
+  re-examine `consensus/` first.
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
   interval width a backtest gate has produced. `hub.ledger.Ledger.record` (`experiment.

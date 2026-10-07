@@ -212,3 +212,74 @@ def test_the_escalation_runs_even_when_the_gate_before_it_is_red():
     assert step["if"] == "always()"
     assert steps.index(step) > next(i for i, s in enumerate(steps)
                                     if s.get("name") == "Commit what was published")
+
+
+# --- consensus.yml (#432, #437) ------------------------------------------------------------
+#
+# The capture's commit step had no test: it is the step that makes a capture a record, and the
+# shape of #424 -- a `git add` naming a directory the first run has not created -- is exactly
+# what it could have carried.
+
+CONSENSUS_COMMIT = "Commit what was captured"
+CONSENSUS_CAPTURE = "Capture the next week's consensus page"
+OLD_CONSENSUS_ADD = "git add state/consensus\n"
+
+
+def _consensus_step(name: str) -> str:
+    return _script("consensus.yml", "capture", name)
+
+
+def test_a_capture_is_committed_and_reaches_the_remote(runner):
+    work, origin = runner
+    cap = work / "state/consensus/2026/wk05"
+    cap.mkdir(parents=True)
+    (cap / "cap-20261007T150000.json").write_text("{}")
+    got = _sh(_consensus_step(CONSENSUS_COMMIT), work)
+    assert got.returncode == 0, got.stderr
+    assert "state/consensus/2026/wk05/cap-20261007T150000.json" in _git(
+        origin, "ls-tree", "-r", "--name-only", "main")
+    assert "consensus:" in _git(origin, "log", "-1", "--format=%s", "main")
+
+
+def test_a_run_that_captured_nothing_in_a_tree_with_no_consensus_directory_passes(runner):
+    """The plant, and its flip. `runner` has `state/` and no `state/consensus/` -- the tree of
+    every run before the first capture. The step as written passes with no commit; the old
+    `git add state/consensus` dies at the pathspec (exit 128), so this harness can see it."""
+    work, origin = runner
+    assert not (work / "state/consensus").exists()
+    before = _git(origin, "rev-parse", "main")
+    got = _sh(_consensus_step(CONSENSUS_COMMIT), work)
+    assert got.returncode == 0 and "no commit" in got.stdout, got.stderr
+    assert _git(origin, "rev-parse", "main") == before
+    new = _consensus_step(CONSENSUS_COMMIT)
+    old = re.sub(r"(?:[ \t]*#[^\n]*\n)*[ \t]*git add state\n", "          " + OLD_CONSENSUS_ADD, new)
+    assert old != new and OLD_CONSENSUS_ADD in old, "could not reconstruct the old step"
+    died = _sh(old, work)
+    assert died.returncode == 128 and "pathspec 'state/consensus'" in died.stderr, died.stderr
+
+
+def _capture_with_exit(tmp_path: Path, code: int) -> subprocess.CompletedProcess:
+    """The capture step with `uv` replaced by a stub that exits `code`."""
+    work = tmp_path / f"run{code}"
+    bin_dir = work / "bin"
+    bin_dir.mkdir(parents=True)
+    stub = bin_dir / "uv"
+    stub.write_text(f"#!/bin/sh\nexit {code}\n")
+    stub.chmod(0o755)
+    return _sh(_consensus_step(CONSENSUS_CAPTURE), work,
+               extra_env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+
+def test_exit_three_is_a_notice_and_a_failed_fetch_turns_the_run_red(tmp_path):
+    ok = _capture_with_exit(tmp_path, 3)
+    assert ok.returncode == 0 and "nothing captured" in ok.stdout
+    assert _capture_with_exit(tmp_path, 1).returncode == 1, "a failed fetch must not be green"
+    assert _capture_with_exit(tmp_path, 0).returncode == 0
+
+
+def test_the_commit_runs_after_the_capture_and_the_run_is_bounded():
+    wf = yaml.safe_load((WORKFLOWS / "consensus.yml").read_text())
+    steps = [s.get("name") for s in wf["jobs"]["capture"]["steps"]]
+    assert steps.index(CONSENSUS_COMMIT) > steps.index(CONSENSUS_CAPTURE)
+    assert wf["jobs"]["capture"]["timeout-minutes"]
+    assert wf["concurrency"]["group"] == "slate"
