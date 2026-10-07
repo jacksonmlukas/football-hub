@@ -317,6 +317,30 @@ def test_a_run_records_the_digest_of_the_modules_it_was_given_and_a_changed_one_
     assert first.verdict[0]
 
 
+def test_a_direct_call_that_declares_no_code_is_of_unknown_code_and_never_compared(tmp_path):
+    """#439: `run_gate(code_modules=())` used to record `code_digest=None`, a *known* "no modules
+    declared" that compares equal to another such run -- the hole #435 closed, reopened by saying
+    nothing. It is now an undeclared run: unknown code, written with no `code_digest` key, named
+    and compared with nothing, not even with itself. Declaring modules makes the same two runs
+    compare (the flip)."""
+    import json
+    path = tmp_path / "gate-width.json"
+    led = Ledger(path)
+    _run(_paired(), ledger=led)
+    second = _run(_paired(), ledger=led)
+    rows = json.loads(path.read_text())["entries"]
+    assert all("code_digest" not in r for r in rows), "undeclared must not be written as known"
+    assert any("unknown code" in ln for ln in second.lines)
+    entries = led._read()
+    assert entries is not None and not entries[1].comparable(entries[0])
+
+    declared = Ledger(tmp_path / "declared.json")
+    _run(_paired(), ledger=declared, code_modules=("hub.ledger",))
+    _run(_paired(), ledger=declared, code_modules=("hub.ledger",))
+    got = declared._read()
+    assert got is not None and got[1].comparable(got[0])
+
+
 def test_an_empty_frame_runs_and_says_nothing_was_measured():
     """The weekly gate's `compare` returns a frame with no rows and no columns when nothing
     is covered. The run must still answer rather than fall over on a season column that is

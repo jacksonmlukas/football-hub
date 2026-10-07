@@ -115,7 +115,8 @@ What this repo has spent against two metered third-party accounts:
   share one file. `Ledger.inputs_of(entry)` reads either form back; a stored set that is missing
   or whose content no longer hashes to its name reads as *unrecorded*, never as another run's
   reads, and a row whose set could not be written keeps `inputs` inline. **Old rows were not
-  migrated**: the ledger is append-only, so the three that carry `inputs` inline keep them, byte for byte; only rows written from here use the compact form. The files
+  migrated**: the ledger is append-only, so the three that carry `inputs` inline keep them,
+  byte for byte; only rows written from here use the compact form. The files
   under `state/inputs/` are as append-only as the ledger -- do not edit or delete one a row
   names.
 
@@ -128,7 +129,16 @@ What this repo has spent against two metered third-party accounts:
   +0.0602]). The key is now `(name, recipe, config_digest, data_digest, code_digest)`:
   `code_digest` is 8 hex characters of a SHA-256 over the name and source bytes of the modules
   the gate declares in `Harness.arm_modules` (`hub.ledger.code_digest`; a contract holds every
-  harness to naming its own module and to every name resolving). It is raw source: a comment
+  harness to naming its own module and to every name resolving). **It covers exactly the declared
+  modules, and the declaration is held to the first-party import closure (#439):**
+  `test_every_gate_declares_the_code_it_runs` walks the AST (module-level and function-local
+  `hub.*` imports) from the gate's module and from each declared module, and fails on any module
+  reached that is neither declared nor on its `EXEMPT` list, which gives each exemption's reason
+  (the shared rule, `hub.fetch.*`, config, I/O and CLI plumbing). The first declarations omitted
+  `hub.exhibits.championship_equity` from the draft gate and `weekly_gate_data`, `weekly` and
+  `panel` from the weekly gate, so an edit there kept the old history comparable. A direct
+  `run_gate` call that declares no modules is not a "no modules declared" run: it is of unknown
+  code, like a row without the key. It is raw source: a comment
   edit moves it, which errs toward *not compared*. It deliberately leaves out `hub.models.
   experiment` -- the shared rule, which every gate runs -- since naming it would end every
   gate's history on any edit there; a change to the rule is a change the repository's tests and

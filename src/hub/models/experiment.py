@@ -1496,9 +1496,10 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     `hub.ledger.code_digest` hashes them into the ledger key: `config_digest` hashes config and
     fitted constants, not code, so a change to an arm with both unchanged read as comparable to
     the runs before it (#361). `Harness.run` passes its declared `arm_modules`; empty, the
-    default, records no code digest -- known and comparable only with another such run. The gate
-    rule in this module is deliberately not among them: it is shared by every gate, so naming it
-    would end every gate's history on any edit here.
+    default, is an *undeclared* run (#439): the entry is of unknown code, written with no
+    `code_digest` key, named and never compared -- a direct caller cannot reopen the hole by
+    saying nothing. The gate rule in this module is deliberately not among them: it is shared
+    by every gate, so naming it would end every gate's history on any edit here.
 
     `void` is the caller's precondition, already phrased -- the weekly gate voids above a
     join-failure share, and since #46 so does the draft gate. `gate` honours it ahead of every
@@ -1543,7 +1544,8 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
                        verdict=verdict[0], seasons=_season_records(seasons),
                        resolved=core.resolved, abstained=core.abstained,
                        inputs=_inputs_read(),
-                       code_digest=code_digest(code_modules) if code_modules else None)
+                       code_digest=code_digest(code_modules) if code_modules else None,
+                       code_known=bool(code_modules))
     comparison = writer.record(entry)
     lines = [
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,

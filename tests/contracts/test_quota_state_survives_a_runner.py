@@ -88,17 +88,20 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # 2026-10-06, when #343's routed harnesses wrote their first four entries (the file held 2,997
 # bytes). It is still *our own* small bookkeeping and still no payload: an entry is a name, two
 # digests, an interval and a per-season record. **Sized from the measured entry** (#426, again
-# at #434): a row as it sits on disk, indented, averages 818 bytes and reaches 1,139 today (the
-# longest carries five per-season records); the two fields since added, `code_digest` (#435) and
-# `inputs_digest` (#434), are about 65 bytes together, so a budget of 1,250 bytes an entry is
-# the measured maximum with a little over. #429's inline `inputs` took one row to 4,478 bytes --
-# the reason the list is stored once in `state/inputs/` and the row carries a digest. 384 KiB
-# (393,216 bytes) is 314 entries at 1,250 -- "a few hundred", the size at which someone should
-# decide what to do with the history -- less the three legacy rows that still carry their inputs
-# inline (about 6 KiB between them; they are append-only history and are not rewritten). (The
-# earlier 256 KiB was sized at 800 bytes an entry on the compact-JSON measure below, which is
-# not the file's own size: the file is indented, so it holds about 1.5x what that arithmetic
-# said.) A counter's cap stays as it was, and this is the only file with its own.
+# at #434, restated at #439). *Measured* on `state/gate-width.json` as it is on disk (19 rows,
+# 23,283 bytes; each row counted as written, indented two levels): the 16 rows without inputs
+# average 977 bytes and reach 1,339 (the longest carries five per-season records); the 3 rows
+# that carry `inputs` inline (#429) are 1,147, 1,172 and 5,317 bytes, 7,636 between them
+# (over all 19 rows the average is 1,224) -- the 5,317 is the draft gate's 36 reads, the
+# reason the list is stored once in `state/inputs/` and a new row carries a digest. *Projected*
+# (not measured): the two fields since added, `code_digest` (#435) and `inputs_digest` (#434),
+# add about 65 bytes a row, so a budget of 1,400 bytes an entry is the measured maximum plus
+# those, rounded up. 384 KiB (393,216 bytes) less the 7,636 legacy bytes (append-only, not
+# rewritten) is about 275 such entries -- "a few hundred", the size at which someone should
+# decide what to do with the history. (The earlier 256 KiB was sized at 800 bytes an entry on
+# the compact-JSON measure below, which is not the file's own size: the file is indented, so
+# its rows are larger than that arithmetic said.) A counter's cap stays as it was, and this is
+# the only file with its own.
 #
 # The coverage measurement has its own budget since #309. It is a *summary of one run*, rewritten
 # in place (not appended), and it grew from 3.2 KB when every group row began carrying its
@@ -126,6 +129,11 @@ def test_the_coverage_artifacts_cap_and_its_comment_agree_with_the_file():
     assert 1.0 < cap / size <= 2.5, f"cap {cap} against a file of {size}: resize it and its comment"
 
 
+# #432: one capture of the weekly consensus page, a few hundred ranked players, is a record of
+# what could have been read before a week's first game and is the only thing that can ever say
+# so. Bigger than a counter by design; still one small JSON document a file.
+CAPTURE_CAP = 131072
+
 # #434: the content-addressed input sets under `state/inputs/`, one file per distinct set of
 # pins a gate run read (identical sets share a file). A file is a small dict of
 # `{source, as_of, digest}` reads, 2,178 bytes for the draft gate's 36 -- the largest run
@@ -150,7 +158,13 @@ def test_the_state_directory_carries_no_third_party_payload():
     market's per-game median spread, derived from The Odds API. Their terms permit "storing
     our data and retaining it indefinitely" and "calculating and displaying values you derive
     from our data", and prohibit redistribution "as a standalone data product"; this repo is
-    private. What this test holds is the mechanical line: small JSON records, nothing else."""
+    private. What this test holds is the mechanical line: small JSON records, nothing else.
+
+    A second (#432): `state/consensus/` holds one week's FantasyPros `weekly-op` page, as
+    redistributed by DynastyProcess, taken before kickoff because a ranking that is not kept
+    cannot be shown to have been read in time. That source's terms have **not** been checked the
+    way The Odds API's were; the repo is private, and `state/README.md` says to re-examine this
+    directory first if it is ever made public."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
                              capture_output=True, text=True).stdout.split()
     assert tracked, "state/ is not tracked, so a runner still starts with no record"
@@ -161,9 +175,12 @@ def test_the_state_directory_carries_no_third_party_payload():
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
         stored_set = f.startswith(INPUTS_PREFIX)
-        cap = INPUTS_FILE_CAP if stored_set else LEDGER_CAPS.get(f, 4096)
-        what = ("a stored input set" if stored_set else
-                "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
+        capture = f.startswith("state/consensus/")
+        cap = (INPUTS_FILE_CAP if stored_set else CAPTURE_CAP if capture
+               else LEDGER_CAPS.get(f, 4096))
+        what = ("a stored input set" if stored_set
+                else "one week's captured page" if capture
+                else "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
         assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
 
 
