@@ -1,7 +1,10 @@
 # A Gate requires every season, not only the interval
 
 **Status:** accepted 2026-09-04. **Amended 2026-09-07** (issue #45) with a precondition; the
-adoption bar itself is unchanged.
+adoption bar itself is unchanged. **Amended 2026-10-06** (#381): "the sign holds in every
+held-out season" below now reads over the *resolved* seasons, with the abstention count printed
+beside the verdict; the text of this paragraph and of the earlier amendments is kept as written,
+and the last amendment in this file says what changed and why.
 
 **Decision.** A **Gate** adopts only when the pooled interval excludes zero **and** the sign
 holds in every held-out season. It removes only when both hold in the other direction.
@@ -343,7 +346,8 @@ verdict over resolved seasons *with the abstention count beside it***, which kee
 without (B)'s licensing problem, because a reader sees "ADOPT on 3 resolved of 4, 1 abstained"
 and not "ADOPT". Re-deciding after two SHOWs is what rule 1 forbids, so this is recorded as the
 question the first three runs under the rule will inform, and the decision waits for them
-(#381). One sub-question those runs should answer on the way: 2024 tied in both harnesses.
+(#381). *(Decided 2026-10-06: (C), with the details settled the same day; see the amendment at
+the end of this file. This paragraph is kept as it was written.)* One sub-question those runs should answer on the way: 2024 tied in both harnesses.
 At one in four each that is one in sixteen jointly — probably coincidence — but if 2024 has
 systematically wider *within-season* spread in both, the tie rule is abstaining on noisy
 seasons rather than on small effects, which is a different property from "a tie means the
@@ -624,3 +628,136 @@ the S1 interval are unchanged; this routes three more call sites to them. Which 
 on real data, and what each doc that published them now says, is in the #343 commit and in the
 restatement boxes of `docs/player-spread.md`, `docs/weekly-injury.md` and
 `docs/component-projection.md`.
+
+---
+
+# Amendment, 2026-10-06: a Gate's verdict reads over its resolved seasons, and says how many abstained (#381)
+
+Filed 2026-09-21 as the question the 2026-09-21 amendment left open (*The mechanism behind the
+number*, above); **ADOPTED 2026-10-06 by the maintainer: option (C)**, with the details settled
+in the same session. (A), the rule of the 2026-09-21 amendment, is not kept; (B), (D) and (E) are
+not taken.
+
+**Amended rather than replaced.** Nothing above is withdrawn: the 2026-09-21 amendment's wording
+about (A), its "the mechanism behind the number" and its open question are kept as they were
+written, because they say what was true and why the question was asked. What changes is the
+sentence "the sign must hold in every held-out season", which now reads over the **resolved**
+seasons.
+
+## The rule
+
+A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md, 2026-10-06).
+A season with a win or a loss is *resolved*. An Abstention is a fact about the season's evidence,
+not about the effect, and is never counted as a win.
+
+- **ADOPT** needs at least one resolved season, every resolved season a win, and the pooled t
+  interval above zero.
+- **REMOVE** is symmetric: at least one resolved season, every resolved season a loss, the
+  interval below zero.
+- **Zero resolved seasons: SHOW**, "0 resolved of k, k abstained". It is **not** NOT-RUNNABLE,
+  which stays the verdict for a design that cannot reach its own effect (read ahead of this
+  half, unchanged). Without the guard, "every resolved season won" is vacuously true at zero and
+  the interval half alone would adopt.
+- **No floor beyond one resolved season.** A floor such as ceil(k/2) would be a second threshold
+  chosen after seeing abstention rates.
+- **The interval half is unchanged and still pools all k seasons**, abstaining ones included.
+  An Abstention votes for nobody but is still evidence about the pooled effect, so a
+  resolved-unanimous frame whose pooled interval crosses zero is SHOW.
+- **Every verdict sentence carries the count**, never a bare verdict: "ADOPT ... (3 resolved of
+  4, 1 abstained; won 3, tied 1, lost 0 of 4 seasons)". The tally keeps the code's word *tied*
+  (the field is still `ties`); the prose says Abstention. `GateRun.resolved` / `.abstained` and
+  the ledger entry (`state/gate-width.json`, `resolved`, `abstained`) carry the two numbers.
+- **#375** (the posterior replacing the verdict) supersedes (C) when it lands, not (A).
+
+## Why this is not rule 1's incident
+
+Rule 1 forbids choosing a rule after the numbers it judges. The release condition for this ticket
+was five tie-aware ledger entries from four gates, and the 2026-09-22 comment on #381 asked which
+quantity those entries supply. What the ledger and #388 / #418 supplied is an **abstention rate**:
+how often a season's gain fails to clear its own noise, and at what within-season row count. That
+is a variance estimate, not an effect reading. No verdict's direction informed the choice. The
+fact that decided it is a power figure computed on spent seasons: under (A) the shipped combined
+rule's power is **about 0.0008 (weekly, δ=0.3) and 0.0075 (draft, δ=2.0)** at k=4 (#388, baseline
+#418) and stays under 0.005 weekly up to k=8, so (A) means a Gate cannot adopt. The pre-registered
+stop condition for (C) was fixed before (C)'s numbers (below), and the reading rule for the 2024
+sub-question was stated before its number (the 2026-09-21 comment on #381).
+
+## The measured null and power (rule 16, before landing)
+
+`scripts/gate_horizon.py --rule-c`, #388's harness reading (A) and (C) off the same `gate` run on
+the same frames, on #388's estimated process (#418's chosen baseline), 40,000 trials a cell,
+worst SE 0.0025. Pre-registered in `docs/gate-power.md` (*(C) before it lands*) and committed
+before any number existed; the full table, the four controls and the rows at k = 5..8 are there.
+
+| k=4 | null ADOPT (A) | **null ADOPT (C)** | power (A) | **power (C)** | interval half alone |
+|---|---|---|---|---|---|
+| weekly, δ=0.3 (260 rows) | 0.0001 | **0.0140** | 0.0008 | **0.0829** | 0.1313 |
+| weekly, δ=0.5 | 0.0001 | 0.0140 | 0.0039 | **0.2003** | |
+| draft, δ=2.0 (20 rooms) | 0.0014 | **0.0291** | 0.0077 | **0.0828** | 0.0919 |
+
+**The stop condition did not fire.** The maintainer's pre-registered bar was a null ADOPT above
+0.05 at k=4 on either path; (C)'s is 0.014 and 0.029, and the largest null anywhere in the grid is
+0.035 (draft, 80 rooms). (C) raises the null by a factor of over a hundred on the weekly path from
+a base that was effectively zero, and it stays under `ALPHA`. Power at k=4 rises about a hundredfold
+weekly and tenfold draft and is **not** a repaired gate: 0.08 is nowhere near `POWER` = 0.80, and
+42% of weekly frames at δ=0.3 still have no resolved season at all. (C) makes a Gate *able* to adopt and
+says so on the page when it could not decide. The (A) column reproduces #388's within 1 SE; the
+inclusions (A) ⊆ (C) ⊆ interval-alone hold on every one of 1.5 million frames.
+
+## What moves
+
+- **Verdict sentences**, all of them, by the count phrase. The seam-equivalence golden
+  (`tests/unit/fixtures/gate_seam_equivalence_control.json`) moved in twelve sentences and two
+  statuses (`battery_tie` and `battery_threshold`, SHOW to ADOPT: three wins and an Abstention).
+  `margin`'s frozen-read digest moved by exactly that phrase and returns to its old value with
+  it removed.
+- **Verdicts that change when the ledgered gates are re-run**, restated with their prior values in
+  the doc that published each (`docs/gate-power.md`, `docs/improvements.md`, the box in each
+  gate's own page): the weekly gate's #378 run, **SHOW (won 0, tied 1, lost 3 of 4) to REMOVE on
+  3 resolved of 4, 1 abstained** (t interval [−2.032, −0.262]); the draft gate's #376 run, **SHOW (won 0, tied 1, lost 3 of 4) to
+REMOVE on 3 resolved of 4, 1 abstained** -- on today's re-run, which is not a bit-for-bit re-reading
+(2025's gain is −14.34 where #376 recorded −19.86, so the mean is −11.02 against −12.40 and the
+MDE 7.84 against 11.01; 2022-2024 and the ceiling +21.90 are identical; t interval [−17.22,
+−4.82]), and which #376's own recorded numbers (t interval [−21.11, −3.69], three losses and one
+Abstention) give the same reading on. `player_spread` own_k
+  and usage (SHOW; **0 resolved of 5, 5 abstained**: the reason moves from "a tie blocks ADOPT" to
+  "no season resolved"), `injury_type` (SHOW, 3 resolved of 3, 0 abstained) and
+  `component_calibration` (NOT-RUNNABLE) do not change status.
+- **The ledger**: each run writes `resolved` and `abstained` beside the verdict
+  (`state/README.md`).
+- **The `wins k/k` restatements of #311** are re-read under it: a Gate whose record said "won 3,
+  tied 1" now says what that was, three resolved seasons of four.
+
+## The 2024 sub-question, answered
+
+*Is the tie rule abstaining on noisy seasons rather than on small effects?* The question was asked
+because 2024 abstained in both the draft and the weekly harness. **Weekly** (#381's 2026-09-21
+comment, from #382's run; m = 20 each): within-season SEs 0.409 / 0.447 / **0.543** / 0.546 for
+2022-2025 and gains −1.120 / −1.448 / **−0.259** / −1.761. 2024's SE equals 2025's (0.543 against
+0.546), so it is not distinctly wide, and its |−0.259| is below **every** season's 2·SE (the
+narrowest is 0.82) by a factor of three: 2024 abstains at any of the four SEs, while 2025 at
+the same precision resolves as a loss because its gain is seven times larger. **The weekly
+Abstention is about the effect, not the season.** Re-run today (#381, the same recipe), the
+per-season table reproduces to the digit. **Draft** (the first draft run to record per-season SEs, today's re-run
+of #376's recipe, m = 20 rooms each): SEs 3.31 / 3.11 / **3.75** / 2.03 and gains −15.35 / −8.41 /
+**−5.99** / −14.34 for 2022-2025. Here 2024's SE *is* the widest (13% over 2022, 21% over 2023, 85%
+over 2025), so the weekly reading does not simply carry over, and the draft answer is mixed: its
+|−5.99| is also the smallest gain of the four, and it would still abstain at 2022's and 2023's SEs
+(thresholds 2·SE of 6.62 and 6.22 against 5.99, a ratio of 1.81 and 1.93 to the SE where a win
+or loss needs 2.0), and resolve as a loss only at 2025's 2.03. **The draft Abstention is about
+both the effect and the season** -- a small gain and the widest SE in the run -- which is the
+property the 2026-09-21 amendment said would need saying out loud if it appeared. It appears
+here, at one season in one gate. The second column the 2026-09-21 comments asked to be watched,
+`max(se) / min(se)` within a run, reads **1.34 weekly** (0.546 / 0.409) and **1.85 draft**: the
+threshold is close to a fixed-width dead zone weekly and clearly not draft. One season in one
+gate is a hint, not a finding,
+and the abstention rate that (C) is measured on (0.8 weekly, 0.58 draft per season at δ in the
+gate's range) is exactly the quantity this sub-question concerns: it is a property of how wide
+a season's own noise is against the effect, which (C) now prints beside every verdict.
+
+## What it does not do
+
+It does not repair power (see the table); it is not #375, which replaces the verdict with a
+posterior and supersedes (C); and it does not touch NOT-RUNNABLE, VOID, the precondition, the
+t interval of #357 or the `2·SE` / `TIE_MIN_CLUSTERS` choices of #335, which the 2026-09-21
+amendment said were not the lever and still are not.
