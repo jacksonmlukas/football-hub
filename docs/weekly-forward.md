@@ -394,14 +394,23 @@ when any module differs from the pin, is new in the imports or is gone, naming e
 digest over the whole table, `weekly_forward.PINNED_ARM_DIGEST`, is printed on every reading.
 
 **Nothing in the arm changed.** The closure at the head of this amendment is the tree's state at
-`main` `d6f8882`; no module in it was edited, and the table below is that state. The earlier pin
+`main` `d8e20f4`; this amendment edits no module in it, and the table below is that state. (The
+pin was first computed at `d6f8882`, where its digest was `07aaa20c636fb902`; merging `main`
+forward to `d8e20f4` moved exactly one module, `hub.models.coverage`, from `8ea06bda176b` to
+`e036e1981cef`, by the 2026 coverage row and the slate's measure-before-publish order
+(`b13a320`, `e6a5bc1`). The new pin refused its first tree-versus-pin comparison on it, which is
+the defect this amendment exists to close working as designed. The arm reaches that module
+through one function-local import, in `weekly_projection`'s report-prose helper that reads
+`published_summary` for the interval diagnostic; it does not enter `project`, the shrinkage fit
+or any quantity the forward measurement scores, and the identity test below passes on this tree.)
+The earlier pin
 was the blob `96114791e9ba5492d92e996c1ad5f302fca5169a` of one of these 29 modules, and that
 module (`hub.exhibits.weekly_projection`) is the one the behavioural identity test
 `tests/unit/test_weekly_projection_move.py` (#430) holds to the figures computed on the pre-move
 code; it still passes on this tree, so the closure the new pin covers reproduces them. The new
 pin is a wider net over the same arm, not a second arm, and no new pre-registration is owed.
 
-**The closure pinned, digest `07aaa20c636fb902`** (29 modules; module, then
+**The closure pinned, digest `7bc93c290a5cc331`** (29 modules; module, then
 its source digest):
 
 | module and digest |
@@ -425,7 +434,7 @@ its source digest):
 | `hub.models.base` `8c41cd5f26d1` |
 | `hub.models.components` `c402b0c4856f` |
 | `hub.models.conformal` `f98558ab2051` |
-| `hub.models.coverage` `8ea06bda176b` |
+| `hub.models.coverage` `e036e1981cef` |
 | `hub.models.margin` `9da0f4839e89` |
 | `hub.models.market` `098baf487556` |
 | `hub.models.panel` `2f9f2aad1946` |
