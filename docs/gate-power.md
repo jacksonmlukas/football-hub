@@ -2354,6 +2354,19 @@ every downstream weekly figure that reads it. `docs/weekly-screen.md`, `docs/met
    than only how accurately it is reported, so it should not be rushed ahead of the other three
    to avoid a second screen re-run.
 
+> **Items 1 and 3 landed 2026-10-07 (#315), in the order above.** Item 1: a played week is
+> drawn at mean `mu/f` and sd `sd/sqrt(f)` (closed-form test in `test_season.py`; weekly sd of
+> played weeks −10% to −11% at three prior games missed, season mean unchanged, season-total
+> sd −2% to −3%; [durability.md](durability.md)). Item 3: the clamp is pool-adjacent-violators
+> (property tests in `test_impute.py`); **the stated acceptance direction did not hold on
+> rookies** — the median residual went −0.07 → −0.08, away from zero, because the residual's
+> sign was misread in `impute-cv.md` and the curve sits high for rookies, not low; on blanked
+> veterans the mean residual moved +0.0057 → +0.0017, toward zero
+> ([impute-cv.md](impute-cv.md)). Both modules are in the draft gate's `arm_modules`, so the
+> next draft-gate run reads "on other arm source" in the ledger; that is this change, and no
+> gate was run for it. The frozen-board arm-B pin in `test_backtest.py` was re-pinned with the
+> cause. Items 2 and 4 are untouched and held (#455).
+
 ## What this measurement cannot do
 
 - It cannot fit item 4's ridge penalty or its estimation window here; both are chosen at

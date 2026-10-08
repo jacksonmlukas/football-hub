@@ -69,6 +69,26 @@ weeks missed are scattered rather than run in a block, and byes were #226 until 
 > with two missed games prior, was 18% (RB) to 46% (QB) of season-total spread. See
 > [talent-cv.md](talent-cv.md).
 
+> **Restated 2026-10-07 (#315, item 1).** The played weeks were scaled by `1/f` as a whole
+> draw, which divides the mean by `f` (right) and the weekly sd by `f` as well (a square root
+> too wide: the sd follows `k * sqrt(mu)`, so the sd at the played-week rate `mu / f` is
+> `sd / sqrt(f)`). `season._absence_factor` now returns the played mask and `f`, and a played
+> week is drawn at mean `mu / f` and sd `sd / sqrt(f)`. Measured through `simulate_weeks`,
+> one player alone on his team, `talent_cv=0`, 17 weeks, 6,000 sims, old against new:
+>
+> | player (prior-season missed) | weekly sd, played weeks | season-total sd | season mean |
+> |---|---|---|---|
+> | RB mean 14, sd 6 (3) | 7.59 → 6.76 (−11.0%) | 58.9 → 57.4 (−2.5%) | 234.1 → 234.1 |
+> | RB mean 14, sd 6 (2) | 7.35 → 6.65 (−9.5%) | 56.1 → 54.8 (−2.3%) | 233.0 → 233.1 |
+> | QB mean 20, sd 7 (3) | 8.82 → 7.88 (−10.7%) | 80.7 → 79.2 (−1.8%) | 334.4 → 334.4 |
+>
+> The mean does not move; the season-total sd moves 2–3% because most of it is the missed-games
+> draw, which this does not touch. The weekly interval of a player with absence history is the
+> thing that narrowed. The published figures in this page (the persistence, `TALENT_CV` net
+> of absence) were not fitted through this scaling and are unchanged; the seeded draft-board
+> simulations that read `missed` re-draw, so any P(win) or championship-equity figure quoted
+> from a run before this date carries the old width until it is re-run.
+
 ## The projection does not fully price it
 
 `ppg_next ~ proj_ppg + prior games missed`. A projection that already discounted durability

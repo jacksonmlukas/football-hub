@@ -570,6 +570,30 @@ def _join_expected_points(ecr: pl.DataFrame, xp: pl.DataFrame) -> pl.DataFrame:
     return ecr.with_columns(norm).join(right, on="_key", how="left").drop("_key")
 
 
+def _pava_decreasing(y: np.ndarray) -> np.ndarray:
+    """The least-squares non-increasing fit to `y`: pool-adjacent-violators (#315).
+
+    Where `y` rises, the two neighbours are replaced by their mean, repeatedly, until no
+    pair rises. That moves a violation *toward* its neighbour from both sides. The
+    running minimum this replaces (`np.minimum.accumulate`) clamped every later point
+    down to the smallest value seen, which only ever lowers the curve -- at or below the
+    smoothed value everywhere, never above -- and is why `docs/impute-cv.md` read the
+    curve as sitting low (median residual -0.07 to -0.11). Unweighted: every ranked
+    player is one observation. Order-preserving, mean-preserving, and idempotent.
+    """
+    # Each block is [sum, count]; a block that rises above its left neighbour merges into it.
+    sums: list[float] = []
+    counts: list[int] = []
+    for v in np.asarray(y, dtype=float):
+        sums.append(float(v))
+        counts.append(1)
+        while len(sums) > 1 and sums[-1] / counts[-1] > sums[-2] / counts[-2]:
+            top_sum, top_count = sums.pop(), counts.pop()
+            sums[-1] += top_sum
+            counts[-1] += top_count
+    return np.repeat([s / c for s, c in zip(sums, counts, strict=True)], counts)
+
+
 def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
     """Fill missing expected points from consensus rank, within position.
 
@@ -609,7 +633,7 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
         win = max(3, min(15, len(ys) // 4 * 2 + 1))
         sm = np.array([np.median(ys[max(0, j - win // 2): j + win // 2 + 1])
                        for j in range(len(ys))])
-        sm = np.minimum.accumulate(sm)
+        sm = _pava_decreasing(sm)
         for i in gaps:
             filled[i] = float(np.interp(ecr_all[i], xs, sm))
     return board.with_columns(pl.Series("xfp_per_game", filled, dtype=pl.Float64))

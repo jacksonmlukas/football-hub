@@ -425,6 +425,13 @@ def test_margin_shape_verdict_runs():
 # identical reduction, byte for byte, or the ticket's own instruction applies -- stop, this is
 # evidence the seam is drawn in the wrong place, not a bug to patch until green.
 
+# The `draft` and `draft_sensitivity` entries were re-captured for #315 item 1 and only those
+# two: the draft fixture's optimizer arm plays through `season.simulate_weeks`, whose absence
+# draw now scales a played week's sd by 1/sqrt(f) instead of 1/f, so the same seeds map to
+# different points (the one-draft, one-season gain moved -0.54 -> +13.72 points per team game;
+# the sensitivity case's seasons row moved with it and its verdict text read "won 0 ... lost 1"
+# and now reads "won 1 ... lost 0" of one season, status SHOW in both). The seam itself did
+# not move; every other entry is untouched.
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_the_gate_run_is_byte_identical_to_the_golden_capture(name):
     assert _reduce(CASES[name]()) == GOLDEN[name]

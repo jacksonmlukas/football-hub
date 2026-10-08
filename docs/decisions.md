@@ -368,7 +368,7 @@ toward RB, so flex allocation is ~even (0.45 RB / 0.50 WR), not WR-dominant.
 | ESPN does not retain historical ADP (past seasons return the sentinel) | `fit_espn_weight` is not identifiable. **Snapshots now kept, from 2026-08-25** — `hub/draft/adp_history.py` writes a dated copy on every successful board build, so this is fittable in 2027. Until then the 0.5 prior stands. |
 | FantasyPros and ffopportunity disagree on suffixes, so an exact join drops players | `_join_expected_points` matches on `state._norm` |
 | Replacement level set by 1-game samples put WR *above* RB | `MIN_GAMES = 10`; restores the documented three-WR effect |
-| Rookies have no prior-season xFP, so mu was 0 for top-168 picks | `_impute_xfp` interpolates from consensus rank within position |
+| Rookies have no prior-season xFP, so mu was 0 for top-168 picks | `_impute_xfp` interpolates from consensus rank within position (monotone step is PAVA since 2026-10-07, #315; was a running minimum, see [impute-cv.md](impute-cv.md)) |
 | Scoring the season on the same projection the greedy ranks on | Absolute P(win) is inflated; read `lift`, not the level |
 | `espn_api` has no ADP field at all | Raw `kona_player_info` -> `ownership.averageDraftPosition` |
 | ESPN parks undrafted players on a shared tail ADP (~170), not null | `_adp_saturation_cutoff()`: lowest value shared by >= `teams` players |

@@ -27,6 +27,8 @@ it, what it deliberately does not model, and that `TALENT_CV` is fitted net of i
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 
 # The league's shape and the one rule for filling it now live in `hub.league`, a leaf. They
@@ -107,10 +109,39 @@ def lineup_points(scores: np.ndarray, pos: np.ndarray) -> np.ndarray:
     return total
 
 
-def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -> np.ndarray:
-    """Per (sim, week, player): 0.0 for a week missed, and above 1.0 for a week played.
+class Absence(NamedTuple):
+    """What `_absence_factor` hands back: which weeks are played, and the play fraction.
 
-    Returns a multiplier for the weekly draw, shaped `(n_sims, weeks, len(missed))`.
+    `played` is `(n_sims, weeks, players)` booleans; `play_frac` is `(players,)`, the expected
+    fraction of games played. The two scales a played week needs are derived from the one
+    fraction, so they cannot drift apart (#315).
+    """
+
+    played: np.ndarray
+    play_frac: np.ndarray
+
+    @property
+    def mean_scale(self) -> np.ndarray:
+        """`1/f`: `mu` is points per team game, points per game *played* is `mu / f`."""
+        return 1.0 / self.play_frac
+
+    @property
+    def sd_scale(self) -> np.ndarray:
+        """`1/sqrt(f)`, not `1/f` (#315). The weekly sd follows the Poisson-like law the
+        whole simulator uses (`sd = k * sqrt(mu)`), so the sd at the played-week rate
+        `mu / f` is `sd / sqrt(f)`. Scaling the draw by `1/f` scaled the sd by `1/f` too,
+        one square root too wide: +10% for a player expected to miss 3 of 17 (f = 0.824,
+        1/f = 1.214 against 1/sqrt(f) = 1.102)."""
+        return 1.0 / np.sqrt(self.play_frac)
+
+
+def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -> Absence:
+    """Which weeks each player plays, and the fraction of games he is expected to play.
+
+    Returns an `Absence`: `played` shaped `(n_sims, weeks, len(missed))`, and `play_frac`.
+    The caller draws a played week at mean `mu * mean_scale` and sd `sd * sd_scale`, and
+    multiplies by `played` (#315 -- until then the whole draw was multiplied by `1/f`, which
+    is right for the mean and a square root too wide for the sd).
 
     **What it does.** `durability.next_season_absence` turns each player's prior-season
     missed games into the mean and spread of what he will miss this season, using the
@@ -130,7 +161,9 @@ def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -
     re-levelled, and none of it asked for by this ticket. Points per game *played* is
     `mu / (fraction of games played)`, so dividing the played weeks by that fraction is the
     definitional conversion and not a correction. The consequence is exactly the one wanted:
-    the expected season total is unchanged, and only its spread moves.
+    the expected season total is unchanged, and only its spread moves. **The spread of a
+    played week moves by `1/sqrt(f)`, not `1/f`** (#315): the mean is a rate and divides by
+    `f`, the sd is a rate's square root and divides by `sqrt(f)`.
 
     **What it does not model, deliberately.** The weeks missed are drawn as a count and
     scattered, not as a block, so the total is right and the run structure is not. Nothing in
@@ -171,7 +204,7 @@ def _absence_factor(missed, n_sims: int, weeks: int, rng: np.random.Generator) -
     # "he plays one game at seventeen times the rate" is a bounded answer to an input the
     # board should never produce.
     play_frac = np.maximum(1.0 - mu_missed / TEAM_GAMES, 1.0 / TEAM_GAMES)
-    return played / play_frac[None, None, :]
+    return Absence(played, play_frac)
 
 
 def _schedule_for(season: int):
@@ -343,17 +376,24 @@ def simulate_weeks(rosters: list[np.ndarray], mu: np.ndarray, sd: np.ndarray,
                       where=mu[None, :] > 0)
     sd_eff = (sd[None, :] * np.sqrt(ratio))[:, None, :]
     z = _correlated_normal(rng, (n_sims, weeks, mu.size), pos, nfl_team, report=report)
+    # After `z` and not before it, so the `missed is None` path consumes no random numbers at
+    # all -- see the docstring. The absence draw is made here rather than after the weekly
+    # draw only because a played week's mean and sd depend on the play fraction (#315);
+    # `skewed` takes no random numbers, so the generator ends where it always did.
+    absence = None if missed is None else _absence_factor(missed, n_sims, weeks, rng)
     # Skew comes from the caller when it has it. `hub.models.predict.moments` already
     # returns a skew column alongside mu and sd; recomputing it here from `pos` agreed only
     # because both routes read the same table, and would go on agreeing right up until one
     # of them stopped being a function of position alone.
     if skew is None:
         skew = weekly_skew_for(pos)
-    draws = _skewed(true_mu[:, None, :], sd_eff, skew[None, None, :], z)
-    # After the weekly draw and not before it, so the two are independent and so that the
-    # `missed is None` path consumes no random numbers at all -- see the docstring.
-    if missed is not None:
-        draws = draws * _absence_factor(missed, n_sims, weeks, rng)
+    if absence is None:
+        draws = _skewed(true_mu[:, None, :], sd_eff, skew[None, None, :], z)
+    else:
+        # A played week is a draw at the per-game-played rate: mean x 1/f, sd x 1/sqrt(f).
+        draws = _skewed(true_mu[:, None, :] * absence.mean_scale[None, None, :],
+                        sd_eff * absence.sd_scale[None, None, :], skew[None, None, :], z)
+        draws = draws * absence.played
     # A bye is a scheduled zero, not a draw: the same week in every sim, and no other week
     # touched (#226). It is deliberately *not* mean-preserving, unlike the absence factor
     # above -- `mu` is points per team game and a bye is a week the team does not play, so
