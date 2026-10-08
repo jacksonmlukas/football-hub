@@ -1,6 +1,6 @@
 {
   "name": "interval_coverage",
-  "generated_at": "2026-10-07T20:41:11+00:00",
+  "generated_at": "2026-10-08T00:13:47+00:00",
   "centre": "prior",
   "lookahead": false,
   "interval": "conformal",
@@ -535,7 +535,7 @@
   },
   "backtest_key": {
     "config_digest": "cfb8f409bc6c",
-    "code_digest": "d15dc5c8",
+    "code_digest": "907f04cf",
     "data_digest": "13c1d5fa2d7e",
     "seasons": [
       2021,
@@ -570,7 +570,7 @@
         "position": "QB",
         "n": 0,
         "mde": null,
-        "verdict": "NOT-RUNNABLE",
+        "runnable": false,
         "n_required": 8377
       },
       {
@@ -578,7 +578,7 @@
         "position": "RB",
         "n": 0,
         "mde": null,
-        "verdict": "NOT-RUNNABLE",
+        "runnable": false,
         "n_required": 8377
       },
       {
@@ -586,7 +586,7 @@
         "position": "WR",
         "n": 0,
         "mde": null,
-        "verdict": "NOT-RUNNABLE",
+        "runnable": false,
         "n_required": 8377
       },
       {
@@ -594,7 +594,7 @@
         "position": "TE",
         "n": 0,
         "mde": null,
-        "verdict": "NOT-RUNNABLE",
+        "runnable": false,
         "n_required": 8377
       },
       {
@@ -673,8 +673,8 @@
       }
     ],
     "min_bucket": 50,
-    "key": "0d8bb4276e9d",
-    "generated_at": "2026-10-07T20:41:11+00:00"
+    "key": "96810d679a3b",
+    "generated_at": "2026-10-08T00:13:47+00:00"
   },
   "audit": {
     "look": 1,

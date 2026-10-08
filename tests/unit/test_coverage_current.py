@@ -145,8 +145,8 @@ def test_the_row_carries_n_cov80_cov68_clipped_share_and_sigma_at_the_binomial_s
 
 
 def test_the_row_has_no_verdict_and_every_position_is_not_runnable_below_the_minimum(stats):
-    """The row carries no verdict of its own: the pool has none, the positions say NOT-RUNNABLE
-    with the MDE printed. Mutation: lower `N_MIN_GROUP` to 100 and a position gets a verdict."""
+    """The row carries no verdict of its own: the pool has none, the positions say they are not
+    runnable yet with the MDE printed. The verdict is the look's (`--audit --look`)."""
     cur = coverage.measure_current(stats, _schedule(), date(2026, 1, 20), season=CURRENT)
     pool = next(r for r in cur["by_position"] if r["group"] == "all")
     assert "verdict" not in pool and "verdict" not in cur
@@ -154,7 +154,34 @@ def test_the_row_has_no_verdict_and_every_position_is_not_runnable_below_the_min
     assert len(positions) == 4
     for r in positions:
         assert r["n"] < coverage.N_MIN_GROUP
-        assert r["verdict"] == "NOT-RUNNABLE" and r["mde"] > 0.02
+        assert "verdict" not in r and r["runnable"] is False and r["mde"] > 0.02
+
+
+def _rows(n: int, covered: float = 0.5) -> pl.DataFrame:
+    """`n` scored player-weeks of one position, `covered` of them inside their interval."""
+    inside = np.arange(n) < int(n * covered)
+    return pl.DataFrame({
+        "scored": [True] * n, "points": [10.0] * n, "lo": [5.0] * n, "hi": [15.0] * n,
+        "lo68": [6.0] * n, "hi68": [14.0] * n, "raw_lo": [5.0] * n, "n_cal": [900] * n,
+        "fell_back": [False] * n, "season": [CURRENT] * n, "week": [18] * n,
+    }).with_columns(pl.when(pl.Series(inside)).then(pl.col("points")).otherwise(99.0)
+                    .alias("points"))
+
+
+def test_a_position_at_the_minimum_gets_no_verdict_in_the_row_only_at_the_look():
+    """#460, the latent departure: `measure_current` ran `group_verdict` on any position with
+    data, so one reaching 8,377 player-weeks would have been handed COVERS or a miss by the
+    weekly run, which the pre-registration gives to looks 2 and 3 alone. Planted: a position at
+    exactly N_MIN_GROUP and badly miscovered (50%), where a verdict would be loud. The row says
+    it is runnable and names no verdict; the control is the look's own reading of the same row,
+    which does return one (UNDER-COVERS), so the absence is not an inability to tell."""
+    row = coverage._current_row("QB", "QB", _rows(coverage.N_MIN_GROUP))
+    assert row["n"] == coverage.N_MIN_GROUP == 8377
+    assert row["runnable"] is True and row["n_required"] == 8377 and row["mde"] > 0
+    assert "verdict" not in row
+    assert coverage.group_verdict(row)["verdict"] == "UNDER-COVERS", "the control must flip"
+    below = coverage._current_row("QB", "QB", _rows(coverage.N_MIN_GROUP - 1))
+    assert below["runnable"] is False and "verdict" not in below
 
 
 def test_a_season_with_no_complete_week_is_an_empty_row_not_an_error(stats):
@@ -162,7 +189,8 @@ def test_a_season_with_no_complete_week_is_an_empty_row_not_an_error(stats):
     needed): the row exists, says so, and the positions are NOT-RUNNABLE."""
     cur = coverage.measure_current(stats, _schedule(), date(2025, 9, 1), season=CURRENT)
     assert cur["weeks_complete"] == 0 and cur["n"] == 0 and cur["cov80"] is None
-    assert all(r["verdict"] == "NOT-RUNNABLE" for r in cur["by_position"] if r.get("position"))
+    assert all(r["runnable"] is False and "verdict" not in r
+               for r in cur["by_position"] if r.get("position"))
 
 
 def test_two_seasons_of_history_give_the_calibration_a_full_window_as_full_history_does(stats):
@@ -435,19 +463,8 @@ def test_the_published_summary_carries_the_current_row_and_the_files_own_stamp(w
     assert pub["generated_at"] == _file(world)["generated_at"]
 
 
-def test_the_slate_measures_before_it_publishes_and_checks_the_stamp_it_published():
-    """#423 box 4. `make slate` runs `hub.publish`, which reads the state file into the track
-    record, so the measure step must precede it; and a step after the publish compares the stamp
-    embedded in the record to the file's. Mutation: move the measure step after `make slate` and
-    the first assertion is red (that was the bug)."""
-    text = (ROOT / ".github" / "workflows" / "slate.yml").read_text()
-    measure = text.index("hub.models.coverage --measure --survivor --write")
-    publish = text.index("run: make slate")
-    commit = text.index("git add site/data state")
-    check = text.index("interval_coverage.generated_at")
-    assert measure < publish < check < commit
-    step = text[text.rfind("- name:", 0, measure): measure]
-    assert "continue-on-error: true" in step, "a failed fetch still must not take the slate down"
+# The workflow half of #423 box 4 (measure before the publish; the stamp check after the commit)
+# is held in tests/contracts/test_slate_measures_before_it_publishes.py, in the step harness.
 
 
 # --- a recorded look is carried through every regeneration exactly -----------------------

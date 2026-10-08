@@ -255,8 +255,9 @@ on pooled calibration for part of its window is not testing the conditional clai
 **Built 2026-10-07 (#423): the row the two looks read, and how it is refused until it is time.**
 `state/interval_coverage.json` now carries `current_season`: the current season's completed weeks
 scored by the published interval, labelled `out-of-sample`, with `n`, `cov80`, `cov68`,
-`clipped_share` and sigma at the binomial SE, the positions NOT-RUNNABLE below 8,377 with the MDE
-beside them, and no marginal verdict. It is not pooled into the 2021-2025 figure; the file's top
+`clipped_share` and sigma at the binomial SE, each position with its MDE and a `runnable` flag
+against 8,377, and **no verdict of any kind** (#460: a position that reached 8,377 weeks is not
+handed one by the weekly run; looks 2 and 3 read `group_verdict`, where NOT-RUNNABLE is said). It is not pooled into the 2021-2025 figure; the file's top
 level is still the backtest. Three construction choices, none of which moves the interval:
 
 - **A week is complete** when its last game was played more than a day ago *and* its rows are in

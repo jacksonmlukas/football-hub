@@ -944,14 +944,19 @@ def look_date_reached(look: int, schedule: pl.DataFrame, as_of: date,
 
 
 def _current_row(label: str, position: str | None, g: pl.DataFrame) -> dict[str, Any]:
+    """One group of the 2026 row: its figures and its MDE, and **no verdict** (#460).
+
+    The pre-registration gives this row looks 2 and 3 "and no other verdict", so whether a
+    position may rule is left to `--audit --look 2|3`, which reads `group_verdict` at the look.
+    Here a position says only how many weeks it has against the `n_required` that look will ask
+    for (`runnable`), so a position that reached 8,377 weeks is not handed a COVERS or a miss by
+    the weekly run.
+    """
     row = _published_row(label, g, position)
-    if not row["n"]:
-        row.update(mde=None, **({"verdict": "NOT-RUNNABLE", "n_required": N_MIN_GROUP}
-                                if position else {}))
-        return row
-    row["mde"] = _mde(int(row["n"]))
+    n = int(row["n"])
+    row["mde"] = _mde(n) if n else None
     if position:
-        row["verdict"] = group_verdict(row)["verdict"]
+        row.update(runnable=n >= N_MIN_GROUP, n_required=N_MIN_GROUP)
     return row
 
 
@@ -964,9 +969,9 @@ def measure_current(stats: pl.DataFrame, schedule: pl.DataFrame, as_of: date,
 
     `stats` carries the current season and the `CURRENT_HISTORY` before it, so the rolling
     calibration window is full. Only cells of weeks that are complete are scored: a later
-    partial week sits in the data and is left out. The positions carry `NOT-RUNNABLE` below
-    `N_MIN_GROUP` with the MDE beside them; the pool carries none -- the marginal bar is read at
-    looks 2 and 3 (`--audit --look`), not here.
+    partial week sits in the data and is left out. Positions carry n, coverage, sigma and the MDE
+    and whether they have `N_MIN_GROUP` weeks (`runnable`); no group carries a verdict -- those
+    are read at looks 2 and 3 (`--audit --look`), not here.
     """
     season = CURRENT_SEASON if season is None else season
     through = completed_weeks(schedule, stats, season, as_of)
@@ -980,7 +985,7 @@ def measure_current(stats: pl.DataFrame, schedule: pl.DataFrame, as_of: date,
             by_pos.append(_current_row(p, p, part))
         else:
             by_pos.append({"group": p, "position": p, "n": 0, "mde": None,
-                           "verdict": "NOT-RUNNABLE", "n_required": N_MIN_GROUP})
+                           "runnable": False, "n_required": N_MIN_GROUP})
     pool = _current_row(GATE_SUBSET, None, cur)
     keys = ("n", "cov80", "cov68", "clipped_share", "deviation", "se", "sigma", "mde")
     return {
