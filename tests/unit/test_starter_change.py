@@ -1068,7 +1068,7 @@ def test_study_events_needed_is_none_with_no_usable_spread():
 
 
 def test_the_noise_floor_excludes_a_change_the_chart_dates_between_the_polls():
-    """#330: `starters` is the depth-chart frame `odds._qb_starters` returns -- `dt` the
+    """#330: `starters` is the depth-chart frame `odds.load_qb_starters` returns -- `dt` the
     chart's own timestamp, published day by day through the week -- and never this module's
     own team-game rows, whose `date` is *kickoff*. A real archive's polls of a game all
     precede that game's own kickoff, so a change dated at kickoff is invisible to every one
@@ -1373,7 +1373,7 @@ def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, c
     # let it reach the network.
     def _no_chart(season):
         raise ConnectionError("no network")
-    monkeypatch.setattr(odds, "_qb_starters", _no_chart)
+    monkeypatch.setattr(odds, "load_qb_starters", _no_chart)
 
     # --ceiling is on by default since #302; passed explicitly here only because this test
     # also pins --since to collapse the assembled range to the one season the fixture has.
@@ -1460,7 +1460,7 @@ def test_the_cli_study_line_names_the_season_whose_chart_is_not_applied(tmp_path
         if season == 2026:
             return pl.DataFrame({"dt": [dt.datetime(2026, 8, 1)], "team": ["KC"], "qb": ["x"]})
         raise ConnectionError("no chart for 2025")
-    monkeypatch.setattr(odds, "_qb_starters", _chart)
+    monkeypatch.setattr(odds, "load_qb_starters", _chart)
     monkeypatch.setattr(experiment, "WIDTH_STATE", tmp_path / "w.json")
 
     code = sc.main(["--study", "--since", "2025", "--season", "2026", "--cache", str(cache),

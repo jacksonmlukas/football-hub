@@ -332,7 +332,7 @@ UNCHECKED: dict[str, str] = {
     "target share alone as if it were the whole": (
         "a reading of a column, not a token: `target_share` is a real panel column and is "
         "correctly one Share of several"),
-    "depth chart": "the QB study reads a real depth chart (`odds._qb_starters`) and names it "
+    "depth chart": "the QB study reads a real depth chart (`odds.load_qb_starters`) and names it "
                    "correctly; the entry forbids it only as a name for the Active set",
     "lineup": "the Lineup is its own object across `hub.season`; the entry forbids it only "
               "as a name for the Active set",

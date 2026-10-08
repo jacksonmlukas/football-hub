@@ -908,20 +908,58 @@ def noise_floor(moves: pl.DataFrame, *, bootstrap: int = NOISE_BOOTSTRAP,
             "sd_per_root_day": per_root_day, "by_day": by_day}
 
 
-def _qb_starters(season: int) -> pl.DataFrame:                  # pragma: no cover - network
+def qb_starters(chart: pl.DataFrame) -> pl.DataFrame:
     """Who is listed first at quarterback for each team, from each chart's moment on.
 
     nflverse's depth charts, reduced to the one position this study conditions on. `dt`
     is the chart's own timestamp, ISO 8601 in UTC, and comes back naive UTC to match
     `captured_at`. A team that changes its starter publishes a new chart, so the as-of join
     in `_starter_at` reads the change from the first chart that carries it.
+
+    `chart` is what `nflverse.load("depth_charts", ...)` hands back, so `DEPTH_CHARTS` has
+    already vouched for the columns. What it cannot say is that a (chart, team) has exactly
+    one rank-1 quarterback -- true of all 7,071 across the 2025 pull -- and a second would
+    put two starters on one team at one moment, which `_starter_at`'s as-of join reads as
+    whichever sorts last. Refused rather than picked from.
+    """
+    qb1 = chart.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1))
+    if qb1.select(pl.struct("dt", "team").is_duplicated().any()).item():
+        raise ValueError("depth chart has more than one rank-1 quarterback for a team at one "
+                         "chart time; the starter would be whichever row sorts last")
+    return (qb1.select(pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ").alias("dt"),
+                       pl.col("team"), pl.col("gsis_id").alias("qb"))
+               .sort("dt"))
+
+
+def load_qb_starters(season: int, *, refresh: bool = True,
+                     cache: Path | None = None) -> pl.DataFrame:
+    """The season's starting quarterbacks, through the validated cached depth-chart loader.
+
+    One chart for the QB study and the share layer (#336): `nflverse.load("depth_charts",
+    ...)` with `DEPTH_CHART_COLS`, the same cache entry whoever asks.
+
+    **`refresh` defaults to `True`.** The chart grows through a season (221 distinct `dt` over
+    2025), so a cache read answers with a chart that may be days behind and says nothing about
+    it; a default that can be silently stale is the wrong default for a function whose whole
+    use is "who started when". A caller that knows its season is complete, or that wants
+    whatever was last validated, says `refresh=False` and reads the cache (fetching only if
+    there is none). Either way a failed refresh -- no network, or a response the contract
+    refuses, a malformed `dt` included -- serves the last chart that did validate, and the
+    caller's own handler is for the case with no chart at all.
     """
     from hub.fetch import nflverse
-    chart = nflverse.load("depth_charts", [season], refresh=True)
-    return (chart.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1))
-                 .select(pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ").alias("dt"),
-                         pl.col("team"), pl.col("gsis_id").alias("qb"))
-                 .sort("dt"))
+    try:
+        chart = nflverse.load("depth_charts", [season], cols=nflverse.DEPTH_CHART_COLS,
+                              refresh=refresh, cache=cache)
+    except Exception as exc:
+        print(f"  depth chart {season}: refresh failed ({type(exc).__name__}: {exc}); "
+              f"serving the last validated chart")
+        path = nflverse._cache_path("depth_charts", [season], nflverse.DEPTH_CHART_COLS, cache)
+        if not path.exists():
+            raise
+        chart = nflverse.load("depth_charts", [season], cols=nflverse.DEPTH_CHART_COLS,
+                              refresh=False, cache=cache)
+    return qb_starters(chart)
 
 
 def _print_floor(label: str, f: dict[str, Any]) -> None:
@@ -951,7 +989,7 @@ def noise_floor_report(season: int = SEASON_AHEAD, base: Path | None = None, *,
     qb_note = ""
     if starters is None:
         try:
-            starters = _qb_starters(season)
+            starters = load_qb_starters(season)
         except Exception as exc:                            # pragma: no cover - network
             qb_note = f" (same-quarterback condition NOT applied: {type(exc).__name__}: {exc})"
     moves = line_moves(polls, starters)
