@@ -1119,6 +1119,19 @@ def test_the_screen_called_in_process_names_only_its_own_reads(monkeypatch, caps
         "the screen's read did not reach the run around it: scoping lost a read")
 
 
+def test_the_run_prints_the_three_leakage_surfaces_it_inherits(monkeypatch, capsys):
+    """#313: the collider, the Friday scrape and the non-point-in-time expected columns are
+    printed at the end of every run, each once, beside the numbers they qualify. A reader of the
+    screen is the one who needs them; a docstring alone is not rendered to him."""
+    monkeypatch.setattr(ws, "build_panel", lambda seasons, spec, as_of=None: _screenable_panel(seasons))
+    assert ws.main(["--run", "--seasons", "2023,2024", "--trend-min-week", "8"]) == 0
+    said = capsys.readouterr().out
+    assert len(ws.SCREEN_LIMITATIONS) == 3
+    tail = said.split("limitations the design does not close (#313):")[-1]
+    for needle in ("collider", "Thursday night", "whole history"):
+        assert tail.count(needle) == 1, needle
+
+
 # --- #37: the family is counted and the false-discovery threshold printed beside the t -------
 
 def _family_panel(names, seasons=(2021, 2022, 2023, 2024, 2025), weeks=range(1, 11),

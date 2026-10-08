@@ -510,3 +510,34 @@ called by `project`, the shrinkage fit or anything the forward measurement score
 | `hub.names` `93e503040186` |
 | `hub.season.weekly_gate` `73cc434a55db` |
 | `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-07: the arm is re-pinned for two docstrings (#313; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #313 names three
+leakage surfaces in the docstrings of `hub.models.components` and `hub.models.panel` (and
+corrects the direction of one existing sentence in `panel.assign_weeks`), which are two modules
+in the closure above. The pin is a hash of source bytes, so a docstring edit moves it, and the
+amendment obligation above applies: show the edit did not change what the arm computes, re-pin,
+date it.
+
+**The evidence.** Parsing each of the two modules at `main` (`3729e6b`) and in this change, and
+removing every module, class and function docstring, the two syntax trees are equal
+(`ast.dump`): the change is docstrings and nothing else, so no statement the arm executes
+differs. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430) is
+run on this tree beside it (result in the commit). The arm's inputs and outputs are not reached:
+no constant, no join, no column and no default moved.
+
+**What did not change:** `hub.models.predict`, `WEEKLY_K` and every fitted constant, so no
+interval and no scored quantity on the forward arm moves. The refit of the spread law that #313
+also asks for is **not** in this amendment; it is not landed (no adopted design exists for it),
+and if it lands it is a separate amendment with its own evidence, because `predict.WEEKLY_K` is
+read by the arm.
+
+**The pin now, digest `c891aaf58f135479`.** Exactly two rows moved:
+
+| module and digest now | was |
+|---|---|
+| `hub.models.components` `b23c5d7d0c49` | `c402b0c4856f` |
+| `hub.models.panel` `99d19fba99e0` | `2f9f2aad1946` |
+
+The other 27 rows of the table above stand. (Previous digest `7bc93c290a5cc331`.)
