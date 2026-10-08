@@ -19,8 +19,13 @@ no length of a game is written below. A game belongs to a window when its kickof
 reports it, falls inside the window -- which is how the windows were drawn (each opens at or
 before the earliest kickoff it is for).
 
-**What counts as a check.** Any run of the watchdog workflow created inside the window, of any
-event and any conclusion. A run that failed still ran, and a failed *job* is its own report.
+**What counts as a check.** Two things (#457, #461). Any run of the watchdog workflow created
+inside the window, of any event and any conclusion -- a run that failed still ran, and a failed
+*job* is its own report. And any `live` run whose "Watchdog check" step *completed*, as the
+jobs API reports it, dated by that step's `completed_at`. The run's own conclusion is not
+evidence: a loop hard-cancelled by a runner loss or a timeout never reaches its `always()` step
+and would otherwise pass the window silently, while a `failure` run whose step ran did check.
+
 A run created after the window closed -- the late delivery that does the reporting -- is not
 inside it, which is the point.
 
@@ -179,10 +184,11 @@ def render(gaps: Sequence[Gap], watchdog: str = "watchdog") -> str:
     `--body-file`, never substituted into a shell string."""
     lines = [
         MARKER,
-        f"No `{watchdog}` check ran during {len(gaps)} game window(s). The workflow shares a "
-        f"scheduler with `live`, and GitHub drops scheduled runs under load, so a window can "
-        f"pass with no refresher and no alarm about it (#391). This was found after the fact, "
-        f"by the first run delivered since.",
+        f"No `{watchdog}` check ran during {len(gaps)} game window(s), and no `live` run "
+        f"finished in it either. `live` performs the check as a step of its own loop (#457), "
+        f"so this is a window with no refresher at all: GitHub drops scheduled runs under "
+        f"load, and the cron that should have started one was never delivered (#391). This "
+        f"was found after the fact, by the daily look-back.",
         "",
     ]
     for g in gaps:
@@ -241,12 +247,54 @@ def espn_kickoffs(window: Window) -> list[dt.datetime]:
     return out
 
 
+# Workflows whose check is a *step* of the run rather than the run itself (#457, #461): the
+# run existing proves nothing -- a loop hard-cancelled by a runner loss or a timeout never
+# reaches its `always()` step -- so the jobs API is asked whether the step completed.
+CHECK_STEPS = {"live.yml": "Watchdog check"}
+# A step that ran: `failure` counts, because the step is `continue-on-error` and exits 1 when
+# it found a problem it could not file. `skipped`, `cancelled` and no conclusion did not run.
+STEP_RAN = frozenset({"success", "failure"})
+STEP_RUNS_LIMIT = 100
+
+
+def _gh_json(cmd: list[str]):
+    got = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=True)
+    return json.loads(got.stdout)
+
+
 def check_times(workflow: str, repo: str) -> list[dt.datetime]:
-    """When each recent run of `workflow` was created. Raises when `gh` cannot say."""
-    got = subprocess.run(
-        ["gh", "run", "list", "--workflow", workflow, "--repo", repo, "--limit", "500",
-         "--json", "createdAt"], capture_output=True, text=True, timeout=120, check=True)
-    return [parse_kickoff(r["createdAt"]) for r in json.loads(got.stdout)]
+    """When each recent run of `workflow` performed a check. Raises when `gh` cannot say.
+
+    A watchdog run is its creation time. For a workflow in `CHECK_STEPS` it is the
+    `completed_at` of the named step, for every run whose step completed with a conclusion in
+    `STEP_RAN`, whatever the run's own conclusion -- see the module docstring.
+    """
+    step_name = CHECK_STEPS.get(workflow)
+    if step_name is None:
+        rows = _gh_json(["gh", "run", "list", "--workflow", workflow, "--repo", repo,
+                         "--limit", "500", "--json", "createdAt"])
+        return [parse_kickoff(r["createdAt"]) for r in rows]
+    runs = _gh_json(["gh", "run", "list", "--workflow", workflow, "--repo", repo,
+                     "--limit", str(STEP_RUNS_LIMIT), "--json", "databaseId"])
+    out: list[dt.datetime] = []
+    for run in runs:
+        jobs = _gh_json(["gh", "api", f"repos/{repo}/actions/runs/{run['databaseId']}/jobs"])
+        for job in jobs.get("jobs") or []:
+            for step in job.get("steps") or []:
+                if (step.get("name") == step_name and step.get("conclusion") in STEP_RAN
+                        and step.get("completed_at")):
+                    out.append(parse_kickoff(step["completed_at"]))
+    return out
+
+
+def season_opens_from(path: Path) -> str:
+    """The `SEASON_OPENS` a workflow holds in its `env`, read from the file so the date has
+    one home (#461)."""
+    m = re.search(r'^\s*SEASON_OPENS:\s*"(\d{4}-\d{2}-\d{2})"', path.read_text(),
+                  flags=re.MULTILINE)
+    if not m:
+        raise ValueError(f"{path}: no SEASON_OPENS")
+    return m.group(1)
 
 
 # --- the CLI ----------------------------------------------------------------------------------
@@ -260,10 +308,15 @@ def main(argv: Sequence[str] | None = None,
                     "`new=M` for $GITHUB_OUTPUT; writes the incident text to --report when "
                     "there is something new to say.")
     ap.add_argument("--live-yml", type=Path, default=Path(".github/workflows/live.yml"))
-    ap.add_argument("--workflow", default="watchdog.yml")
+    ap.add_argument("--workflow", action="append", default=None,
+                    help="a workflow whose runs count as a check; repeatable "
+                         "(default: watchdog.yml and live.yml)")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--season-opens", default="",
                     help="ISO date; windows that closed before it are not looked at")
+    ap.add_argument("--season-opens-from", type=Path, default=None,
+                    help="a workflow file holding SEASON_OPENS in its env; used when "
+                         "--season-opens is not given")
     ap.add_argument("--known-file", type=Path, default=None,
                     help="text of the open incident, so a gap already named is not repeated")
     ap.add_argument("--report", type=Path, default=None)
@@ -274,10 +327,13 @@ def main(argv: Sequence[str] | None = None,
     try:
         wins = windows(crons_in(args.live_yml.read_text()),
                        now - dt.timedelta(days=LOOKBACK_DAYS), now)
-        if args.season_opens:
-            opens = dt.datetime.fromisoformat(args.season_opens).replace(tzinfo=UTC)
+        season = args.season_opens or (
+            season_opens_from(args.season_opens_from) if args.season_opens_from else "")
+        if season:
+            opens = dt.datetime.fromisoformat(season).replace(tzinfo=UTC)
             wins = [w for w in wins if w.start >= opens]
-        checks = checks_fn(args.workflow, args.repo)
+        checks = [t for w in (args.workflow or ["watchdog.yml", "live.yml"])
+                  for t in checks_fn(w, args.repo)]
     except Exception as e:
         # Not "no gaps". A check that cannot read the run list has established nothing, and
         # exiting 0 here is how it would stay quiet for as long as its token was wrong.
@@ -290,7 +346,7 @@ def main(argv: Sequence[str] | None = None,
     print(f"gaps={len(gaps)}")
     print(f"new={len(fresh)}")
     if fresh and args.report:
-        atomic.write_text(args.report, render(fresh, args.workflow.removesuffix(".yml")))
+        atomic.write_text(args.report, render(fresh))
     return 0
 
 
