@@ -186,7 +186,11 @@ What this repo has spent against two metered third-party accounts:
   favourite's price. `hub.publish` carries it into `track_record.json` and the slate commits
   it before gating on it (#273). Since #309 the graded interval is the conformalised one over
   the whole scored board; each group row carries its `position`, `n`, `n_cal`, deviation and
-  sigma, and the parametric interval it replaced is kept under `parametric`.
+  sigma, and the parametric interval it replaced is kept under `parametric`. Since #423 the
+  file's top level is the closed 2021-2025 backtest, measured once per `backtest_key` and read back
+  by every later run (`--remeasure` forces it); `current_season` is the current season's completed
+  weeks as a separate out-of-sample row, which looks 2 and 3 of the claim read; floats are written
+  at six places and a run that changes nothing writes nothing, so the slate commits no noise.
 
 **Committed on purpose.** Both lived under `data/raw/`, which `.gitignore` excludes as
 redistributed third-party data — correct for a cached payload and fatal for a counter. Every
