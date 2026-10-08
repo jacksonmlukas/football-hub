@@ -60,11 +60,13 @@ and is what `--shape` still reads. The design is `docs/weekly-coverage.md`, 2026
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
 import sys
 from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -73,9 +75,9 @@ import polars as pl
 
 from hub import atomic, jsonio
 from hub.cli import unavailable
-from hub.config import DRAFTED_POSITIONS
+from hub.config import DRAFTED_POSITIONS, SEASON_AHEAD
 from hub.declare import not_an_input
-from hub.ledger import WIDTH_STATE, Ledger
+from hub.ledger import WIDTH_STATE, Ledger, code_digest
 from hub.ledger import recipe as _recipe
 from hub.models import conformal, predict
 from hub.models.experiment import (
@@ -274,6 +276,48 @@ SURVIVOR_SPREAD = not_an_input(
 # doc said it carried one (#273). Not under `site/data/` because the site copy is published
 # output and this is the measurement behind it; the publisher joins the two.
 ARTIFACT = STATE_DIR / "interval_coverage.json"
+
+# --- the current season's row, and the backtest that is read back (#423) ---------------
+#
+# **The 2021-2025 backtest is a fixed past.** `SEASONS` is closed, so its figure cannot move; the
+# slate re-pulled five seasons twice a week to reproduce it, and its diff was the timestamp and
+# the sixteenth digit of four ratios (Audit V, V5). It is measured once per *key* -- the config,
+# the code that computes it, and the identity of the data it reads -- and read back from the state
+# file while the key holds. The data side of the key is the declared identity of a closed span
+# (the season list), not a hash of the bytes: hashing them would need the pull this avoids, so a
+# restated nflverse season is the one thing it cannot see, and `--remeasure` is the lever for it.
+# A span that includes the current season is not closed and is never read back.
+#
+# **The current season is a separate, labelled, out-of-sample row.** The published interval is
+# calibrated on the last `CAL_WINDOW` cells before the cell it is scored on, so the 2026 weeks are
+# graded against the 2025 weeks behind them; `CURRENT_HISTORY` seasons are read ahead of the
+# current one so that window is full (a window that reached past the data read would be a
+# different calibration from the one the full history gives; a unit test holds the two equal).
+# It is not pooled into the backtest and carries no verdict: looks 2 and 3 of the claim read it
+# (`LOOK_WEEKS`, pre-registered 2026-10-07 in `docs/weekly-coverage.md`) and nothing else does.
+CURRENT_SEASON = SEASON_AHEAD
+CURRENT_HISTORY = not_an_input(
+    2, "how many seasons are read ahead of the current one so the calibration window is full; "
+       "a reading choice of the grader, which makes no prediction")
+# Look k reads the current-season row once week LOOK_WEEKS[k] is complete (look 1 is the backtest).
+LOOK_WEEKS = not_an_input(
+    {2: 14, 3: 18},
+    "the week after which each look that reads the current-season row may be taken, "
+    "pre-registered 2026-10-07 (#423, docs/weekly-coverage.md)")
+# A week is complete once its last game was played this many days ago and its rows are in the
+# data; the same one-day lag `hub.season.weekly_forward.LAG_DAYS` uses for #432's horizon, and a
+# unit test holds the two equal.
+LAG_DAYS = not_an_input(
+    1, "days after a week's last game before its rows are expected in nflverse; the grader's "
+       "horizon, the same as #432's")
+# Written floats are rounded to this many places, so a run that changes nothing writes the same
+# bytes and the slate commits nothing. Six places is a millionth of a rate, far below the
+# 1/sqrt(n) noise of any row here (0.003 at n = 16,000) and above the sixteenth-digit wobble
+# Audit V found.
+ROUND_DIGITS = not_an_input(
+    6, "decimal places the artifact is written at; a presentation precision of the grader")
+_CODE = ("hub.models.coverage", "hub.models.predict", "hub.models.conformal")
+_SURVIVOR_CODE = ("hub.models.coverage", "hub.models.margin", "hub.models.market")
 
 
 class NotEnoughWeeks(Exception):
@@ -801,6 +845,160 @@ def measure(stats: pl.DataFrame, centre: Centre = "prior", *,
     }
 
 
+# --- the backtest's key, and the current season's row (#423) --------------
+
+
+def _digest(payload: object) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()
+                          ).hexdigest()[:12]
+
+
+def backtest_key(seasons: Sequence[int], centre: Centre = "prior", *,
+                 min_prior: int = MIN_PRIOR, band: float = BAND,
+                 claim: float = CLAIMED_COV80) -> dict[str, Any] | None:
+    """What a stored backtest must have been measured under to be read back, or `None`.
+
+    `None` for a span that is not closed (it holds the current season or later): such a
+    measurement can still move, so it is never read back. Otherwise the pair the issue names:
+    `config_digest` over every setting the figure depends on and `code_digest` over the modules
+    that compute it, and `data_digest` over the declared identity of the span read.
+    """
+    if not seasons or max(seasons) >= CURRENT_SEASON:
+        return None
+    config = {"centre": centre, "min_prior": min_prior, "min_weeks": MIN_WEEKS,
+              "min_mu": MIN_MU, "levels": LEVELS, "window": CAL_WINDOW,
+              "floor": conformal.MIN_GROUP_CALIBRATION, "band": band, "claim": claim,
+              "n_min_group": N_MIN_GROUP, "group_z": GROUP_Z, "gate_subset": GATE_SUBSET,
+              "positions": POSITIONS, "prior_buckets": PRIOR_BUCKETS}
+    return {"config_digest": _digest(config), "code_digest": code_digest(_CODE),
+            "data_digest": _digest(["nflverse.player_stats", sorted(seasons)]),
+            "seasons": sorted(seasons)}
+
+
+def survivor_key(seasons: Sequence[int]) -> str | None:
+    """The same idea for the survivor block: config, code and the closed span of schedules."""
+    if not seasons or max(seasons) >= CURRENT_SEASON:
+        return None
+    config = {"edges": SPREAD_EDGES, "spread": SURVIVOR_SPREAD, "min_bucket": MIN_BUCKET}
+    return _digest([_digest(config), code_digest(_SURVIVOR_CODE),
+                    _digest(["nflverse.schedules", sorted(seasons)])])
+
+
+_STATE_ONLY = ("name", "generated_at", "survivor", "audit", "audit_looks", "current_season",
+               "backtest_key")
+
+
+def read_back_backtest(key: dict[str, Any] | None, path: Path | None = None
+                       ) -> dict[str, Any] | None:
+    """The stored backtest if it was measured under exactly `key`, else `None`.
+
+    A key that is `None` (a span still open), a file with no key (written before #423), or any
+    digest that differs is a miss, and a miss is a re-measurement -- never a stale read.
+    """
+    have = _existing(path or ARTIFACT)
+    if key is None or have.get("backtest_key") != json.loads(json.dumps(key)):
+        return None
+    if "verdict" not in have or "by_position" not in have:
+        return None
+    return {k: v for k, v in have.items() if k not in _STATE_ONLY}
+
+
+def completed_weeks(schedule: pl.DataFrame, stats: pl.DataFrame, season: int,
+                    as_of: date) -> int:
+    """How many of `season`'s regular-season weeks are complete: the longest run of weeks from
+    week 1 whose last game was played more than `LAG_DAYS` before `as_of` *and* whose rows are in
+    `stats`. Dates then data (#437): a week the calendar says is over but the data lacks is not
+    complete, and a week with a game still to play is not either (a Saturday run holds
+    Thursday's game of a week that has three days left).
+    """
+    from hub.fetch import consensus
+    sched = schedule.filter(pl.col("season") == season)
+    have = set(stats.filter(pl.col("season") == season)["week"].to_list())
+    weeks = sorted({int(w) for w in sched.filter(pl.col("game_type") == "REG")["week"]})
+    through = 0
+    for w in weeks:
+        last = consensus.last_game_day(sched, w)
+        if last is None or as_of <= last + timedelta(days=LAG_DAYS) or w not in have:
+            break
+        through = w
+    return through
+
+
+def look_date_reached(look: int, schedule: pl.DataFrame, as_of: date,
+                      season: int | None = None) -> str | None:
+    """`None` if the calendar has passed look `look`'s week; else the reason it has not.
+
+    Reads the schedule only -- no outcome is loaded to say not yet (the shape of #432's
+    horizon). The data half is `completed_weeks`, run once the stats are in.
+    """
+    from hub.fetch import consensus
+    season = CURRENT_SEASON if season is None else season
+    week = LOOK_WEEKS[look]
+    last = consensus.last_game_day(schedule.filter(pl.col("season") == season), week)
+    if last is None:
+        return f"the {season} schedule has no week {week}"
+    if as_of <= last + timedelta(days=LAG_DAYS):
+        return (f"look {look} is taken after week {week} is complete; its last game is {last} "
+                f"and this run is {as_of}")
+    return None
+
+
+def _current_row(label: str, position: str | None, g: pl.DataFrame) -> dict[str, Any]:
+    """One group of the 2026 row: its figures and its MDE, and **no verdict** (#460).
+
+    The pre-registration gives this row looks 2 and 3 "and no other verdict", so whether a
+    position may rule is left to `--audit --look 2|3`, which reads `group_verdict` at the look.
+    Here a position says only how many weeks it has against the `n_required` that look will ask
+    for (`runnable`), so a position that reached 8,377 weeks is not handed a COVERS or a miss by
+    the weekly run.
+    """
+    row = _published_row(label, g, position)
+    n = int(row["n"])
+    row["mde"] = _mde(n) if n else None
+    if position:
+        row.update(runnable=n >= N_MIN_GROUP, n_required=N_MIN_GROUP)
+    return row
+
+
+def measure_current(stats: pl.DataFrame, schedule: pl.DataFrame, as_of: date,
+                    season: int | None = None, *, min_prior: int = MIN_PRIOR,
+                    window: int | None = CAL_WINDOW,
+                    floor: int = conformal.MIN_GROUP_CALIBRATION) -> dict[str, Any]:
+    """The current season's completed weeks, scored by the published interval: the labelled
+    out-of-sample row (#423). Not pooled into the backtest; no marginal verdict attaches.
+
+    `stats` carries the current season and the `CURRENT_HISTORY` before it, so the rolling
+    calibration window is full. Only cells of weeks that are complete are scored: a later
+    partial week sits in the data and is left out. Positions carry n, coverage, sigma and the MDE
+    and whether they have `N_MIN_GROUP` weeks (`runnable`); no group carries a verdict -- those
+    are read at looks 2 and 3 (`--audit --look`), not here.
+    """
+    season = CURRENT_SEASON if season is None else season
+    through = completed_weeks(schedule, stats, season, as_of)
+    g = graded(centred(player_weeks(stats), "prior", min_prior=min_prior))
+    cal = calibrate(g, window=window, floor=floor)
+    cur = cal.filter((pl.col("season") == season) & (pl.col("week") <= through))
+    by_pos = []
+    for p in POSITIONS:
+        part = cur.filter(pl.col("position") == p)
+        if part.height:
+            by_pos.append(_current_row(p, p, part))
+        else:
+            by_pos.append({"group": p, "position": p, "n": 0, "mde": None,
+                           "runnable": False, "n_required": N_MIN_GROUP})
+    pool = _current_row(GATE_SUBSET, None, cur)
+    keys = ("n", "cov80", "cov68", "clipped_share", "deviation", "se", "sigma", "mde")
+    return {
+        "label": "out-of-sample", "season": season, "weeks_complete": through,
+        "seasons_read": [season - CURRENT_HISTORY + i for i in range(CURRENT_HISTORY + 1)],
+        "claim": CLAIMED_COV80, "band": BAND,
+        **{k: pool.get(k) for k in keys},
+        "by_position": [*by_pos, pool],
+        "looks": {str(k): {"after_week": w, "reached": through >= w}
+                  for k, w in sorted(LOOK_WEEKS.items())},
+    }
+
+
 # --- the survivor price ---------------------------------------------------
 
 
@@ -994,28 +1192,81 @@ def write_summary(result: dict[str, Any], path: Path | None = None) -> Path:
     p = path or ARTIFACT
     have = _existing(p)
     # The survivor block and the last audit are not this run's to erase: a weekly write is a
-    # report, and the audit's verdict stands until the next audit replaces it (#310).
+    # report, and the audit's verdict stands until the next audit replaces it (#310). The
+    # current-season row is kept when this run could not measure one (a failed fetch is last-good,
+    # not an erasure) and replaced when it could.
     keep = {k: have[k] for k in ("survivor", "audit", "audit_looks") if have.get(k)}
-    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage",
-                                       "generated_at": jsonio.stamp(), **result, **keep},
-                                      indent=2))
+    last_good = {k: have[k] for k in ("current_season",) if have.get(k) and k not in result}
+    # **A run that changes nothing writes nothing (#423).** The body is built with the stamp the
+    # file already carries and rendered at `ROUND_DIGITS`; if that is the file's own text the
+    # file is left alone -- the stamp is the time the *numbers* last moved, not the time anyone
+    # looked, and the git history, which is the pre-registration, carries no noise.
+    body = {"name": "interval_coverage", "generated_at": have.get("generated_at"),
+            **result, **last_good, **keep}
+    text = jsonio.dumps(rounded_body(body), indent=2)
+    if _same_text(p, text):
+        return p
+    body["generated_at"] = jsonio.stamp()
+    atomic.write_text(p, jsonio.dumps(rounded_body(body), indent=2))
     return p
 
 
+# **A recorded look is never rounded and never rewritten.** `audit` and `audit_looks` are the
+# pre-registration's evidence -- the figure a look was taken on, as computed, stamped when it was
+# taken -- so a later weekly write carries them through untouched rather than re-rendering them at
+# `ROUND_DIGITS`, which would change values that a recorded look has already fixed (look 1 of
+# 2026-10-07 reads 0.80035718841689). Everything else in the file is a report and is rounded.
+_RECORDED = ("audit", "audit_looks")
+
+
+def rounded_body(body: dict[str, Any]) -> dict[str, Any]:
+    """`body` with its reports rounded to `ROUND_DIGITS` and its recorded looks left as they are."""
+    return {k: (v if k in _RECORDED else round_values(v)) for k, v in body.items()}
+
+
+def round_values(x: Any) -> Any:
+    """Every float in `x`, at any depth, rounded to `ROUND_DIGITS` (#423)."""
+    if isinstance(x, float):
+        return round(x, ROUND_DIGITS) if math.isfinite(x) else x
+    if isinstance(x, dict):
+        return {k: round_values(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [round_values(v) for v in x]
+    return x
+
+
+def _same_text(p: Path, text: str) -> bool:
+    try:
+        return p.read_text() == text
+    except OSError:
+        return False
+
+
 def write_audit(got: dict[str, Any], audit: dict[str, Any], look: int,
-                path: Path | None = None) -> Path:
+                path: Path | None = None, *, reads: str = "backtest") -> Path:
     """Record an audit's verdict beside the weekly measurement it was read from (#310).
 
     The block carries the claim the verdict was compared against (#289's rule), the look
     number and alpha per look, and every group's position, n, n_cal, coverage, sigma and
     verdict-or-NOT-RUNNABLE -- what an auditor needs to read the verdict without the run.
+
+    `reads` says which row the look read: `"backtest"` (look 1; `got` is the weekly measurement,
+    written beside it as ever) or `"current_season"` (looks 2 and 3, #423; `got` is the
+    out-of-sample row, which is *not* the weekly summary and must not overwrite the backtest the
+    file's top level holds -- the weekly run writes that row under `current_season`).
     """
-    p = write_summary(got, path)
+    p = path or ARTIFACT
+    current = reads == "current_season"
+    if not current:
+        p = write_summary(got, p)
     block = {"look": look, "looks": LOOKS, "alpha_per_look": ALPHA_PER_LOOK,
              "z_per_look": Z_PER_LOOK, "taken_at": jsonio.stamp(), "claim": audit["claim"],
              "band": audit["band"], "marginal": audit["marginal"], "passes": audit["passes"],
-             "n": audit["n"], "cov80": audit["cov80"], "mde": audit["mde"],
-             "season_coverage": got.get("season_coverage"), "groups": audit["groups"]}
+             "n": audit["n"], "cov80": audit["cov80"], "mde": audit["mde"], "reads": reads,
+             "season_coverage": ({"season": got["season"], "n": got["n"], "cov80": got["cov80"],
+                                  "weeks_complete": got["weeks_complete"]}
+                                 if current else got.get("season_coverage")),
+             "groups": audit["groups"]}
     have = _existing(p)
     taken = looks_taken(p)
     # Refuse, never overwrite: a look is spent when it is written, and the three looks are
@@ -1024,10 +1275,10 @@ def write_audit(got: dict[str, Any], audit: dict[str, Any], look: int,
         raise LookAlreadyTaken(f"look {look} is already recorded in {p.name}")
     record = {"look": look, "taken_at": block["taken_at"], "marginal": block["marginal"],
               "passes": block["passes"], "cov80": block["cov80"], "n": block["n"],
-              "claim": block["claim"]}
-    atomic.write_text(p, jsonio.dumps({**have, "audit": block,
-                                       "audit_looks": [*have.get("audit_looks", []), record]},
-                                      indent=2))
+              "claim": block["claim"], "reads": reads}
+    atomic.write_text(p, jsonio.dumps(rounded_body(
+        {"name": "interval_coverage", **have, "audit": block,
+         "audit_looks": [*have.get("audit_looks", []), record]}), indent=2))
     return p
 
 
@@ -1048,7 +1299,9 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
     A companion block, not a summary of its own: each block carries its own `generated_at`,
     and `published_summary` reads nothing until the weekly measurement has been written,
     because the page's consumers key on the weekly `verdict`. The slate runs `--measure
-    --survivor --write` together, which is the order that leaves both.
+    --survivor --write` together, which is the order that leaves both. Like the summary, a
+    block that has not changed keeps its stamp and writes nothing (#423); `key` is the digest
+    it was measured under, which is what lets the next run read it back.
     """
     p = path or ARTIFACT
     have = _existing(p)
@@ -1057,10 +1310,16 @@ def write_survivor(result: dict[str, Any], path: Path | None = None) -> Path:
               "favourite_gap", "favourite_sigma", "favourite_n", "n_games", "margin_sd",
               # The buckets ride along whole (#293): the page shows where the price holds
               # and where it is thin, and it cannot without the count in each.
-              "buckets", "min_bucket")}
+              "buckets", "min_bucket", "key")}
+    prior = have.get("survivor")
+    block["generated_at"] = prior.get("generated_at") if isinstance(prior, dict) else None
+    text = jsonio.dumps(rounded_body({"name": "interval_coverage", **have, "survivor": block}),
+                        indent=2)
+    if _same_text(p, text):
+        return p
     block["generated_at"] = jsonio.stamp()
-    atomic.write_text(p, jsonio.dumps({"name": "interval_coverage", **have,
-                                       "survivor": block}, indent=2))
+    atomic.write_text(p, jsonio.dumps(rounded_body(
+        {"name": "interval_coverage", **have, "survivor": block}), indent=2))
     return p
 
 
@@ -1093,7 +1352,10 @@ def published_summary(path: Path | None = None) -> dict[str, Any] | None:
             # #309: what the page needs to say that the number is the whole scored board and
             # how much of the board that is. Absent in an artifact written before it, which
             # the page then words as it always did.
-            "interval", "gate_clipped_share", "n_uncalibrated", "season_coverage")}
+            "interval", "gate_clipped_share", "n_uncalibrated", "season_coverage",
+            # #423: the current season's labelled out-of-sample row, beside the backtest and
+            # never pooled with it. Absent before the first run that measured one.
+            "current_season")}
     if isinstance(got.get("audit"), dict):
         out["audit"] = got["audit"]
     # An artifact written before the claim was carried (#289) had its verdict read against
@@ -1160,6 +1422,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--write", action="store_true",
                     help=f"write the result to {ARTIFACT.name} for the publisher")
     ap.add_argument("--cache", default=None, help="raw-cache root; defaults to this repo's")
+    ap.add_argument("--as-of", default=None,
+                    help="ISO date the run is taken on (default: today, UTC); decides which "
+                         "weeks of the current season are complete")
+    ap.add_argument("--remeasure", action="store_true",
+                    help="measure the closed 2021-2025 backtest and survivor again instead of "
+                         "reading back the stored one (a restated nflverse season is the only "
+                         "reason; the key cannot see it)")
     a = ap.parse_args(argv)
 
     if not (a.measure or a.survivor or a.gate or a.shape or a.audit):
@@ -1168,34 +1437,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     cache = Path(a.cache) if a.cache else None
 
+    as_of = date.fromisoformat(a.as_of) if a.as_of else datetime.now(UTC).date()
+
     if a.survivor:
-        try:
-            sched = _schedules(seasons, cache)
-        except Exception as e:
-            # Broad on `hub.cli.unavailable`'s reasoning: an empty cache with no network is
-            # what a fresh clone hands this command, and the answer to it is a sentence and
-            # a non-zero exit rather than nflreadpy's traceback.
-            return unavailable("hub.models.coverage", "nflverse schedules", e)
-        try:
-            got = survivor_price(sched)
-        except (ValueError, NotEnoughWeeks) as e:
-            print(f"hub.models.coverage: {e}", file=sys.stderr)
-            return 1
-        print(f"  survivor price, {got['n_games']:,} games over seasons "
-              f"{seasons[0]}-{seasons[-1]}, margin sd {got['margin_sd']}")
-        print(f"    {'spread':<14}{'n':>7}{'predicted':>12}{'actual':>10}{'gap':>10}")
-        for b in got["buckets"]:
-            # Every bucket, the empty and the thin ones marked rather than dropped (#293).
-            rate = (f"{b['predicted']:>12.3f}{b['actual']:>10.3f}{b['gap']:>+10.3f}"
-                    if b["n"] else f"{'--':>12}{'--':>10}{'--':>10}")
-            thin = f"   under {got['min_bucket']} games" if b["thin"] else ""
-            print(f"    {b['label']:<14}{b['n']:>7,}{rate}{thin}")
-        print(f"    favourites of {got['favourite_spread']:.0f}+ : predicted "
-              f"{got['favourite_predicted']:.3f}, actual {got['favourite_actual']:.3f}, "
-              f"gap {got['favourite_gap']:+.3f} at {got['favourite_sigma']:+.1f} se "
-              f"over {got['favourite_n']:,} sides -> {got['verdict']}")
-        if a.write:
-            print(f"    written to {write_survivor(got)}")
+        skey = survivor_key(seasons)
+        stored = _existing(ARTIFACT).get("survivor")
+        if (skey is not None and not a.remeasure and isinstance(stored, dict)
+                and stored.get("key") == skey):
+            # Measured once per key and read back (#423): the schedules are not pulled.
+            print(f"  survivor price: read back from {ARTIFACT.name}, measured "
+                  f"{stored.get('generated_at')} under key {skey}; {stored['favourite_n']:,} "
+                  f"favourite sides over {stored['n_games']:,} games -> {stored['verdict']}")
+        else:
+            try:
+                sched = _schedules(seasons, cache)
+            except Exception as e:
+                # Broad on `hub.cli.unavailable`'s reasoning: an empty cache with no network is
+                # what a fresh clone hands this command, and the answer to it is a sentence and
+                # a non-zero exit rather than nflreadpy's traceback.
+                return unavailable("hub.models.coverage", "nflverse schedules", e)
+            try:
+                got = survivor_price(sched)
+            except (ValueError, NotEnoughWeeks) as e:
+                print(f"hub.models.coverage: {e}", file=sys.stderr)
+                return 1
+            got["key"] = skey
+            print(f"  survivor price, {got['n_games']:,} games over seasons "
+                  f"{seasons[0]}-{seasons[-1]}, margin sd {got['margin_sd']}")
+            print(f"    {'spread':<14}{'n':>7}{'predicted':>12}{'actual':>10}{'gap':>10}")
+            for b in got["buckets"]:
+                # Every bucket, the empty and the thin ones marked rather than dropped (#293).
+                rate = (f"{b['predicted']:>12.3f}{b['actual']:>10.3f}{b['gap']:>+10.3f}"
+                        if b["n"] else f"{'--':>12}{'--':>10}{'--':>10}")
+                thin = f"   under {got['min_bucket']} games" if b["thin"] else ""
+                print(f"    {b['label']:<14}{b['n']:>7,}{rate}{thin}")
+            print(f"    favourites of {got['favourite_spread']:.0f}+ : predicted "
+                  f"{got['favourite_predicted']:.3f}, actual {got['favourite_actual']:.3f}, "
+                  f"gap {got['favourite_gap']:+.3f} at {got['favourite_sigma']:+.1f} se "
+                  f"over {got['favourite_n']:,} sides -> {got['verdict']}")
+            if a.write:
+                print(f"    written to {write_survivor(got)}")
 
     if a.shape:
         try:
@@ -1241,16 +1522,31 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"(docs/weekly-coverage.md, #310), not a fourth read", file=sys.stderr)
         return 1
 
+    if a.audit and a.look in LOOK_WEEKS:
+        return _audit_current(a, cache, as_of)
+
     if a.measure or a.gate or a.audit:
-        try:
-            stats = _stats(seasons, cache)
-        except Exception as e:
-            return unavailable("hub.models.coverage", "nflverse player_stats", e)
-        try:
-            got = measure(stats, a.centre, min_prior=a.min_prior, band=a.band)
-        except (ValueError, NotEnoughWeeks) as e:
-            print(f"hub.models.coverage: {e}", file=sys.stderr)
-            return 1
+        # An audit measures fresh -- the look is spent on what it reads, not on a stored copy.
+        # The weekly run reads the closed backtest back while its key holds (#423).
+        key = backtest_key(seasons, a.centre, min_prior=a.min_prior, band=a.band)
+        got = None if (a.audit or a.remeasure) else read_back_backtest(key)
+        if got is not None and key is not None:
+            got["backtest_key"] = key
+            print(f"  backtest {seasons[0]}-{seasons[-1]}: read back from {ARTIFACT.name} "
+                  f"(measured once under key {key['config_digest']}/{key['code_digest']}/"
+                  f"{key['data_digest']}; --remeasure to measure again)")
+        else:
+            try:
+                stats = _stats(seasons, cache)
+            except Exception as e:
+                return unavailable("hub.models.coverage", "nflverse player_stats", e)
+            try:
+                got = measure(stats, a.centre, min_prior=a.min_prior, band=a.band)
+            except (ValueError, NotEnoughWeeks) as e:
+                print(f"hub.models.coverage: {e}", file=sys.stderr)
+                return 1
+            if key is not None:
+                got["backtest_key"] = key
         lookahead = "  LOOKAHEAD CENTRE" if got["lookahead"] else ""
         print(f"  weekly interval, centre={got['centre']}, {got['n']:,} player-weeks on the "
               f"board, {got['gate_n']:,} scored{lookahead}")
@@ -1284,6 +1580,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if sc:
             print(f"    the season's own coverage ({sc['season']}): {sc['cov80']:.1%} over "
                   f"{sc['n']:,} -- reported beside the full-history figure and never gated")
+        # The row not being measurable is a failed run -- the same non-zero exit an unreachable
+        # source has always given this command (`tests/contracts/test_cli_surface.py`) -- but it
+        # is not a lost one: the backtest is still reported and written, and the last committed
+        # row stays in the file (`write_summary`), so the page degrades to last-good.
+        degraded = False
+        if not a.audit:
+            cur = _current_or_none(cache, as_of)
+            if cur is not None:
+                got["current_season"] = cur
+                _print_current(cur)
+            else:
+                degraded = True
         if a.audit:
             audit = audit_verdict(got["by_position"], claim=got["gate_claim"], band=got["band"])
             _print_audit(audit, a.look)
@@ -1303,7 +1611,86 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("    smoke alarm -- the pipeline looks broken, not drifted: "
                       + "; ".join(alarm), file=sys.stderr)
                 return 1
+        if degraded:
+            return 1
     return 0
+
+
+def _current_inputs(cache: Path | None) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(schedule, stats) for the current-season row: the season's schedule, and its player-weeks
+    with the `CURRENT_HISTORY` seasons behind them."""
+    seasons = [CURRENT_SEASON - CURRENT_HISTORY + i for i in range(CURRENT_HISTORY + 1)]
+    return _schedules([CURRENT_SEASON], cache), _stats(seasons, cache)
+
+
+def _current_or_none(cache: Path | None, as_of: date) -> dict[str, Any] | None:
+    """The weekly run's current-season row, or `None` and a stderr line if it could not be made.
+
+    Broad on `hub.cli.unavailable`'s reasoning, and for `CLAUDE.md`'s degradation rule: a fetch
+    that fails must leave the last committed row in the file (`write_summary` keeps it) and the
+    backtest and smoke alarm untouched, not take the run down.
+    """
+    try:
+        schedule, stats = _current_inputs(cache)
+        return measure_current(stats, schedule, as_of)
+    except Exception as e:
+        print(f"hub.models.coverage: the {CURRENT_SEASON} out-of-sample row could not be "
+              f"measured ({type(e).__name__}: {e}); the last committed row stands",
+              file=sys.stderr)
+        return None
+
+
+def _print_current(cur: dict[str, Any]) -> None:
+    print(f"  {cur['season']} out-of-sample row, {cur['weeks_complete']} weeks complete "
+          f"(not pooled with the backtest; no verdict until looks "
+          f"{', '.join(str(k) for k in sorted(LOOK_WEEKS))} at weeks "
+          f"{', '.join(str(LOOK_WEEKS[k]) for k in sorted(LOOK_WEEKS))})")
+    _print_published(cur["by_position"])
+
+
+REFUSED = 2
+
+
+def _audit_current(a: argparse.Namespace, cache: Path | None, as_of: date) -> int:
+    """Look 2 or 3: the current-season row against the marginal bar, once its week is complete.
+
+    Dates, then data, the shape of #432's horizon (#437): the calendar is checked from the
+    schedule alone, before any outcome is loaded, and then the week's rows must be in the data.
+    A refusal exits `REFUSED` (2), which is neither a pass nor a failed audit, and spends nothing.
+    """
+    look, week = a.look, LOOK_WEEKS[a.look]
+    try:
+        schedule = _schedules([CURRENT_SEASON], cache)
+    except Exception as e:
+        return unavailable("hub.models.coverage", "nflverse schedules", e)
+    why = look_date_reached(look, schedule, as_of)
+    if why:
+        print(f"hub.models.coverage: look {look} REFUSED -- {why}. No outcome was loaded and no "
+              f"look was spent (docs/weekly-coverage.md, pre-registered 2026-10-07).",
+              file=sys.stderr)
+        return REFUSED
+    try:
+        stats = _stats([CURRENT_SEASON - CURRENT_HISTORY + i
+                        for i in range(CURRENT_HISTORY + 1)], cache)
+    except Exception as e:
+        return unavailable("hub.models.coverage", "nflverse player_stats", e)
+    try:
+        cur = measure_current(stats, schedule, as_of, min_prior=a.min_prior)
+    except (ValueError, NotEnoughWeeks) as e:
+        print(f"hub.models.coverage: {e}", file=sys.stderr)
+        return 1
+    if cur["weeks_complete"] < week or not cur["n"]:
+        print(f"hub.models.coverage: look {look} REFUSED -- the dates are past week {week} but "
+              f"the data holds {cur['weeks_complete']} complete weeks (week {week}'s rows are "
+              f"not in nflverse yet). No look was spent.", file=sys.stderr)
+        return REFUSED
+    _print_current(cur)
+    audit = audit_verdict([r for r in cur["by_position"] if r["n"]], claim=cur["claim"],
+                          band=cur["band"])
+    _print_audit(audit, look)
+    if a.write:
+        print(f"    written to {write_audit(cur, audit, look, reads='current_season')}")
+    return 0 if audit["passes"] else 1
 
 
 def _print_audit(audit: dict[str, Any], look: int) -> None:

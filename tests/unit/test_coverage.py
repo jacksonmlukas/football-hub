@@ -37,6 +37,22 @@ def _never_the_committed_artifact(request, tmp_path, monkeypatch):
     The one test that asserts *where* the artifact lives reads the real constant."""
     if request.node.name != "test_the_artifact_lives_where_a_commit_can_carry_it":
         monkeypatch.setattr(coverage, "ARTIFACT", tmp_path / "interval_coverage.json")
+    # The weekly run also measures the current season's row (#423), which needs the schedule.
+    # Offline here, so that row degrades to "could not be measured" instead of reaching the wire;
+    # the tests that want a schedule patch `_schedules` over this.
+    monkeypatch.setattr(coverage, "_schedules", _offline)
+    monkeypatch.setattr(coverage, "_current_or_none", _no_current_row)
+
+
+def _no_current_row(cache, as_of):
+    """The weekly run's 2026 row, stubbed to the empty one: these tests are not about it, and an
+    unmeasurable row is a failed run (#423), which is tested where the row is."""
+    return {"label": "out-of-sample", "season": 2026, "weeks_complete": 0, "n": 0,
+            "by_position": [], "looks": {}}
+
+
+def _offline(seasons, cache):
+    raise OSError("offline in tests")
 
 
 def _stats(rows):
