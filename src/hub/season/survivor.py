@@ -35,6 +35,7 @@ from hub import schedule
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD, PoolConfig
 from hub.declare import not_an_input
+from hub.models.margin import NFL_WEEKS
 from hub.paths import SITE
 
 # Below this a team is treated as unpickable rather than fed to log(). A survivor pick at
@@ -51,10 +52,10 @@ MIN_PROB = not_an_input(
 # which is worth saying out loud before anyone treats it as a plan for the weeks ahead.
 THIN_ROWS = 6
 
-# How long the season a plan covers is. Here rather than in `hub.publish`, which had its own
-# `NFL_WEEKS = 18` beside this module's `--weeks` default of 18: one number, spelled twice,
-# in the two places that plan the same season.
-NFL_WEEKS = 18
+# How long the season a plan covers is: `NFL_WEEKS`, owned by `hub.models.margin` since #442 (its
+# `survival_beside` defaults to it) and imported above, so this module stays out of every arm's
+# closure. One number for the places that plan the same season: `hub.publish` once carried its own
+# `NFL_WEEKS = 18` beside this module's `--weeks` default of 18.
 
 
 def published_plan(path: Path | None = None) -> list[dict]:

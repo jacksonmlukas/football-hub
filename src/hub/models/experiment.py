@@ -47,6 +47,7 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 
+from hub.closure import closure_of
 from hub.config import (
     NO_FRAMES,
     commit,
@@ -1497,11 +1498,12 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     **`code_modules` (#435)** names the modules whose source the run's arms execute, and
     `hub.ledger.code_digest` hashes them into the ledger key: `config_digest` hashes config and
     fitted constants, not code, so a change to an arm with both unchanged read as comparable to
-    the runs before it (#361). `Harness.run` passes its declared `arm_modules`; empty, the
-    default, is an *undeclared* run (#439): the entry is of unknown code, written with no
-    `code_digest` key, named and never compared -- a direct caller cannot reopen the hole by
-    saying nothing. The gate rule in this module is deliberately not among them: it is shared
-    by every gate, so naming it would end every gate's history on any edit here.
+    the runs before it (#361). `Harness.run` passes its `arm_modules`, the closure of its
+    `arm_roots` (#442); empty, the default, is an *undeclared* run (#439): the entry is of
+    unknown code, written with no `code_digest` key, named and never compared -- a direct
+    caller cannot reopen the hole by saying nothing. The gate rule in this module is
+    deliberately not among them: it is shared by every gate, so naming it would end every
+    gate's history on any edit here.
 
     `void` is the caller's precondition, already phrased -- the weekly gate voids above a
     join-failure share, and since #46 so does the draft gate. `gate` honours it ahead of every
@@ -1615,12 +1617,19 @@ class Harness(NamedTuple):
     # in-memory one with `HARNESS._replace(ledger=Ledger(path=None))` -- the declaration,
     # not a monkeypatch of the function it feeds.
     ledger: Ledger | None = None
-    # #435: the modules whose source this gate's arms run, dotted names, hashed into the ledger
-    # key by `hub.ledger.code_digest` so a change to an arm cannot be compared against the runs
-    # before it. Declared here, beside the arms, and not in a list elsewhere; the contract
-    # `test_every_gate_declares_the_code_it_runs.py` holds every harness to naming its own
-    # module and to every name resolving to a source file.
-    arm_modules: tuple[str, ...] = ()
+    # #435, #442: the module(s) the arms are defined in, `(__name__,)` for a harness declared
+    # beside its arms. The code the run executes is not listed by hand: `arm_modules` is the
+    # first-party import closure of these roots (`hub.closure.import_closure`), hashed into the
+    # ledger key by `hub.ledger.code_digest`, so a change to an arm cannot be compared against
+    # the runs before it, and a new import in an arm moves the digest without anyone editing a
+    # list (intended). Empty is an undeclared run; the contract
+    # `test_every_gate_declares_the_code_it_runs.py` holds every harness to naming its own module.
+    arm_roots: tuple[str, ...] = ()
+
+    @property
+    def arm_modules(self) -> tuple[str, ...]:
+        """The modules whose source this gate's arms run: the roots' import closure, sorted."""
+        return closure_of(self.arm_roots) if self.arm_roots else ()
 
     def ceiling(self, frame: pl.DataFrame | None) -> Ceiling | None:
         """This harness's `Ceiling` off `frame`'s own `ceiling_column` -- the one collapse of
