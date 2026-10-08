@@ -1,4 +1,4 @@
-"""Mutation testing for `hub.models.starter_change`, committed so the count can be re-taken.
+"""Mutation testing for the starter-change modules, committed so the count can be re-taken.
 
 `docs/audits/2026-09-16-audit-iv.json`'s `mutation_testing.starter_change` was audit IV's own
 run -- fourteen mutants, seven survived, named in `.survivors` -- but it was ad hoc: "run by
@@ -31,6 +31,17 @@ read here rather than rebuilt, so the mutant's old/new text (the `nfeloqb.` pref
 `ABBREVIATIONS` dropped, since the code is now inside the module that owns the name) and its
 target file moved with it. The other eleven mutants are untouched: none of their code moved.
 
+**#346 split the module in three and re-pointed this script.** The events live in
+`hub.models.starter_events` (target `"se"`), the line-move study in `hub.models.starter_study`
+(`"ss"`), the gate and the CLI stay in `hub.models.starter_change` (`"sc"`), and the three
+test files run against each mutated tree together (`TESTS`). Two mutants had already drifted
+from the source before the split -- `event_games`' net-gap sign (#420 wrapped it in a
+`when(...)` that refuses an unvalued game) and the NOT-RUNNABLE guard in `run` (#387 moved the
+rule behind `Harness.run`, so its text is the block that precedes the call) -- and both are
+restated on the text they have now, the same mutation (the sign swapped; the guard deleted).
+No mutant's text was otherwise changed; `_poll_day` is `poll_day` and `_results` is `results`
+since both became the events module's public reads.
+
     uv run python scripts/mutate_starter_change.py
 """
 from __future__ import annotations
@@ -41,8 +52,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "src" / "hub" / "models" / "starter_change.py"
+EVENTS_MODULE = ROOT / "src" / "hub" / "models" / "starter_events.py"
+STUDY_MODULE = ROOT / "src" / "hub" / "models" / "starter_study.py"
 NFELOQB_MODULE = ROOT / "src" / "hub" / "fetch" / "nfeloqb.py"
-TEST = "tests/unit/test_starter_change.py"
+TESTS = ("tests/unit/test_starter_events.py", "tests/unit/test_starter_study.py",
+         "tests/unit/test_starter_change.py")
 
 # Shared between the postseason mutant's old and new text (unchanged either way) -- split
 # across two literals only to stay under ruff's line-length bar, not because the source is.
@@ -53,27 +67,27 @@ _WEEK_GUARD_RAISE = (
 )
 
 # (label, audit's own disposition ["survived" | "killed, named"], old text, new text, target
-# module ["sc" | "nfeloqb"]). `old` is matched verbatim once against the real file named by
-# `target` (`MODULE` for "sc", `NFELOQB_MODULE` for "nfeloqb" -- #339 moved the one mutant
-# that needs it). Ordered to match `docs/audits/2026-09-16-audit-iv.json`'s own `survivors`
+# module ["sc" | "se" | "ss" | "nfeloqb"]). `old` is matched verbatim once against the real
+# file named by `target` (`TARGETS`: #339 moved one mutant to "nfeloqb", #346 the events to
+# "se" and the study to "ss"). Ordered to match the audit's own `survivors`
 # then `killed` lists.
 MUTANTS: list[tuple[str, str, str, str, str]] = [
     # --- the seven named survivors -----------------------------------------------------
     (
-        "_poll_day: the Eastern conversion deleted",
+        "poll_day: the Eastern conversion deleted",
         "survived",
         '    return (pl.col(col).dt.replace_time_zone("UTC")\n'
         '              .dt.convert_time_zone(nfeloqb.GAME_DAY_ZONE).dt.date().cast(pl.Utf8))\n',
         '    return (pl.col(col).dt.replace_time_zone("UTC")\n'
         '              .dt.date().cast(pl.Utf8))\n',
-        "sc",
+        "se",
     ),
     (
         "event_games: frozen_before .min() -> .max()",
         "survived",
         '                  pl.col("prev_date").min().alias("frozen_before"))\n',
         '                  pl.col("prev_date").max().alias("frozen_before"))\n',
-        "sc",
+        "se",
     ),
     (
         # #339: this mutant's code moved from `starter_change.team_games` to
@@ -134,9 +148,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         '(docs/qb-adjustment.md); this "\n'
         '            f"is not-runnable, not a null.")\n'
         '        return experiment.GateRun(summary={}, seasons=pl.DataFrame(), verdict=verdict,\n'
-        '                                  lines=[], stamped=paired)\n'
-        '    arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())\n',
-        '    arm = (experiment.Ceiling(CEILING_ARM, paired["ceiling"].to_numpy())\n',
+        '                                  lines=[], stamped=paired)\n',
+        '',
         "sc",
     ),
     (
@@ -146,7 +159,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         '                   .with_columns(shifted)\n',
         '    out = (starters\n'
         '                   .with_columns(shifted)\n',
-        "sc",
+        "se",
     ),
     # --- five of the seven the audit counted as killed (see the module docstring above) -
     (
@@ -161,16 +174,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         "killed",
         '                   .filter(pl.col("poll_day") < pl.col(day))\n',
         '                   .filter(pl.col("poll_day") <= pl.col(day))\n',
-        "sc",
+        "se",
     ),
     (
         "event_games: net_gap sign flipped",
         "killed",
-        '              .with_columns((pl.col("home_gap").fill_null(0.0)\n'
-        '                             - pl.col("away_gap").fill_null(0.0)).alias("net_gap"))\n',
-        '              .with_columns((pl.col("away_gap").fill_null(0.0)\n'
-        '                             - pl.col("home_gap").fill_null(0.0)).alias("net_gap"))\n',
-        "sc",
+        '                              .otherwise(pl.col("home_gap").fill_null(0.0)\n'
+        '                                         - pl.col("away_gap").fill_null(0.0))'
+        '.alias("net_gap"))\n',
+        '                              .otherwise(pl.col("away_gap").fill_null(0.0)\n'
+        '                                         - pl.col("home_gap").fill_null(0.0))'
+        '.alias("net_gap"))\n',
+        "se",
     ),
     (
         "study_fit: the residual's SE used instead of the floor's",
@@ -180,7 +195,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         '    _resid = y - beta * x - _intercept\n'
         '    se = (float(np.std(_resid, ddof=2)) / (sd_gap * math.sqrt(n - 1))\n'
         '          if sd_gap > 0 and n > 2 else nan)\n',
-        "sc",
+        "ss",
     ),
     (
         "_change_points: days measured from the frozen poll, not frozen_before",
@@ -189,14 +204,15 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
         '                              - dt.date.fromisoformat(r["frozen_before"])).days)\n',
         '                seen = float((dt.date.fromisoformat(p["poll_day"])\n'
         '                              - dt.date.fromisoformat(r["frozen_day"])).days)\n',
-        "sc",
+        "ss",
     ),
 ]
 
 
 # Which file a mutant's `target` names (#339: one mutant's code moved to `nfeloqb.py`, so
 # the file the substitution is applied to is per-mutant rather than a single constant).
-TARGETS: dict[str, Path] = {"sc": MODULE, "nfeloqb": NFELOQB_MODULE}
+TARGETS: dict[str, Path] = {"sc": MODULE, "se": EVENTS_MODULE, "ss": STUDY_MODULE,
+                            "nfeloqb": NFELOQB_MODULE}
 
 
 def _apply(text: str, old: str, new: str, label: str, path: Path) -> str:
@@ -210,7 +226,7 @@ def _apply(text: str, old: str, new: str, label: str, path: Path) -> str:
 
 def _run_tests() -> bool:
     """True if the unit suite passes against whatever is currently on disk."""
-    got = subprocess.run(["uv", "run", "pytest", TEST, "-q"], cwd=ROOT,
+    got = subprocess.run(["uv", "run", "pytest", *TESTS, "-q"], cwd=ROOT,
                          capture_output=True, text=True)
     return got.returncode == 0
 
@@ -221,7 +237,7 @@ def main() -> int:
     # ever left the tree dirty.
     originals = {name: path.read_text() for name, path in TARGETS.items()}
     if not _run_tests():
-        print(f"  {TEST} does not pass against the unmutated tree; refusing to mutate a "
+        print(f"  {' '.join(TESTS)} do not pass against the unmutated tree; refusing to mutate a "
               f"tree that is not green", file=sys.stderr)
         return 2
 
