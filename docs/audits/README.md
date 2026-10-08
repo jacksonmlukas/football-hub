@@ -18,6 +18,9 @@ the milestones and in the tickets' own bodies, never here.** Known divergences f
 - Findings R11 and R12 (#313, #314) and evaluation ranks 8 and 10 (#315, #316) appear in no plan
   step. #313–#315 are placed in Phase 2 on 2026-09-16 with reasons in their bodies; #316 sits in the
   **Audit IV — unplaced** milestone until Audit V places it.
+  R12's attenuation and WR-WR points are resolved by #369 (2026-10-08): the ~3% attenuation is a
+  recorded known limit and the WR-WR "implied +0.05" is a stale doc paragraph, both in
+  `docs/correlation.md` ("Which layer the number lives on", and the dated restatement above it).
 - R13's evidence line *"the data is on disk"* (the pool's ledgers) is the reviewer's inference,
   not a verified fact: what was verified is that `fetch.pool.ledgers` exists with zero callers.
   Checked 2026-09-18: no `pool_state.json` has ever been written in this checkout and the pool's
