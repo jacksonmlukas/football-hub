@@ -26,7 +26,7 @@ from pathlib import Path
 import polars as pl
 
 from hub.declare import not_an_input
-from hub.draft.board import board_age_hours
+from hub.draft.board import board_age_hours, board_stamp_path
 from hub.draft.optimize import the_pick
 from hub.draft.picks import MY_SLOT, TEAMS, my_picks
 from hub.draft.state import DraftState
@@ -113,6 +113,11 @@ def age_note(path: Path, now: float | None = None) -> list[str]:
     """
     import time
     age = board_age_hours(path, time.time() if now is None else now)
+    if age is None:
+        return [f"  as-drafted copy: build time not recorded (no {board_stamp_path(path).name} "
+                f"beside it)",
+                "  WARNING: it cannot be dated, so it may be a rehearsal leftover.\n"
+                "  Copy the stamp with it (docs/draft-night.md), or pass --board explicitly."]
     line = f"  as-drafted copy: {age:.1f}h old"
     if age <= STALE_HOURS:
         return [line]

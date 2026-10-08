@@ -45,7 +45,7 @@ from hub.draft.picks import MY_SLOT, TEAMS, draft_mode, my_picks, next_two
 from hub.draft.playoff_sos import attach_sos, playoff_sos
 from hub.draft.season import attach_bye, bye_weeks
 from hub.draft.state import DraftState, remaining
-from hub.fetch import nflverse
+from hub.fetch import cached, nflverse
 from hub.fetch.nflverse import RANKINGS_COLS, load_rankings
 from hub.league import preseason_start
 from hub.models import components
@@ -617,14 +617,51 @@ def _impute_xfp(board: pl.DataFrame) -> pl.DataFrame:
 
 
 
-def board_age_hours(path: Path, now: float) -> float:
-    """How old the board file is, in hours. Separate so it can be tested without a clock."""
-    return max(now - path.stat().st_mtime, 0.0) / 3600.0
+# The board's capture stamp sits beside it: `draft_board.parquet` -> `draft_board.capture.json`,
+# `fetch.cached`'s stamp (`write_stamp` records it, `read_stamp` reads it back), the same
+# suffix and the same record `fetch.cfbd` keeps beside its cache entries (#405).
+BOARD_STAMP_SUFFIX = ".capture.json"
+
+
+def board_stamp_path(path: Path) -> Path:
+    """Where the capture stamp for the board at `path` lives. A copy of the board is a copy of
+    this file too (`docs/draft-night.md` copies both)."""
+    return path.with_suffix(BOARD_STAMP_SUFFIX)
+
+
+def board_captured_at(path: Path) -> datetime | None:
+    """When the board at `path` was built, as `_persist` stamped it, or None where nothing says.
+
+    **Never the file's mtime** (`fetch.cached.read_stamp` keeps the argument): a clone, a copy,
+    a restore or a `touch` rewrites it, so it dates the file and not the build -- and the age
+    on the draft-night screen is the one number a drafter trusts. A board with no stamp beside
+    it (written before #405, or a stamp that will not parse) has no capture time, which is the
+    truth about it; unknown reads as "ask again", where a confidently wrong age reads as "no
+    need to".
+    """
+    raw = cached.read_stamp(board_stamp_path(path)).get("captured_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def board_age_hours(path: Path, now: float) -> float | None:
+    """How old the board's *build* is, in hours, or None when its capture is not recorded.
+    Separate so it can be tested without a clock. Read off the stamp, not `st_mtime` (#405)."""
+    when = board_captured_at(path)
+    if when is None:
+        return None
+    return max(now - when.timestamp(), 0.0) / 3600.0
 
 
 def last_good(path: Path | None = None,
-              now: float | None = None) -> tuple[pl.DataFrame, float]:
-    """The board as last written to disk, with its age in hours.
+              now: float | None = None) -> tuple[pl.DataFrame, float | None]:
+    """The board as last written to disk, with its age in hours since it was built (None where
+    the capture is not recorded; `board_age_hours`).
 
     Two callers make this a real seam rather than a hypothetical one: the poller, which has
     always read the board rather than building it, and `main`'s offline fallback below.
@@ -710,7 +747,9 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
     hours old, not weeks. Hours-old ADP beats a stack trace.
 
     Returns the age in hours when serving last-good, and `None` when the build succeeded --
-    so the caller can say which of the two happened, loudly.
+    so the caller can say which of the two happened, loudly. The age is since the board was
+    *built*, read off its capture stamp (#405); a served board with no stamp also returns
+    `None`, and `report.served` is what says it was served.
 
     The exception is deliberately broad. Any failure to build is a failure to build, and
     falling back to a board that is *known* to have been good is safe in a way that guessing
@@ -752,7 +791,8 @@ def build_or_last_good(league_size: int = 12, season: int = SEASON_COMPLETED, *,
             print("  no board on disk; serving the published one "
                   "(top 300 by consensus, enough for all 192 picks).")
             return Board.served(board), None
-        print(f"  serving the last good board instead, built {age:.1f}h ago.")
+        built_ago = f"built {age:.1f}h ago" if age is not None else "build time not recorded"
+        print(f"  serving the last good board instead, {built_ago}.")
         print("  ADP is that old. Everything else on it is a season-long number "
               "and does not move.")
         return Board.served(board), age
@@ -1549,6 +1589,13 @@ def _persist(board: pl.DataFrame, *, out: Path | None = None,
     out = out if out is not None else OUT
     path = path if path is not None else BOARD_PARQUET
     atomic.write_parquet(board, path)
+    # The capture, beside the board and after it: a failed stamp leaves the old one, which
+    # reads the board as older than it is -- the safe direction -- where stamping first would
+    # let a failed write leave a stamp newer than the file. Never allowed to break the build.
+    try:
+        cached.write_stamp(board_stamp_path(path), jsonio.stamp())
+    except OSError as e:                                    # pragma: no cover - disk
+        print(f"  board capture stamp skipped ({type(e).__name__}); the board itself is written")
     # Beside the board, not at the store's default: a caller that redirected the board has
     # redirected its archive, or a test's synthetic frames pile up in the real one -- 906
     # of them did (#244). In production `path.parent` is `data/processed`, the store.
@@ -1642,7 +1689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.taken:
         _emit(report_mod.mistyped(state_mod.suggest_unmatched(
             board, [n.strip() for n in a.taken.split(",") if n.strip()])))
-    # Not when the board was served: rewriting the file resets its mtime, so the age printed
+    # Not when the board was served: rewriting the file would restamp it, so the age printed
     # above would immediately become a lie, and every later run would report a fresh board
     # that is actually as stale as the first failure.
     #

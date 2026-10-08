@@ -12,7 +12,6 @@ The other thing worth pinning is that replacement level *moves during a draft*. 
 computed against a preseason baseline quietly overvalues a position after a run on it, and
 a run is precisely when the number is being consulted.
 """
-import os
 import time
 from typing import ClassVar
 
@@ -404,22 +403,31 @@ def test_a_pick_beats_a_due_heartbeat():
 
 # --- the board's age is always visible ------------------------------------
 
+def _stamped(path, at):
+    """Stamp `path`'s capture at epoch seconds `at`, the way `_persist` does (#405)."""
+    from datetime import UTC, datetime
+
+    from hub.fetch import cached
+    cached.write_stamp(board_mod.board_stamp_path(path),
+                       datetime.fromtimestamp(at, UTC).replace(microsecond=0).isoformat())
+    return path
+
+
 def test_board_age_is_reported_in_hours(tmp_path):
     """`exists()` was the only check, so a board built Tuesday and a Thursday build that
     failed looked identical -- you would poll all night against stale ADP."""
     f = tmp_path / "b.parquet"
     f.write_bytes(b"x")
-    mtime = f.stat().st_mtime
-    assert board_mod.board_age_hours(f, mtime + 7200) == pytest.approx(2.0)
+    _stamped(f, 1_000_000.0)
+    assert board_mod.board_age_hours(f, 1_000_000.0 + 7200) == pytest.approx(2.0)
 
 
 def test_a_board_from_the_future_is_zero_not_negative(tmp_path):
     """Clock skew between a build host and the poller should read as fresh, not as a
     negative age that formats into nonsense on the one screen you are reading."""
-    import os
     f = tmp_path / "b.parquet"
     f.write_bytes(b"x")
-    os.utime(f, (1000.0, 1000.0))
+    _stamped(f, 1000.0)
     assert board_mod.board_age_hours(f, 500.0) == 0.0
 
 
@@ -617,7 +625,8 @@ def test_the_poller_says_what_the_board_it_polls_against_carries(tmp_path, monke
                   "missed": [0.0], "wk15_17_sos": [0.1]}).write_parquet(p)
     monkeypatch.setattr(board_mod, "BOARD_PARQUET", p)
 
-    got = live._load_board(now=os.path.getmtime(p) + 3600 * 3.5)
+    _stamped(p, 1_000_000.0)
+    got = live._load_board(now=1_000_000.0 + 3600 * 3.5)
     out = capsys.readouterr().out
 
     assert got.height == 1

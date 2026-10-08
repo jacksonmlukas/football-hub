@@ -690,3 +690,64 @@ before and after. The behavioural identity test `tests/unit/test_weekly_projecti
 | `hub.names` `93e503040186` |
 | `hub.season.weekly_gate` `73cc434a55db` |
 | `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-08: the arm is re-pinned for the board's capture stamp (#405; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #405 makes the age
+the board reports (`last_good`, `board_age_hours`, the poller's "board built Nh ago", the
+adherence replay's copy note) the age of its *capture* -- a stamp `_persist` writes beside the
+parquet, `fetch.cached`'s record -- instead of the file's mtime. That edits one of the 29
+modules, `hub.draft.board`; the pin is a hash of source bytes, so it moves, and the amendment
+obligation above applies: show the edit did not change what the arm computes, re-pin, date it.
+
+**Why nothing the arm computes changed.** The arm reaches `hub.draft.board` through
+`board_as_of` (`weekly_gate_data`). Parsing the file at the parent commit and in this change and
+comparing every top-level statement by `ast.dump`, exactly four functions differ -- `_persist`,
+`board_age_hours`, `last_good` and `build_or_last_good` -- and none is called by `board_as_of`,
+`build` or anything else the forward measurement reaches (`_persist` writes the files `main`
+prints, `last_good` is the offline fallback and the poller's reader, `board_age_hours` formats an
+age). `build`, `board_as_of`, `recommend` and every other function and constant are
+syntax-tree-identical; the only additions are two helpers (`board_stamp_path`,
+`board_captured_at`) and the constant `BOARD_STAMP_SUFFIX`, plus `cached` on the existing
+`from hub.fetch import` line. `hub.fetch.*` is exempt from the closure (`CLOSURE_EXEMPT`), so the
+import adds no module: the closure is still 29, and the walk against the new pin reports no
+difference. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430)
+passes on this tree.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.board` | `6e61e56ecac0` | `65ae0104fb6c` |
+
+**The closure pinned, digest `6f3a04e853ad4428`** (29 modules; was `2932bb4a2c589e97`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `65ae0104fb6c` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `55989706066a` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `e74f918fab67` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |

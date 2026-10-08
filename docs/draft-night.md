@@ -16,7 +16,12 @@ Then, once, before the first pick:
 
 ```bash
 cp data/processed/draft_board.parquet data/processed/draft_board.AS-DRAFTED.parquet
+cp data/processed/draft_board.capture.json data/processed/draft_board.AS-DRAFTED.capture.json
 ```
+
+The second line copies the board's capture stamp (#405): every age this repo prints for the
+board is read from that stamp, never from the file's mtime, which a copy rewrites. A copy
+without its stamp reads as "build time not recorded".
 
 `hub.draft.adherence` prints that copy's age and refuses to be quiet about one more than a
 day old, since a copy that predates the draft is a rehearsal leftover and grades you against a
