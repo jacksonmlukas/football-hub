@@ -217,6 +217,14 @@ class Contract:
     non_null: tuple[str, ...] = ()
     unique: tuple[str, ...] = ()
     ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Text columns that must parse as a timestamp in this `strptime` format (#463). A date a
+    # consumer parses later is a refusal that arrives after the cache has been written: the
+    # loader validates, pins and caches the frame, the reader's parse then fails on bytes the
+    # "last good" entry already holds, and the fallback serves the same bad chart. So the
+    # format is part of what the source is declared to send, and a value that does not parse
+    # is refused where the old entry is still the one on disk. Nulls are not this check's
+    # business (`non_null` is).
+    timestamps: dict[str, str] = field(default_factory=dict)
     # Columns that may be null and may not be NaN, checked only where present (#243). A
     # NaN is not a null: it passes `is_not_null()`, sorts wherever a comparison leaves it,
     # is counted by nothing that counts nulls -- and it is what a numpy round trip turns a
@@ -337,6 +345,14 @@ class Contract:
             if c in df.columns and df.schema[c] == pl.Utf8:
                 for pair in _spelling_pairs(df[c]):
                     problems.append(f"{c} not unique under player_key: {pair}")
+        # /GUARD
+        # GUARD malformed-timestamp-refused: an unparseable date is caught before it is cached
+        for c, fmt in self.timestamps.items():
+            if c in df.columns and df.schema[c] == pl.Utf8:
+                bad = int((df[c].str.to_datetime(fmt, strict=False).is_null()
+                           & df[c].is_not_null()).sum())
+                if bad:
+                    problems.append(f"{c} has {bad} values not in the format {fmt}")
         # /GUARD
         # GUARD out-of-range-refused: a units change inside a plausible column is caught
         for c, (lo, hi) in self.ranges.items():
@@ -594,7 +610,7 @@ NEXTGEN_STATS = Contract(
 # slot 9; wide receivers are 1, 2 and 8) and `pos_rank` is the depth at the slot, 1 the
 # starter. So "the starting quarterback" is `pos_abb == "QB"` and `pos_rank == 1`, and it is
 # exactly one row per (`dt`, `team`) -- 7,071 charts of 7,071 across the 2025 pull. `pos_abb`
-# was read by `hub.fetch.odds._qb_starters` and declared by nothing here, so the day nflverse
+# was read by `hub.fetch.odds.load_qb_starters` and declared by nothing here, so the day nflverse
 # renamed it the contract would have passed and the study would have failed one layer later
 # with a bare column error; it is required now. `dt` is non-null because it is the chart's own
 # timestamp, which `odds._starter_at`'s as-of join reads a chart's moment from.
@@ -608,6 +624,10 @@ DEPTH_CHARTS = Contract(
               "pos_rank": pl.Int32},
     non_null=("dt", "team", "pos_grp", "pos_abb", "pos_slot", "pos_rank"),
     ranges={"pos_slot": (1, 20), "pos_rank": (1, 20)},
+    # ISO 8601 UTC to the second, 221 distinct values across the 2025 pull and every one in this
+    # form; `odds.qb_starters` parses it, and a different form there used to escape the
+    # last-good fallback as a bare parse error because the cache was written first (#463).
+    timestamps={"dt": "%Y-%m-%dT%H:%M:%SZ"},
     min_rows=1,
     verified_against_live=True,
 )

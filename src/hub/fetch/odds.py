@@ -931,20 +931,26 @@ def qb_starters(chart: pl.DataFrame) -> pl.DataFrame:
                .sort("dt"))
 
 
-def _qb_starters(season: int, cache: Path | None = None) -> pl.DataFrame:
+def load_qb_starters(season: int, *, refresh: bool = True,
+                     cache: Path | None = None) -> pl.DataFrame:
     """The season's starting quarterbacks, through the validated cached depth-chart loader.
 
     One chart for the QB study and the share layer (#336): `nflverse.load("depth_charts",
-    ...)` with `DEPTH_CHART_COLS`, the same cache entry whoever asks. The chart grows through
-    a season, so this asks for a fresh one -- and when that fails, for any reason (no
-    network, or a contract the new response breaks), serves the last chart that did validate
-    rather than none. The caller's own handler is for the case with no chart at all, where it
-    says the condition was not applied.
+    ...)` with `DEPTH_CHART_COLS`, the same cache entry whoever asks.
+
+    **`refresh` defaults to `True`.** The chart grows through a season (221 distinct `dt` over
+    2025), so a cache read answers with a chart that may be days behind and says nothing about
+    it; a default that can be silently stale is the wrong default for a function whose whole
+    use is "who started when". A caller that knows its season is complete, or that wants
+    whatever was last validated, says `refresh=False` and reads the cache (fetching only if
+    there is none). Either way a failed refresh -- no network, or a response the contract
+    refuses, a malformed `dt` included -- serves the last chart that did validate, and the
+    caller's own handler is for the case with no chart at all.
     """
     from hub.fetch import nflverse
     try:
         chart = nflverse.load("depth_charts", [season], cols=nflverse.DEPTH_CHART_COLS,
-                              refresh=True, cache=cache)
+                              refresh=refresh, cache=cache)
     except Exception as exc:
         print(f"  depth chart {season}: refresh failed ({type(exc).__name__}: {exc}); "
               f"serving the last validated chart")
@@ -983,7 +989,7 @@ def noise_floor_report(season: int = SEASON_AHEAD, base: Path | None = None, *,
     qb_note = ""
     if starters is None:
         try:
-            starters = _qb_starters(season)
+            starters = load_qb_starters(season)
         except Exception as exc:                            # pragma: no cover - network
             qb_note = f" (same-quarterback condition NOT applied: {type(exc).__name__}: {exc})"
     moves = line_moves(polls, starters)

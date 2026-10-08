@@ -988,7 +988,7 @@ def test_the_noise_floor_report_without_a_chart_measures_and_says_so(paths, caps
                                                                      monkeypatch):
     def _no_chart(season):
         raise ConnectionError("no network")
-    monkeypatch.setattr(odds, "_qb_starters", _no_chart)
+    monkeypatch.setattr(odds, "load_qb_starters", _no_chart)
     _archive_of(paths["store"], (TUE, {G: -3.0}), (THU_B, {G: -3.5}))
     assert odds.main(["--noise-floor", "--base", str(paths["store"])]) == 0
     said = capsys.readouterr().out
@@ -1213,32 +1213,32 @@ def test_qb_starters_goes_through_the_validated_cached_loader():
     """The chart is read through `nflverse.load` with the contract's columns: a response the
     contract refuses never becomes a starter, and the one that passes lands in the cache."""
     rep = serve(depth_charts=lambda keys: _recorded_chart())
-    assert odds._qb_starters(2025)["team"].to_list() == ["NO", "NO"]
+    assert odds.load_qb_starters(2025)["team"].to_list() == ["NO", "NO"]
     assert [s for s, _ in rep.served] == ["depth_charts"]
 
     # Nothing is cached under 2026, so each refusal reaches the caller: a column that stopped
     # arriving is named by the loader, a value the contract bounds is refused by it.
     serve(depth_charts=lambda keys: _recorded_chart().drop("pos_abb"))
     with pytest.raises(WideFrameRefused, match="pos_abb"):
-        odds._qb_starters(2026)
+        odds.load_qb_starters(2026)
     serve(depth_charts=lambda keys: _recorded_chart().with_columns(
         pl.lit(99, dtype=pl.Int32).alias("pos_rank")))
     with pytest.raises(ContractViolation, match="pos_rank"):
-        odds._qb_starters(2026)
+        odds.load_qb_starters(2026)
 
 
 def test_a_failed_refresh_serves_the_last_validated_chart(capsys):
     serve(depth_charts=lambda keys: _recorded_chart())
-    first = odds._qb_starters(2025)
+    first = odds.load_qb_starters(2025)
 
     def _down(keys):
         raise ConnectionError("no network")
     serve(depth_charts=_down)
-    assert odds._qb_starters(2025).equals(first)
+    assert odds.load_qb_starters(2025).equals(first)
     assert "serving the last validated chart" in capsys.readouterr().out
 
     serve(depth_charts=lambda keys: _recorded_chart().drop("pos_abb"))
-    assert odds._qb_starters(2025).equals(first), "a response the contract refuses is no chart"
+    assert odds.load_qb_starters(2025).equals(first), "a response the contract refuses is no chart"
 
 
 def test_a_failed_refresh_with_nothing_cached_raises_for_the_caller_to_say_so():
@@ -1246,4 +1246,30 @@ def test_a_failed_refresh_with_nothing_cached_raises_for_the_caller_to_say_so():
         raise ConnectionError("no network")
     serve(depth_charts=_down)
     with pytest.raises(ConnectionError):
-        odds._qb_starters(2025)
+        odds.load_qb_starters(2025)
+
+
+def test_a_malformed_dt_is_refused_before_it_is_cached_and_the_last_chart_is_served(capsys):
+    """#463: the format is checked by the contract, so the bad response never overwrites the
+    entry the fallback reads. Parsed after the cache write, it escaped as a bare parse error
+    from a cache that already held the bad bytes."""
+    serve(depth_charts=lambda keys: _recorded_chart())
+    first = odds.load_qb_starters(2025)
+
+    serve(depth_charts=lambda keys: _recorded_chart().with_columns(
+        pl.col("dt").str.replace("T", " ").str.replace("Z", "")))
+    assert odds.load_qb_starters(2025).equals(first)
+    assert "serving the last validated chart" in capsys.readouterr().out
+
+
+def test_refresh_false_reads_the_cache_and_does_not_fetch():
+    rep = serve(depth_charts=lambda keys: _recorded_chart())
+    first = odds.load_qb_starters(2025)
+    assert len(rep.served) == 1
+
+    again = odds.load_qb_starters(2025, refresh=False)
+    assert again.equals(first)
+    assert len(rep.served) == 1, "a cache read is not a fetch"
+
+    odds.load_qb_starters(2025)                                    # the default refreshes
+    assert len(rep.served) == 2
