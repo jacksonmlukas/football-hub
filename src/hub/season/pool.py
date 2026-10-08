@@ -2120,7 +2120,10 @@ def leverage(field: Field, *, week: int, ledger: Sequence[str] = (), entries: in
 
 # The two-sided tail beyond DECISIVE_SIGMA standard errors under the null: what fraction of
 # comparisons with no effect clear the bar anyway. 4.55% at two, and stated once.
-_NULL_TAIL = 0.0455
+_NULL_TAIL = not_an_input(
+    0.0455, "the two-sided normal tail beyond two standard errors, 4.55 percent, used to "
+    "count how many comparisons would clear the bar by chance; a reporting figure, not a "
+    "model input")
 
 
 def expected_by_chance(comparisons: int) -> float:

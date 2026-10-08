@@ -37,7 +37,7 @@ import numpy as np
 import polars as pl
 
 from hub.config import DraftConfig
-from hub.declare import chosen
+from hub.declare import chosen, not_an_input
 from hub.draft import durability
 from hub.draft.availability import DEFAULT_ESPN_WEIGHT, blended_adp, pick_noise
 from hub.draft.picks import MY_SLOT, TEAMS, snake_picks
@@ -631,9 +631,11 @@ def the_pick(board: pl.DataFrame, state: DraftState, *,
 
 
 # Show a touchdown-luck note beside THE PICK only when it is worth a drafter's attention.
-# Private and lower-cased in intent: this is a display threshold, not a fitted constant, so
-# it must not move the model version, and nothing declares it (`hub.declare`).
-_TD_LUCK_NOTE = 0.5
+# A display threshold, not a fitted constant, so it must not move the model version -- and
+# says so (`hub.declare`, #321: a private name is walked like any other).
+_TD_LUCK_NOTE = not_an_input(
+    0.5, "a display threshold deciding only whether a touchdown-luck note is printed beside "
+    "the pick; no projection or ranking reads it")
 
 
 def held_positions(board: pl.DataFrame, state: DraftState, *,

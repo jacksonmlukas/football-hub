@@ -74,7 +74,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.config import FANTASY_WEEKS
-from hub.declare import not_an_input
+from hub.declare import chosen, not_an_input
 from hub.models import predict
 from hub.models.components import SCORING, td_rate
 from hub.models.experiment import expanding_seasons
@@ -99,10 +99,14 @@ EFFICIENCY_PAIRS: tuple[tuple[str, str], ...] = (
 # rate is a handful of plays and the ratio is noise. It is a *total*, not a per-game figure:
 # comparing a per-game mean against this sent almost every receiver to the pooled rate, since
 # nobody catches eight passes a game, and under-projected the good ones by 0.66 points a week.
-MIN_UNITS = not_an_input(
-    8.0,
-    "a volume floor below which a per-unit efficiency rate is noise: a setting of the "
-    "Weekly projection, which is shown and never ranked on (docs/weekly-screen.md)")
+#
+# **Chosen, not excluded (#321).** It was declared `not_an_input` on the argument that the
+# Weekly projection is shown and never ranked on. But the argument is about the *page*, and
+# the declaration module's rule is about the *prediction*: coverage is owed by anything that
+# changes one. This number is read in the shipped estimator branch (`np.where(acc >=
+# MIN_UNITS, own, pooled)`) and decides which players get their own yards-per-target and
+# which get the pooled rate, so moving it moves a projection.
+MIN_UNITS = chosen(8.0)
 
 
 # Grids for the two shrinkage constants, searched on TRAINING seasons only. Both are in the
