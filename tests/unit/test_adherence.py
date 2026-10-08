@@ -149,13 +149,25 @@ def test_replaying_against_the_live_board_warns(tmp_path, capsys):
 
 
 def _touch(tmp_path, hours_old):
-    import os
+    """A copy built `hours_old` ago -- by its capture stamp (#405); its mtime is now, so a
+    reader that stat'ed the file would fail the old-copy tests below."""
     import time
+    from datetime import UTC, datetime, timedelta
+
+    from hub.draft.board import board_stamp_path
+    from hub.fetch import cached
     p = tmp_path / "draft_board.AS-DRAFTED.parquet"
     p.write_bytes(b"x")
-    t = time.time() - hours_old * 3600
-    os.utime(p, (t, t))
+    when = datetime.fromtimestamp(time.time(), UTC) - timedelta(hours=hours_old)
+    cached.write_stamp(board_stamp_path(p), when.replace(microsecond=0).isoformat())
     return p
+
+
+def test_a_copy_without_its_stamp_cannot_be_dated(tmp_path):
+    p = tmp_path / "draft_board.AS-DRAFTED.parquet"
+    p.write_bytes(b"x")
+    lines = adherence.age_note(p)
+    assert "not recorded" in lines[0] and "WARNING" in lines[1] and "--board" in lines[1]
 
 
 def test_a_fresh_copy_reports_its_age_and_nothing_else(tmp_path):
