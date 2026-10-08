@@ -135,6 +135,21 @@ TREND_ANCHOR_UNSET = 0
 # derived for this job in the first place.
 SCREEN_TREND_ANCHORS: tuple[int, ...] = (4, 6, 8, 10, 12)
 
+# Three leakage surfaces the screen's figures inherit and its design does not close (#313, audit
+# IV R11, named 2026-10-07). Printed at the end of every run: the screen's reader is the one who
+# needs them beside the number. The long form is `docs/method.md`, rule 2.
+SCREEN_LIMITATIONS = (
+    "every figure here is conditional on the player being ranked that week (the Panel's inner "
+    "join on consensus is a collider): it conditions on talent and opportunity jointly and "
+    "attenuates a feature whose effect runs through his becoming relevant",
+    "the consensus control is a Friday scrape that has seen Thursday night: conservative for "
+    "the feature under test, not for the control, which over-absorbs signal and biases every "
+    "partial correlation toward zero",
+    "the expected-point columns (--expected only) are fitted by nflverse over its whole history, "
+    "so their values carry sight of the outcome window; the weeks averaged are point-in-time and "
+    "the values are not, direction unmeasured",
+)
+
 
 # The anchor the published tables on `docs/weekly-screen.md` were taken at. Named so a re-run
 # can reproduce the page, and it carries no claim of its own -- the sensitivity across
@@ -1091,6 +1106,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
                 if b not in frames:
                     frames[b] = sweep(sample, pool, anchors, BASES[b])
         print("\n".join(run_family_report(frames)))
+        print("\n  limitations the design does not close (#313):")
+        print("\n".join(f"    - {x}" for x in SCREEN_LIMITATIONS))
         return 0
 
 

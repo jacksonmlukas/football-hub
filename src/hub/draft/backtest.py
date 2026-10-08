@@ -94,7 +94,10 @@ LIMITATIONS = (
     "arm A follows consensus (ECR); the shipped THE PICK follows the draft market (ADP), "
     "which ESPN publishes for the current season only",
     "arm B scores seasons on prior-season xFP; the live board scores on proj_blend, which "
-    "blends in an ESPN projection that does not exist for past seasons",
+    "blends in an ESPN projection that does not exist for past seasons. And that xFP is not "
+    "point-in-time (#313, 2026-10-07): nflverse's expected-point columns come from a model "
+    "fitted over its whole history, so a replayed 2022 board reads 2021 values produced with "
+    "sight of 2022-2025; the direction is unmeasured",
     "arm B breaks ties by consensus; the shipped tool refuses to break them and asks you",
     "the room is simulated -- consensus plus fitted pick noise, lexicographic need -- not "
     "the eleven people who were actually in those drafts",
