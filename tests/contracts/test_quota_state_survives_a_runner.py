@@ -113,6 +113,17 @@ def test_the_cfbd_counter_is_kept_where_a_runner_can_read_it():
 # life under #310's rule, an `audit` block plus about 145 bytes a look in `audit_looks`. 16 KiB is
 # 1.5 times that end-of-life size: room for a sixth season's rows or a longer window, not room
 # for a payload. Still no third party's data in it -- coverage rates of this repo's own interval.
+#
+# **Re-measured in #423, which added the current-season row** (`current_season`, five group rows
+# like the backtest's, plus a key on the backtest and one on the survivor block) **and rounded
+# every report float to six places** (`coverage.ROUND_DIGITS`; the recorded looks are not
+# rounded). Serialised the way this test measures, the file with look 1 recorded (2026-10-07) and
+# the 2026 row still empty (nothing scores before week 5) is **9,933 bytes**. Its end of life adds
+# the 2026 row full after week 18, 2,159 bytes against 830 empty (+1,329, measured on a synthetic
+# season by driving the CLI through looks 1-3), and the two further `audit_looks` records at 162
+# bytes each (+324; the `audit` block is replaced by the last look, not added to): 9,933 + 1,329 +
+# 324 = **11,586 bytes**. 16,384 / 11,586 = 1.41, inside the test's 1.0-2.5 window and near the
+# 1.5 the earlier sizing aimed at, so the cap stands and only the arithmetic moved.
 LEDGER_CAPS = {"state/gate-width.json": 393216, "state/interval_coverage.json": 16384}
 
 

@@ -397,6 +397,31 @@ def test_the_record_shows_every_survivor_bucket_and_marks_the_thin_one(node):
     assert "344" in out and "HOLDS" in out and "+0.063" in out
 
 
+CURRENT_ROW = {"label": "out-of-sample", "season": 2026, "weeks_complete": 4, "n": 0,
+               "looks": {"2": {"after_week": 14, "reached": False},
+                         "3": {"after_week": 18, "reached": False}}}
+
+
+def test_the_record_shows_the_current_season_row_apart_from_the_backtest(node):
+    """#423: the 2026 weeks are a separate, labelled, out-of-sample line that says it carries no
+    verdict until looks 2 and 3, and says so when nothing is scored yet. Not folded into the
+    backtest's figure."""
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=dict(
+        COVERAGE, current_season=CURRENT_ROW)))
+    assert "2026 so far, out of sample" in out and "no week has been scored yet" in out
+    assert "not pooled" in out and "weeks 14 and 18" in out
+    scored = dict(CURRENT_ROW, n=1234, cov80=0.8123, cov68=0.6712, clipped_share=0.31, sigma=0.9)
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=dict(
+        COVERAGE, current_season=scored)))
+    assert "81.2%" in out and "1,234" in out and "0.9 sigma" in out
+
+
+def test_a_hostile_current_row_cannot_reach_the_markup(node):
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=dict(
+        COVERAGE, current_season=dict(CURRENT_ROW, season=HOSTILE))))
+    assert "<script>" not in out and "&lt;script&gt;" in out
+
+
 def test_a_record_with_no_coverage_measurement_still_renders(node):
     """The committed `track_record.json` carries `interval_coverage: null` until the slate
     next runs; the record must render its calibration without it."""

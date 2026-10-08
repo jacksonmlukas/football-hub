@@ -298,11 +298,18 @@ def test_a_group_with_nothing_scored_is_a_row_that_says_so_in_the_table(capsys):
     assert "nothing scored" in capsys.readouterr().out
 
 
+def _offline(seasons, cache):
+    raise OSError("offline in tests")
+
+
 def test_the_cli_says_which_positions_ran_on_pooled_calibration(capsys, monkeypatch):
     wr = _drawn(n_players=300, weeks=17, pos="WR", seed=1)
     qb = _drawn(n_players=30, weeks=17, pos="QB", mu=18.0, seed=2).with_columns(
         pl.col("player_id") + "_qb")
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: pl.concat([wr, qb]))
+    monkeypatch.setattr(coverage, "_current_or_none",
+                        lambda cache, as_of: {"weeks_complete": 0, "n": 0, "by_position": [],
+                                              "season": 2026, "looks": {}})
     assert coverage.main(["--measure"]) == 0
     out = capsys.readouterr().out
     assert "not a test of the conditional claim there: QB" in out
