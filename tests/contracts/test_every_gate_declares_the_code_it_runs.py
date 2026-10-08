@@ -28,80 +28,26 @@ Rule 18: `_check` is run against planted harnesses -- no modules, one omitting i
 nonexistent module, and one that omits a module its arm imports (module level and function local,
 in a throwaway package) -- each must fail, and the same harness with the module listed passes.
 """
-import ast
 import importlib
-import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 from gate_harnesses import all_harnesses
 
-from hub.ledger import code_digest
+from hub.ledger import CLOSURE_EXEMPT, code_digest, import_closure
 from hub.models.experiment import Actions, Harness
 
 _ACTIONS = Actions(adopt="A", remove="R", show="S")
 
-# name (exact) or "prefix.*" -> why a change there cannot change what an arm computes.
-EXEMPT: dict[str, str] = {
-    "hub.models.experiment": "the shared gate rule, run by every gate; naming it would end every "
-                             "gate's history on any edit there (reasoned in run_gate's docstring)",
-    "hub.fetch.*": "data loaders and caches: the bytes they return are what data_digest pins, "
-                   "and a loader change that alters bytes moves it",
-    "hub.config": "config_digest hashes the resolved config and every fitted constant in "
-                  "FITTED_MODULES",
-    "hub.atomic": "atomic file writes; no arm computation",
-    "hub.jsonio": "JSON read/write and timestamp helpers; no arm computation",
-    "hub.paths": "path constants; no arm computation",
-    "hub.store": "the on-disk table store behind the loaders; the bytes it returns are pinned",
-    "hub.cli": "CLI plumbing (`unavailable`); runs after the verdict, not in an arm",
-    "hub.contracts": "schema assertions on loaded data; they raise or pass, they do not compute",
-    "hub.declare": "decision/chosen markers; identity decorators",
-    "hub.ledger": "the comparison machinery itself, not an arm",
-    "hub.season.survivor": "reached for the NFL_WEEKS constant (the schedule length) only; the "
-                           "survivor pool's code is no gate's arm",
-}
-
-
-def _exempt(mod: str) -> bool:
-    return any(mod == k or (k.endswith(".*") and mod.startswith(k[:-1])) for k in EXEMPT)
-
-
-def _imports(mod: str, prefix: str = "hub") -> set[str]:
-    """First-party plain modules `mod` imports, anywhere in its source (local imports too)."""
-    spec = importlib.util.find_spec(mod)
-    assert spec is not None and spec.origin is not None, mod
-    out: set[str] = set()
-    for n in ast.walk(ast.parse(Path(spec.origin).read_text())):
-        if isinstance(n, ast.Import):
-            names = [a.name for a in n.names]
-        elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
-            names = [n.module, *(f"{n.module}.{a.name}" for a in n.names)]
-        else:
-            continue
-        for name in names:
-            if name != prefix and not name.startswith(prefix + "."):
-                continue
-            try:
-                s = importlib.util.find_spec(name)
-            except (ImportError, AttributeError):  # `from mod import attr`: not a module
-                continue
-            if s is not None and s.origin and s.submodule_search_locations is None:
-                out.add(name)
-    return out
+# The exemptions and the walker live in `hub.ledger` (#456): the forward reading's arm pin walks
+# the same closure with the same list, so there is one walker and one list, not two. `EXEMPT` is
+# that dict (the planted trees below add to it).
+EXEMPT = CLOSURE_EXEMPT
 
 
 def closure(home: str, declared: tuple[str, ...], prefix: str = "hub") -> set[str]:
     """Every non-exempt first-party module reachable from `home` and `declared`."""
-    seen: set[str] = set()
-    todo = [home, *declared]
-    while todo:
-        m = todo.pop()
-        if m in seen or _exempt(m):
-            continue
-        seen.add(m)
-        todo += _imports(m, prefix)
-    return seen
+    return import_closure([home, *declared], prefix)
 
 
 def _check(key: str, harness: Harness, prefix: str = "hub") -> None:
