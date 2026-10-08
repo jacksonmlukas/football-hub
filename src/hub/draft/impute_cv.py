@@ -217,7 +217,7 @@ def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: in
     are seams for a test; the defaults read the archive through the repo's own readers."""
     from hub.draft.board import board_as_of, expected_points
     from hub.fetch import nflverse
-    from hub.models.predict import IMPUTE_CV, IMPUTE_CV_BY_POS
+    from hub.models import predict
 
     build_board = build_board or (lambda yr: board_as_of(yr)[0])
     load_realised = load_realised or expected_points
@@ -248,14 +248,15 @@ def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: in
                            ("xfp_pg", "the season's own xFP per game")):
         cv = residual_cv(kept, against)
         se = player_bootstrap_se(kept, against)
-        clustered = season_clustered(kept, against, shipped=IMPUTE_CV)
+        clustered = season_clustered(kept, against, shipped=predict.IMPUTE_CV)
         result[against] = {"by_position": cv, "se": se, "clustered": clustered}
         lines.append(f"\n  residual CV against {label}: n = {kept.height} rookies over "
                      f"{result['clusters']} seasons (the clusters)")
         lines.append(f"  {'pos':>6} {'n':>4} {'rookie cv':>10} {'median':>8} {'shipped':>8}")
         for pos in (*DRAFTED_POSITIONS, "pooled"):
             c = cv[pos]
-            shipped = IMPUTE_CV if pos == "pooled" else IMPUTE_CV_BY_POS.get(pos, IMPUTE_CV)
+            shipped = (predict.IMPUTE_CV if pos == "pooled"
+                       else predict.IMPUTE_CV_BY_POS.get(pos, predict.IMPUTE_CV))
             cv_s = f"{c['cv']:.3f}" if c["cv"] is not None else "n/a"
             md_s = f"{c['median']:+.2f}" if c["median"] is not None else "n/a"
             lines.append(f"  {pos:>6} {c['n']:>4} {cv_s:>10} {md_s:>8} {shipped:>8.3f}")
@@ -266,7 +267,8 @@ def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: in
             lines.append(f"  the interval, clustered on the season (k = {c['k']}, t on "
                          f"{c['k'] - 1} df): mean of the per-season pooled CVs {c['mean']:.3f}, "
                          f"se {c['se']:.3f}, 95% [{c['lo']:.3f}, {c['hi']:.3f}]; "
-                         f"{c['t_vs_shipped']:+.1f} t from the shipped {IMPUTE_CV:.3f}, which "
+                         f"{c['t_vs_shipped']:+.1f} t from the shipped "
+                         f"{predict.IMPUTE_CV:.3f}, which "
                          f"{'clears' if c['clears'] else 'does not clear'} t(0.975, "
                          f"{c['k'] - 1}) = {c['t_crit']:.2f}")
             lines.append(f"    per season: {seasons_s}")
@@ -287,7 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--min-games", type=int, default=MIN_GAMES)
     holdout.add_arguments(ap)
     a = ap.parse_args(argv)
-    from hub.models.predict import IMPUTE_CV
+    from hub.models import predict
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     note = holdout.recording(a, holdout.command_line("scripts/fit_impute_cv.py", a))
@@ -296,7 +298,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as e:
         return unavailable("scripts/fit_impute_cv.py", "the boards and seasons of the archive", e)
     print("\n".join(lines))
-    print(f"\n  the shipped IMPUTE_CV {IMPUTE_CV:.3f} is this measurement on all five seasons "
+    print(f"\n  the shipped IMPUTE_CV {predict.IMPUTE_CV:.3f} is this measurement on all five "
+          f"seasons "
           f"(#298, 2026-09-16); a run prints beside it and does not rewrite it")
     # Printed, and recorded as *not refitted* (#294). The shipped constant is this script's
     # own measurement on all five seasons (#298), so a hold-out set carrying the four-season
@@ -305,7 +308,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # decision rather than by the run. The reason carries the hold-out's own pooled number
     # so the run line shows what the replay did not use.
     pooled = result["xfp_pg"]["by_position"]["pooled"]["cv"]
-    why = (f"IMPUTE_CV is not refitted: the shipped {IMPUTE_CV:.3f} is this script's rookie "
+    why = (f"IMPUTE_CV is not refitted: the shipped {predict.IMPUTE_CV:.3f} is this script's "
+           f"rookie "
            f"measurement on all five seasons (#298, 2026-09-16), and with the hold-out the "
            f"same measurement gives pooled {pooled:.3f} against the season's own xFP on "
            f"n = {result['n']} with {result['seasons']} minus the hold-out -- "
