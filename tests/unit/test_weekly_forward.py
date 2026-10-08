@@ -54,7 +54,7 @@ def _read(**kw):
     """`read_forward` with the three things a real run supplies, defaulted to the clean case."""
     kw.setdefault("first_commit", _known)
     kw.setdefault("horizon_data", lambda: True)
-    kw.setdefault("arm_blob", wf.PINNED_ARM_BLOB)
+    kw.setdefault("arm", dict(wf.PINNED_ARM_MODULES))
     return wf.read_forward(**kw)
 
 
@@ -139,19 +139,98 @@ def test_dates_past_the_horizon_with_week_14_absent_from_the_data_is_not_yet():
 
 
 def test_a_different_arm_refuses_the_reading_and_loads_nothing():
-    """Rule 18: plant a blob that is not the pinned one -- and `None`, an arm that cannot be
-    identified -- and the run refuses and says a new arm needs a new pre-registration. Flip it:
-    the pinned blob reads."""
-    for blob in ("0" * 40, None):
+    """Rule 18: plant an arm that is not the pinned one -- one module edited, one added, one
+    gone, and `None`, an arm that cannot be identified -- and the run refuses, names what
+    differs, and says a new arm needs a new pre-registration. Flip it: the pinned arm reads."""
+    pinned = dict(wf.PINNED_ARM_MODULES)
+    edited = {**pinned, "hub.models.panel": "0" * 12}
+    added = {**pinned, "hub.models.new_dvp": "1" * 12}
+    gone = {k: v for k, v in pinned.items() if k != "hub.models.panel"}
+    for arm, said in ((edited, "hub.models.panel changed"),
+                      (added, "hub.models.new_dvp is new"),
+                      (gone, "hub.models.panel is no longer"),
+                      (None, "could not be read")):
         r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(), assemble=_boom,
-                  arm_blob=blob)
+                  arm=arm)
         assert r.status == "REFUSED" and "new pre-registration" in r.lines[0]
-    assert wf.PINNED_ARM_BLOB == "96114791e9ba5492d92e996c1ad5f302fca5169a"
-    assert wf.PINNED_ARM_BLOB in (Path(__file__).resolve().parents[2] / "docs"
-                                  / "weekly-forward.md").read_text()
+        assert said in r.lines[0]
     ok = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
-               assemble=_assemble(_paired(0.0)), arm_blob=wf.PINNED_ARM_BLOB)
+               assemble=_assemble(_paired(0.0)), arm=pinned)
     assert ok.status != "REFUSED"
+    assert f"closure {wf.PINNED_ARM_DIGEST}" in "\n".join(ok.lines)
+
+
+def test_the_pin_is_recorded_in_the_document():
+    """The constants and `docs/weekly-forward.md` agree: the document records the closure's
+    digest and every module's digest, so a re-pin of the constant alone fails here."""
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "weekly-forward.md").read_text()
+    assert wf.PINNED_ARM_DIGEST in doc
+    for module, digest in wf.PINNED_ARM_MODULES.items():
+        assert f"`{module}` `{digest}`" in doc, module
+    assert wf.PINNED_ARM_DIGEST == wf.arm_digest(wf.PINNED_ARM_MODULES)
+
+
+def _with_source_edited(monkeypatch, module: str):
+    """Plant an edit in `module`'s source as `module_digests` reads it, touching no file."""
+    import importlib.util
+
+    spec = importlib.util.find_spec(module)
+    assert spec is not None and spec.origin is not None
+    origin = Path(spec.origin)
+    real = Path.read_bytes
+    monkeypatch.setattr(
+        Path, "read_bytes",
+        lambda self: real(self) + b"\n# planted\n" if self == origin else real(self))
+
+
+def test_an_edit_to_the_models_panel_refuses_the_reading_and_an_unchanged_closure_reads(
+        monkeypatch):
+    """#456's control. `hub.models.panel` is not the file the old pin hashed, and an edit there
+    (#315's opponent-adjusted DvP is the example) changes what the arm computes. Plant one in the
+    source as it is read: the reading from the live closure refuses and names the module.
+    Unplanted, the same call reads."""
+    arm = wf.arm_closure()
+    assert arm == wf.PINNED_ARM_MODULES, "the closure moved: re-pin per docs/weekly-forward.md"
+    ok = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+               assemble=_assemble(_paired(0.0)), arm=arm)
+    assert ok.status != "REFUSED"
+    _with_source_edited(monkeypatch, "hub.models.panel")
+    planted = wf.arm_closure()
+    assert planted is not None and planted != arm
+    r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(), assemble=_boom,
+              arm=planted)
+    assert r.status == "REFUSED" and "hub.models.panel changed" in r.lines[0]
+    assert wf.arm_difference(planted) == ["hub.models.panel changed"]
+
+
+def test_an_edit_to_an_exempt_module_does_not_refuse_and_the_exemption_holds(monkeypatch):
+    """The exemptions are not in the closure -- not hashed, not walked into -- so an edit there
+    leaves the reading alone. The reason holds only if the module really is outside what the arm
+    computes: `hub.paths` is constants and `hub.config` is hashed by `config_digest`; neither is
+    reached except as an exempt import. Plant an edit in each and the closure is unchanged."""
+    from hub.ledger import CLOSURE_EXEMPT, closure_exempt
+
+    for module in ("hub.paths", "hub.config", "hub.jsonio"):
+        assert closure_exempt(module) and module in CLOSURE_EXEMPT and CLOSURE_EXEMPT[module]
+        assert module not in wf.PINNED_ARM_MODULES
+    with monkeypatch.context() as m:
+        for module in ("hub.paths", "hub.config", "hub.jsonio"):
+            _with_source_edited(m, module)
+        assert wf.arm_closure() == wf.PINNED_ARM_MODULES
+        r = _read(as_of=AFTER_HORIZON, schedule=SCHEDULE, captures=_full(),
+                  assemble=_assemble(_paired(0.0)), arm=wf.arm_closure())
+        assert r.status != "REFUSED"
+
+
+def test_the_pinned_closure_is_the_roots_import_closure_and_holds_both_roots():
+    """The pin follows the imports: the roots are in it, the walk is the ledger's, and the
+    forward harness itself (which reads the verdict, not the arm) is not."""
+    from hub.ledger import import_closure
+
+    assert set(wf.PINNED_ARM_MODULES) == import_closure(wf.ARM_ROOTS)
+    assert set(wf.ARM_ROOTS) <= set(wf.PINNED_ARM_MODULES)
+    assert "hub.models.panel" in wf.PINNED_ARM_MODULES
+    assert "hub.season.weekly_forward" not in wf.PINNED_ARM_MODULES
 
 
 def test_the_horizon_is_the_day_after_week_14s_last_game():
@@ -356,20 +435,16 @@ def test_the_captures_become_the_consensus_frame_the_gate_reads():
     assert frame["key"].str.contains("mahomes").any()                  # the repo's own player key
 
 
-def test_the_pinned_arm_is_the_blob_of_the_file_the_arm_is_defined_in():
-    """#430: the pin was stale for a day before anyone noticed (#309 edited a diagnostic's
-    prose in the pinned file), and the first anyone would have heard of it was a REFUSED verdict
-    in November. `arm_blob()` finds the file through `weekly_gate_data.project`, so it follows
-    a move; this holds the constant to what it finds, so a later edit to the projection's file
-    -- a comment included -- fails here, with the instruction, and not at the reading."""
-    blob = wf.arm_blob()
-    if blob is None:
-        pytest.skip("no git here to hash the file with")
-    from hub.exhibits import weekly_projection
-    assert Path(weekly_projection.__file__).name == "weekly_projection.py"
-    assert blob == wf.PINNED_ARM_BLOB, (
-        f"hub/exhibits/weekly_projection.py is blob {blob}, not the pinned "
-        f"{wf.PINNED_ARM_BLOB}. If the edit changed what the projection computes it is a new arm "
-        f"and needs a new pre-registration; if it did not, prove that with "
-        f"tests/unit/test_weekly_projection_move.py, re-pin, and amend docs/weekly-forward.md, "
-        f"dated, before any 2026 outcome is read.")
+def test_the_pinned_arm_is_the_closure_the_arm_runs():
+    """#430, widened by #456: the pin was stale for a day before anyone noticed once (#309 edited
+    a diagnostic's prose in the pinned file), and the first anyone would have heard of it was a
+    REFUSED verdict in November. This holds the constant to what the tree's closure is, so an
+    edit to any module the arm imports -- a comment included -- fails here, naming it, and not
+    at the reading."""
+    arm = wf.arm_closure()
+    assert arm is not None
+    assert not wf.arm_difference(arm), (
+        f"{wf.arm_difference(arm)}. If the edit changed what the projection computes it is a new "
+        f"arm and needs a new pre-registration; if it did not, prove that with "
+        f"tests/unit/test_weekly_projection_move.py, re-pin PINNED_ARM_MODULES, and amend "
+        f"docs/weekly-forward.md, dated, before any 2026 outcome is read.")

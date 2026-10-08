@@ -104,6 +104,10 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_run_before_the_horizon_reads_no_outcome",
         "test_dates_past_the_horizon_with_week_14_absent_from_the_data_is_not_yet",
         "test_a_different_arm_refuses_the_reading_and_loads_nothing",
+        # #456: the pin is the arm's import closure; an edit in `hub.models.panel` refuses, an
+        # exempt module's edit does not.
+        "test_an_edit_to_the_models_panel_refuses_the_reading_and_an_unchanged_closure_reads",
+        "test_an_edit_to_an_exempt_module_does_not_refuse_and_the_exemption_holds",
         "test_fewer_than_the_pre_registered_weeks_is_not_runnable_and_loads_nothing",
         "test_a_planted_effect_is_detected_in_both_directions",
     )),
