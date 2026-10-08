@@ -31,9 +31,11 @@ for the reason `docs/weekly-forward.md` gives, with the variance decomposition.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -45,6 +47,7 @@ from hub.config import FANTASY_WEEKS
 from hub.declare import decision, not_an_input
 from hub.fetch import consensus
 from hub.fetch.consensus import Capture
+from hub.ledger import import_closure, module_digests
 from hub.models.experiment import PLAYER_STATS_COLS, Actions, Ceiling, GateRun, gate
 from hub.season.weekly_gate import CEILING_ARM, WITHIN, void_condition
 
@@ -55,14 +58,71 @@ SEASON = 2026
 STATS_COLS = PLAYER_STATS_COLS
 DESIGN = "docs/weekly-forward.md"
 
-# The arm the design pinned: the blob of `hub/exhibits/weekly_projection.py` at the commit that
-# pre-registered it (`docs/weekly-forward.md`, *The design*). A run whose arm is any other blob
-# refuses to read a verdict -- a change to what the projection computes is a new arm and needs a
-# new pre-registration, and a pure move that edits the file gets the same refusal until the
-# document is amended, dated, with the new blob, before any admitted outcome is read. #430 was
-# that move: `hub/models/weekly.py` at f6de17b2 became `hub/exhibits/weekly_projection.py`
-# at the blob below, amended in `docs/weekly-forward.md`, *The design*.
-PINNED_ARM_BLOB = "96114791e9ba5492d92e996c1ad5f302fca5169a"
+# The arm the design pinned (#456): the first-party import closure of the code the forward
+# measurement runs, walked from the modules that define the arm (`ARM_ROOTS`) with the same
+# walker and the same exemptions as the ledger's code declaration (`hub.ledger.import_closure`,
+# `CLOSURE_EXEMPT`, #439), each module's source hashed. A reading taken on a closure that differs
+# in any module -- one edited, one added, one gone -- refuses, and the refusal names which. It
+# replaces #432's pin of the blob of `hub/exhibits/weekly_projection.py` alone, which could not
+# see `hub.models.panel` or the rest of what the arm reads (#315's opponent-adjusted DvP would
+# have changed the arm and not the reading's willingness to read). Re-pinning is a dated
+# amendment of `docs/weekly-forward.md` made before any 2026 outcome is read, with the closure's
+# behavioural identity shown (`tests/unit/test_weekly_projection_move.py`), as #430 and #456 were.
+ARM_ROOTS = ("hub.season.weekly_gate_data", "hub.exhibits.weekly_projection")
+PINNED_ARM_MODULES: dict[str, str] = {
+    "hub.draft.adp_history": "286f2d9c667d",
+    "hub.draft.availability": "34b707bf7e75",
+    "hub.draft.board": "6e61e56ecac0",
+    "hub.draft.cohort": "5d6e03fc2cd5",
+    "hub.draft.durability": "59fbe0402d35",
+    "hub.draft.optimize": "b5c2b10a2ec1",
+    "hub.draft.picks": "c695b87cc5e8",
+    "hub.draft.playoff_sos": "42bc422f88eb",
+    "hub.draft.prior_signal": "4b7421479470",
+    "hub.draft.regression": "3ba22b3a649e",
+    "hub.draft.report": "df1f8e20569e",
+    "hub.draft.season": "601db0b4f9f1",
+    "hub.draft.state": "ad958507df6a",
+    "hub.exhibits.weekly_projection": "d5b25ec6130b",
+    "hub.holdout": "a8d095db300c",
+    "hub.league": "1d50b1eaf7ef",
+    "hub.models.base": "8c41cd5f26d1",
+    "hub.models.components": "c402b0c4856f",
+    "hub.models.conformal": "f98558ab2051",
+    "hub.models.coverage": "8ea06bda176b",
+    "hub.models.margin": "9da0f4839e89",
+    "hub.models.market": "098baf487556",
+    "hub.models.panel": "2f9f2aad1946",
+    "hub.models.predict": "ddf960a1dfe6",
+    "hub.models.scoring_rules": "3c201f3a0d6f",
+    "hub.models.volume": "31e5321b1e6d",
+    "hub.names": "93e503040186",
+    "hub.season.weekly_gate": "211f84e4a564",
+    "hub.season.weekly_gate_data": "1823ccae01c3",
+}
+
+
+def arm_digest(modules: Mapping[str, str]) -> str:
+    """16-char hash of a closure's `{module: digest}`, the one value the reading prints and the
+    document records beside the table."""
+    return hashlib.sha256(json.dumps(dict(sorted(modules.items()))).encode()).hexdigest()[:16]
+
+
+PINNED_ARM_DIGEST = arm_digest(PINNED_ARM_MODULES)
+
+
+def arm_difference(arm: Mapping[str, str] | None) -> list[str]:
+    """What differs between `arm` and the pin, module by module; empty if they are the same.
+    `None` is an arm that could not be identified, and differs from everything."""
+    if arm is None:
+        return ["the arm's modules could not be read"]
+    out = [f"{m} changed" for m in sorted(arm.keys() & PINNED_ARM_MODULES.keys())
+           if arm[m] != PINNED_ARM_MODULES[m]]
+    out += [f"{m} is new in the arm's imports"
+            for m in sorted(arm.keys() - PINNED_ARM_MODULES.keys())]
+    out += [f"{m} is no longer in the arm's imports"
+            for m in sorted(PINNED_ARM_MODULES.keys() - arm.keys())]
+    return out
 
 # The last week the measurement reads: the fantasy regular season's, `GATE_WEEKS`' own (15-17
 # are reported apart by the gate and are not read here).
@@ -210,13 +270,14 @@ def _admission_lines(adm: Admission) -> list[str]:
 def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capture],
                  assemble: Callable[[dict[int, Capture]], tuple[pl.DataFrame, dict | None]],
                  first_commit: Callable[[Path], datetime | None],
-                 horizon_data: Callable[[], bool], arm_blob: str | None,
+                 horizon_data: Callable[[], bool], arm: Mapping[str, str] | None,
                  seed: int = 0) -> Reading:
     """One reading of the forward measurement, or the statement that it is not time.
 
     `horizon_data` says whether week 14's rows are in nflverse (a presence check, run only once
-    the date has passed); `arm_blob` is the blob the arm under test is defined in, and any value
-    but `PINNED_ARM_BLOB` refuses the reading.
+    the date has passed); `arm` is the `{module: digest}` of the arm's import closure as it stands
+    (`arm_closure()`), and any value but `PINNED_ARM_MODULES` refuses the reading, naming what
+    differs.
 
     `assemble` is the only function that reads outcomes -- admitted weeks in, a paired frame
     (`season`, `roster`, `week`, `diff`, and `ceiling_diff`) and the gate's coverage out -- and it
@@ -234,10 +295,10 @@ def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capt
         return Reading("NOT-YET", [
             f"NOT-YET: the dates are past week {HORIZON_WEEK}, but its rows are not in nflverse "
             f"yet. No outcome was read."])
-    if arm_blob != PINNED_ARM_BLOB:
+    if (diff := arm_difference(arm)):
         return Reading("REFUSED", [
-            f"REFUSED: the arm under test is blob {arm_blob}, not the pinned {PINNED_ARM_BLOB}. "
-            f"A change to the projection is a new arm and needs a new pre-registration "
+            f"REFUSED: the arm under test is not the pinned one ({'; '.join(diff)}). "
+            f"A change to code the projection runs is a new arm and needs a new pre-registration "
             f"({DESIGN}); no verdict is read and no outcome was loaded."])
     adm = admit(captures, days, consensus.scrape_floors(schedule), first_commit=first_commit)
     head = _admission_lines(adm)
@@ -262,21 +323,17 @@ def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capt
              f"  Disposition: {run.resolved} resolved of {run.seasons.height}, "
              f"{run.abstained} abstained",
              *head]
-    lines.append(f"  arm under test: blob {arm_blob} (pinned, {DESIGN})")
+    lines.append(f"  arm under test: closure {PINNED_ARM_DIGEST} of {len(PINNED_ARM_MODULES)} "
+                 f"modules (pinned, {DESIGN})")
     lines += [f"  caveat: {c}" for c in CAVEATS]
     return Reading(run.verdict[0], lines, run, adm)
 
 
-def arm_blob() -> str | None:  # pragma: no cover - reads the working tree
-    """The git blob id of the file the arm under test is defined in, for the verdict line."""
-    import inspect
-
-    from hub.season import weekly_gate_data
+def arm_closure() -> dict[str, str] | None:  # pragma: no cover - reads the working tree
+    """The arm's import closure as it stands: `{module: digest}`, or `None` if it cannot be read."""
     try:
-        src = inspect.getsourcefile(weekly_gate_data.project)
-        return subprocess.run(["git", "hash-object", str(src)], capture_output=True, text=True,
-                              check=True).stdout.strip() if src else None
-    except (OSError, subprocess.SubprocessError, TypeError):
+        return module_digests(import_closure(ARM_ROOTS))
+    except (OSError, ValueError, SyntaxError, ImportError):
         return None
 
 
@@ -330,7 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     reading = read_forward(as_of=as_of, schedule=schedule,
                            captures=consensus.read_captures(SEASON), assemble=assemble_2026,
                            first_commit=first_commit_at, horizon_data=week14_loaded,
-                           arm_blob=arm_blob())
+                           arm=arm_closure())
     print("\n".join(reading.lines))
     return 0 if reading.status in {"ADOPT", "REMOVE", "SHOW", "NOT-YET"} else 1
 
