@@ -271,7 +271,7 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
     games has a tenure that counts them, not one shortened to its last regular-season row.
     `team_games(..., regular_season_only=False)` is the per-team-game frame this reads --
     the postseason is this function's own choice and not a default hidden inside the frame;
-    `hub.models.starter_change`'s event construction reads the same frame with the
+    `hub.models.starter_events`'s event construction reads the same frame with the
     postseason excluded, because its question is regular-season by pre-registration.
     """
     long = team_games(rows if as_of is None else before(rows, as_of), regular_season_only=False)
@@ -292,7 +292,7 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
 #
 # `state` reads its per-team path off `team_games`: the two-sided row unpivoted, a side
 # blank in `qb`, `value` or `adj` dropped alone, the team spelled nflverse's way. Before
-# `team_games` existed, `hub.models.starter_change` needed more than that -- a game id,
+# `team_games` existed, `hub.models.starter_events` needed more than that -- a game id,
 # which side is home, the source's own win probabilities, and a previous-game link a
 # one-sided blank must not move -- and got it by reaching past this module's public surface
 # six times to rebuild the same transform by hand (`nfeloqb.ABBREVIATIONS`, `nfeloqb._blank`):
@@ -304,7 +304,7 @@ def state(rows: pl.DataFrame, as_of: date | datetime | None = None) -> pl.DataFr
 # without shortening `tenure` for a team whose latest rows are its playoff games -- a Super
 # Bowl participant's latest row is its playoff game, not its last regular-season one.
 # `regular_season_only` is now required at every call: `state` reads `team_games` with it
-# `False` (every game the source has), and `hub.models.starter_change`'s event construction
+# `False` (every game the source has), and `hub.models.starter_events`'s event construction
 # reads it `True`, because the line-move study is regular-season by pre-registration. Neither
 # reader gets a default that would hide which one it asked for.
 
@@ -314,7 +314,7 @@ REGULAR_SEASON = "REG"
 def schedule(rows: pl.DataFrame, *, regular_season_only: bool) -> pl.DataFrame:
     """Every (team, game) `rows` carries an entry for, home and away, before either side is
     filtered for a one-sided blank -- `team_games`'s previous-game link and
-    `hub.models.starter_change.unreadable_games`'s count are both built off this, never off
+    `hub.models.starter_events.unreadable_games`'s count are both built off this, never off
     the rows a one-sided blank drops (#301). Regular season only when `regular_season_only`
     is set and `game_type` exists -- no default hides the choice (#374); the source's own
     team spellings mapped through `ABBREVIATIONS`; keyed by nflverse's game id -- season, the
@@ -351,13 +351,13 @@ def team_games(rows: pl.DataFrame, *, regular_season_only: bool) -> pl.DataFrame
     `adj` is dropped alone (#283); the other side's row is kept. Regular season only when
     `regular_season_only` is set and `game_type` exists -- no default hides the choice
     (#374): `state` reads this with it `False`, so a team's tenure run can reach back across
-    the postseason boundary; `hub.models.starter_change`'s event construction reads it `True`.
+    the postseason boundary; `hub.models.starter_events`'s event construction reads it `True`.
 
     `prev_game_id`, `prev_season` and `prev_date` name each row's *actual* previous game --
     the team's last entry in `schedule`'s full row set, both sides, before either is
     filtered for a one-sided blank -- so a one-sided blank drops that side's own row without
     moving its neighbours a game closer together or losing a game from the team's sequence
-    (#301). `hub.models.starter_change.events` reads these three straight off this frame
+    (#301). `hub.models.starter_events.events` reads these three straight off this frame
     instead of re-deriving a previous game from whichever rows happen to survive.
 
     **What this hides** (#339): the source's two-sided row (`team1`/`team2`, `qb{n}_*`,

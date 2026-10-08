@@ -1,13 +1,8 @@
-"""Starter-change events and their two readers (#221, #291): the gate on the quarterback
-adjustment over a frozen line, and the line-move study.
-
-The event construction is held first, because both readers stand on it: an event is a team
-whose starter on one game differs from its starter on its previous game of the same season,
-observed off the source's own starter column or the first pass attempt in play-by-play, and
-never off the injury report. The gate is held to its pre-registration in
-`docs/gate-power.md` -- the frozen price is the comparator, the shipped estimator is the arm,
-fewer than three event-seasons is not-runnable -- and the study to its: the week's mean move
-is subtracted, the regressor is the net ex-ante gap, the floor sets the standard error.
+"""The quarterback adjustment's gate (#291) over the starter-change events and the CLI that runs
+it beside the study (#346). The gate is held to its pre-registration in `docs/gate-power.md` --
+the frozen price is the comparator, the shipped estimator is the arm, fewer than three
+event-seasons is not-runnable. The events are held in `test_starter_events.py`, the study in
+`test_starter_study.py`.
 
 Every fixture is synthetic and every test runs with no `data/` and no network.
 """
@@ -15,136 +10,33 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-import statistics
 
 import polars as pl
 import pytest
+from starter_world import (
+    ARCHIVE,
+    PRIOR,
+    SEASON,
+    played_rows,
+    polls,
+    schedule_for,
+    serve_world,
+    source_rows,
+    utc,
+)
 
 from hub.fetch import nfeloqb, nflverse, odds, replay
 from hub.ledger import Ledger, WidthEntry
 from hub.models import experiment, quarterback
 from hub.models import starter_change as sc
+from hub.models import starter_events as se
+from hub.models import starter_study as ss
 from hub.models.market import MARGIN_SD, normal_cdf
-
-# --- fixtures ------------------------------------------------------------------------------
-
-
-def source_rows(games):
-    """nfeloqb-shaped rows. Each game: (date, season, week, home, away, home_qb, away_qb,
-    home_value, away_value, home_adj, away_adj, home_score | None, away_score | None,
-    elo_prob1 | None, qbelo_prob1 | None). Home is team1, the source's convention."""
-    cols = ("date", "season", "week", "team1", "team2", "qb1", "qb2", "qb1_value_pre",
-            "qb2_value_pre", "qb1_adj", "qb2_adj", "score1", "score2", "elo_prob1",
-            "qbelo_prob1")
-    frame = pl.DataFrame({c: [g[i] for g in games] for i, c in enumerate(cols)},
-                         schema={"date": pl.Utf8, "season": pl.Int64, "week": pl.Utf8,
-                                 "team1": pl.Utf8, "team2": pl.Utf8, "qb1": pl.Utf8,
-                                 "qb2": pl.Utf8, "qb1_value_pre": pl.Float64,
-                                 "qb2_value_pre": pl.Float64, "qb1_adj": pl.Float64,
-                                 "qb2_adj": pl.Float64, "score1": pl.Int64,
-                                 "score2": pl.Int64, "elo_prob1": pl.Float64,
-                                 "qbelo_prob1": pl.Float64})
-    return frame.with_columns(pl.lit("REG").alias("game_type"))
-
-
-def polls(rows):
-    """The archive as `hub.fetch.odds._archive` returns it: (game_id, close_spread,
-    captured_at, week). `captured_at` is naive UTC."""
-    return pl.DataFrame({"game_id": [r[0] for r in rows],
-                         "close_spread": [float(r[1]) for r in rows],
-                         "captured_at": [r[2] for r in rows],
-                         "week": [r[3] for r in rows]},
-                        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
-                                "captured_at": pl.Datetime("us"), "week": pl.Int64})
-
-
-def utc(day, hour=16):
-    return dt.datetime(2026, 9, day, hour)
-
-
-# A season for one team, KC: Mahomes starts weeks 1-2, a backup takes week 3, Mahomes is
-# back for week 4. The opponent DEN keeps one starter throughout; the Rams, spelled the
-# source's way, arrive in week 3 with a starter who differs from their last 2025 start --
-# an offseason change, flagged and not an event.
-SEASON = [
-    ("2026-09-13", 2026, "1.0", "KC", "DEN", "Mahomes", "Nix", 200.0, 120.0, 40.0, 2.0,
-     27, 20, 0.70, 0.75),
-    ("2026-09-20", 2026, "2.0", "DEN", "KC", "Nix", "Mahomes", 121.0, 205.0, 2.5, 42.0,
-     17, 24, 0.40, 0.35),
-    ("2026-09-27", 2026, "3.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
-     10, 20, 0.65, 0.52),
-    ("2026-10-04", 2026, "4.0", "KC", "DEN", "Mahomes", "Nix", 199.0, 122.0, 38.0, 3.0,
-     None, None, 0.71, 0.76),
-]
-PRIOR = [("2025-12-28", 2025, "17.0", "KC", "DEN", "Mahomes", "Nix", 210.0, 100.0, 45.0,
-          -5.0, 30, 10, 0.8, 0.85),
-         ("2025-12-28", 2025, "17.0", "LAR", "SF", "Stafford", "Purdy", 150.0, 160.0, 10.0,
-          12.0, 21, 24, 0.5, 0.49)]
 
 
 @pytest.fixture
 def rows():
     return source_rows(PRIOR + SEASON)
-
-
-def pbp_for(rows_df, *, drop=()):
-    """nflverse play-by-play, `STARTER_PBP_COLS`-shaped, whose first pass of every (game, team)
-    the source's rows hold was thrown by the source's own starter -- so the two definitions of
-    "starter" agree by construction and a test of the *study* is not a test of the reconciliation.
-    A game with a starter and no score is an in-flight one: its first pass is thrown, no
-    result. `drop` names (game_id, team) pairs left out, a game with no pass play yet. A
-    run play precedes each first pass, and a later pass by a backup follows it, so the rule
-    is read off the first *pass* and not the first play or the last passer."""
-    tg = sc.team_games(rows_df)
-    frames = []
-    for play_id, kind, who in ((1, "run", None), (2, "pass", "first"), (3, "pass", "later")):
-        frames.append(tg.select(
-            pl.col("game_id"), pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
-            pl.lit("REG").alias("season_type"), pl.lit(float(play_id)).alias("play_id"),
-            pl.col("team").alias("posteam"), pl.lit(kind).alias("play_type"),
-            (pl.col("qb") if who == "first" else
-             pl.lit("00-backup") if who == "later" else pl.lit(None, dtype=pl.Utf8))
-            .alias("passer_player_id"), pl.col("team")))
-    # `nflverse.PBP`'s contract refuses fewer than 1,000 rows, so a recording of a handful of
-    # plays would not reach the reader at all; the padding is kickoffs of no game on the
-    # schedule, which name no passer and join nothing.
-    # One block per season, because the reader asks for one season at a time and the contract
-    # holds each of those reads to the floor.
-    pad = pl.concat([pl.DataFrame({
-        "game_id": ["pad"] * 1000, "season": [year] * 1000, "week": [1] * 1000,
-        "season_type": ["REG"] * 1000, "play_id": [float(i) for i in range(1000)],
-        "posteam": [None] * 1000, "play_type": ["kickoff"] * 1000,
-        "passer_player_id": [None] * 1000, "team": [None] * 1000},
-        schema={"game_id": pl.Utf8, "season": pl.Int32, "week": pl.Int32,
-                "season_type": pl.Utf8, "play_id": pl.Float64, "posteam": pl.Utf8,
-                "play_type": pl.Utf8, "passer_player_id": pl.Utf8, "team": pl.Utf8})
-        for year in range(2020, 2031)])
-    out = pl.concat([*frames, pad]).sort("game_id", "team", "play_id", nulls_last=True)
-    for game_id, team in drop:
-        out = out.filter(~((pl.col("game_id") == game_id) & (pl.col("team") == team)))
-    return out.drop("team")
-
-
-def schedule_for(rows_df):
-    """nflverse's schedule for the source's rows: the game day, and the result where there is
-    one -- null until played, as the wire's is."""
-    tg = sc.team_games(rows_df)
-    home = tg.filter(pl.col("home"))
-    return home.select(
-        pl.col("game_id"), pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32),
-        pl.lit("REG").alias("game_type"), pl.col("date").alias("gameday"),
-        pl.col("game_id").str.split("_").list.get(3).alias("home_team"),
-        pl.col("game_id").str.split("_").list.get(2).alias("away_team"),
-        pl.col("score").alias("home_score"), pl.col("opp_score").alias("away_score"))
-
-
-def serve_world(rows_df, *, drop=(), pbp=None):
-    """Select a Replay holding the play-by-play and schedule `rows_df` implies, so the CLI's
-    events source is read through the nflverse seam offline. `pbp` replaces the derived one."""
-    frame = pbp_for(rows_df, drop=drop) if pbp is None else pbp
-    return replay.serve(
-        pbp=lambda keys: frame.filter(pl.col("season").is_in([int(k) for k in keys])),
-        schedules=schedule_for(rows_df))
 
 
 @pytest.fixture(autouse=True)
@@ -155,307 +47,6 @@ def _the_events_source_is_served_offline(rows):
     serve_world(rows)
 
 
-# --- the event construction ----------------------------------------------------------------
-
-
-def test_team_games_key_every_side_by_nflverse_id_and_spelling(rows):
-    """One row per (team, game), the id rebuilt in nflverse's spelling from the source's own
-    columns -- the source spells the Rams LAR where the archive says LA -- with the side and
-    the ex-ante value and adjustment on it."""
-    tg = sc.team_games(rows)
-    week3 = tg.filter(pl.col("game_id") == "2026_03_LA_KC").sort("team")
-    assert week3["team"].to_list() == ["KC", "LA"]
-    assert week3["home"].to_list() == [True, False]
-    assert week3["qb"].to_list() == ["Gabbert", "Bethard"]
-    assert week3["value"].to_list() == [60.0, 55.0]
-    assert week3["adj"].to_list() == [-110.0, -90.0]
-    assert tg.filter(pl.col("team") == "LAR").is_empty()
-
-
-POSTSEASON_AND_REGULAR = [
-    ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
-    ("2027-01-10", 2026, "19.0", "A", "B", "a2", "b2", 120.0, 95.0, 6.0, 3.5, 24, 17, .60, .62),
-]
-
-
-def test_team_games_drops_postseason_rows_from_itself_and_the_schedule():
-    """#304 (rule 15): `source_rows` hard-codes `game_type='REG'` on every row, so every other
-    fixture in this file has nothing to drop and the postseason filter -- in `sc.team_games`,
-    which reads `nfeloqb.team_games(..., regular_season_only=True)` (#374), and in
-    `nfeloqb.schedule`, the full row set the previous-game link is built off -- could be
-    deleted with nothing to notice. Week 19 here is marked 'POST'; both readers must drop it
-    entirely, not merely fail to count it as an event."""
-    rows_ = source_rows(POSTSEASON_AND_REGULAR).with_columns(
-        pl.when(pl.col("week") == "19.0").then(pl.lit("POST")).otherwise(pl.lit("REG"))
-          .alias("game_type"))
-    tg = sc.team_games(rows_)
-    assert tg["week"].to_list() == [1, 1]                       # both sides of week 1 only
-    assert 19 not in tg["week"].to_list()
-    sched = nfeloqb.schedule(rows_, regular_season_only=True)
-    assert sched["week"].to_list() == [1, 1]
-    assert 19 not in sched["week"].to_list()
-
-
-# Same starter, week 1 (REG) and week 19 (POST): the two readers of #374's shared frame
-# legitimately disagree about whether the second row exists at all.
-PLAYOFF_TENURE = [
-    ("2026-09-06", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
-    ("2027-01-10", 2026, "19.0", "A", "B", "a1", "b1", 102.0, 92.0, 6.0, 3.5, 24, 17, .60, .62),
-]
-
-
-def test_tenure_counts_a_playoff_start_the_event_construction_excludes():
-    """#374: `nfeloqb.state` does not filter to the regular season -- a team's tenure run
-    reaches back across the postseason boundary, because a Super Bowl participant's latest
-    row is its playoff game and not its last regular-season one -- while this module's event
-    construction reads `nfeloqb.team_games(..., regular_season_only=True)`, because the
-    line-move study is regular-season by pre-registration. Same starter both games, so the
-    only thing that can be disagreeing is whether the postseason row is read at all: it is,
-    for tenure, and it is not, for the event construction, which never sees a second row for
-    A to differ against."""
-    rows_ = source_rows(PLAYOFF_TENURE).with_columns(
-        pl.when(pl.col("week") == "19.0").then(pl.lit("POST")).otherwise(pl.lit("REG"))
-          .alias("game_type"))
-
-    st = nfeloqb.state(rows_)
-    a = st.filter(pl.col("team") == "A").row(0, named=True)
-    assert a["qb"] == "a1" and a["tenure"] == 2, "both starts, the playoff one included"
-    assert a["as_of"] == "2027-01-10", "the playoff row is the latest"
-
-    tg = sc.team_games(rows_)
-    assert tg.filter(pl.col("team") == "A")["week"].to_list() == [1], "week 19 never arrives"
-    assert sc.events(tg).filter(pl.col("team") == "A").is_empty(), "nothing to diff it against"
-
-
-# KC's week-2 game (at DEN) is blank on KC's own side only -- the source has no starter for
-# them that week, DEN's side is fully populated. Week 1 (Mahomes) and week 3 (Gabbert, a
-# genuine change) are both readable, so week 2's hole sits between two known rows.
-ONE_SIDED_BLANK = [
-    ("2026-09-13", 2026, "1.0", "KC", "DEN", "Mahomes", "Nix", 200.0, 120.0, 40.0, 2.0,
-     27, 20, 0.70, 0.75),
-    ("2026-09-20", 2026, "2.0", "DEN", "KC", "Nix", None, 121.0, None, 2.5, None,
-     17, 24, 0.40, 0.35),
-    ("2026-09-27", 2026, "3.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
-     10, 20, 0.65, 0.52),
-]
-
-
-def test_a_one_sided_blank_does_not_move_the_previous_game_link():
-    """The previous-game link is built off the full schedule, not off whichever row survives
-    the blank: KC's week-3 change reads its ancestor as week 2 (the game a one-sided blank
-    dropped), not week 1 -- two games and fourteen days too early, the bug this test used to
-    catch when the link was a shift over the filtered rows."""
-    rows = source_rows(ONE_SIDED_BLANK)
-    tg = sc.team_games(rows)
-    assert tg.filter(pl.col("team") == "KC")["week"].to_list() == [1, 3]     # week 2 dropped
-    ev = sc.events(tg)
-    kc = ev.filter(pl.col("team") == "KC")
-    assert kc.height == 1
-    row = kc.row(0, named=True)
-    assert row["departing"] == "Mahomes" and row["arriving"] == "Gabbert"    # last known starter
-    assert row["prev_game_id"] == "2026_02_KC_DEN"                          # week 2, not week 1
-    assert row["prev_date"] == "2026-09-20"                                  # not "2026-09-13"
-    games = sc.event_games(sc.in_season_events(ev))
-    assert games.row(0, named=True)["frozen_before"] == "2026-09-20"
-    assert sc.unreadable_games(rows) == 1                                    # KC's week-2 side
-
-
-# KC 2025 week 18 (Mahomes, known); 2026 week 1 (at DEN) is blank on KC's own side; 2026
-# week 2 (Gabbert) is readable. The hole spans the season boundary: #301's link correctly
-# names week 1 as the ancestor, but the departing starter's own last known game is week 18
-# of 2025, not week 1 -- so this change is unattributable to a season, not an in-season one.
-OFFSEASON_BEHIND_BLANK = [
-    ("2025-12-28", 2025, "18.0", "KC", "DEN", "Mahomes", "Nix", 210.0, 100.0, 45.0, -5.0,
-     30, 10, 0.8, 0.85),
-    ("2026-09-06", 2026, "1.0", "DEN", "KC", "Nix", None, 121.0, None, 2.5, None,
-     17, 24, 0.40, 0.35),
-    ("2026-09-13", 2026, "2.0", "KC", "LAR", "Gabbert", "Bethard", 60.0, 55.0, -110.0, -90.0,
-     10, 20, 0.65, 0.52),
-]
-
-
-def test_a_hole_spanning_the_season_boundary_is_not_an_in_season_event():
-    """#328: `in_season` used to read the *link's* season (2026, week 1's -- correct as an
-    ancestor) instead of the departing starter's own last known game's season (2025, off
-    Mahomes' week-18 start), manufacturing an in-season event across the boundary the blank
-    week spans. `departing_game_id`/`departing_season` carry that game explicitly, `in_season`
-    reads off them, and #301's link (`prev_game_id`) is unchanged."""
-    rows = source_rows(OFFSEASON_BEHIND_BLANK)
-    tg = sc.team_games(rows)
-    ev = sc.events(tg)
-    kc = ev.filter(pl.col("team") == "KC")
-    assert kc.height == 1
-    row = kc.row(0, named=True)
-    assert row["departing"] == "Mahomes" and row["arriving"] == "Gabbert"
-    assert row["prev_game_id"] == "2026_01_KC_DEN"           # #301's link: week 1, unchanged
-    assert row["departing_game_id"] == "2025_18_DEN_KC"      # Mahomes' own last known game
-    assert row["departing_season"] == 2025
-    assert row["in_season"] is False                         # not week 1's season, 2026
-    assert sc.in_season_events(ev).filter(pl.col("team") == "KC").is_empty()
-
-
-def test_events_are_starter_changes_between_consecutive_games_of_one_season(rows):
-    """KC changes twice in 2026 (Gabbert in, Mahomes back); LA once (Bethard, against its last
-    2025 start -- an offseason change, flagged and not an event); DEN never. A team's first
-    row has nothing to differ from."""
-    ev = sc.events(sc.team_games(rows))
-    kc = ev.filter(pl.col("team") == "KC").sort("week")
-    assert kc["week"].to_list() == [3, 4]
-    assert kc["departing"].to_list() == ["Mahomes", "Gabbert"]
-    assert kc["arriving"].to_list() == ["Gabbert", "Mahomes"]
-    assert kc["prev_game_id"].to_list() == ["2026_02_KC_DEN", "2026_03_LA_KC"]
-    assert kc["in_season"].all()
-    la = ev.filter(pl.col("team") == "LA")
-    assert la.height == 1 and not la["in_season"][0]
-    assert ev.filter(pl.col("team") == "DEN").is_empty()
-    # The 2025 -> 2026 Mahomes rows are the same starter: no event across the offseason.
-    assert ev.filter((pl.col("team") == "KC") & (pl.col("week") == 1)).is_empty()
-
-
-def test_events_sorts_before_shifting_so_row_order_never_matters():
-    """#304 (rule 15): every caller in this file feeds `events()` rows that already end
-    sorted (off `team_games`, itself sorted, or a fixture built in order), so deleting the
-    function's own `.sort("team", "season", "week")` is invisible to the whole suite. The
-    same three games fed out of order must still find the one real change -- game 3, where
-    the starter differs from the team's second game -- and not a spurious one manufactured
-    from whichever row happened to arrive first."""
-    ordered = pl.DataFrame({
-        "game_id": ["g1", "g2", "g3"], "season": [2026, 2026, 2026], "week": [1, 2, 3],
-        "team": ["T", "T", "T"], "qb": ["q1", "q1", "q2"]})
-    shuffled = pl.DataFrame({
-        "game_id": ["g3", "g1", "g2"], "season": [2026, 2026, 2026], "week": [3, 1, 2],
-        "team": ["T", "T", "T"], "qb": ["q2", "q1", "q1"]})
-    got = sc.events(shuffled)
-    assert got.height == 1
-    row = got.row(0, named=True)
-    assert row["game_id"] == "g3"
-    assert row["departing"] == "q1" and row["arriving"] == "q2"
-    assert got.equals(sc.events(ordered))
-
-
-def test_values_are_ex_ante_for_both_quarterbacks(rows):
-    """The departing starter's value is read off his last start, the arriving starter's off
-    the event row -- both `qb_value_pre`, neither a post-game figure -- and the gap is the
-    arriving minus the departing. The arriving starter's adjustment rides on the row."""
-    ev = sc.in_season_events(sc.events(sc.team_games(rows)))
-    kc3 = ev.filter((pl.col("team") == "KC") & (pl.col("week") == 3)).row(0, named=True)
-    assert kc3["departing_value"] == 205.0        # Mahomes on the week-2 row
-    assert kc3["arriving_value"] == 60.0          # Gabbert on the week-3 row
-    assert kc3["gap"] == 60.0 - 205.0
-    assert kc3["arriving_adj"] == -110.0
-    assert kc3["prev_date"] == "2026-09-20" and kc3["date"] == "2026-09-27"
-
-
-def test_a_game_where_both_sides_changed_is_one_event_game_with_a_net_gap(rows):
-    """LV's change would make week 3 a two-change game; here it is LA's offseason change, so
-    week 3 is one change and week 4 one change. Built on a frame where both sides change in
-    one game, the game is one row and the net gap is home minus away."""
-    both = source_rows([
-        ("2026-09-13", 2026, "1.0", "A", "B", "a1", "b1", 100.0, 100.0, 0.0, 0.0, 20, 10, .5, .5),
-        ("2026-09-20", 2026, "2.0", "A", "B", "a2", "b2", 40.0, 70.0, -60.0, -30.0, 10, 20,
-         .5, .5)])
-    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(both))))
-    assert games.height == 1
-    row = games.row(0, named=True)
-    assert row["changes"] == 2
-    assert row["home_gap"] == -60.0 and row["away_gap"] == -30.0
-    assert row["net_gap"] == -30.0
-    assert row["frozen_before"] == "2026-09-13"
-
-
-TWO_SIDED_CHANGE_DIFFERENT_PREVIOUS_GAMES = [
-    ("2026-09-06", 2026, "1.0", "A", "X", "a1", "x1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
-    ("2026-09-08", 2026, "1.0", "B", "Y", "b1", "y1", 100.0, 90.0, 5.0, 3.0, 20, 10, .55, .58),
-    ("2026-09-13", 2026, "2.0", "A", "B", "a2", "b2", 150.0, 160.0, 40.0, 45.0, 17, 24, .60, .65),
-]
-
-
-def test_frozen_before_is_the_earlier_of_two_different_previous_game_days():
-    """#304 (rule 15): the suite's only other two-changed-side fixture, above, has both sides
-    sharing the *same* previous game (A and B played each other in week 1), so `.min()` and
-    `.max()` over `prev_date` agree there and a swap to `.max()` is invisible. Here A's
-    previous game (against X, 09-06) is two days earlier than B's (against Y, 09-08), so
-    `frozen_before` -- the earliest previous game day, before which no change could have been
-    known -- must be A's 09-06, not B's 09-08."""
-    rows_ = source_rows(TWO_SIDED_CHANGE_DIFFERENT_PREVIOUS_GAMES)
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert games.height == 1
-    row = games.row(0, named=True)
-    assert row["changes"] == 2
-    assert row["frozen_before"] == "2026-09-06"                 # A's, the earlier of the two
-
-
-def test_the_first_pass_attempt_names_the_starter_in_play_by_play():
-    """The passer on the earliest pass play of each (game, team) by play id -- a run-first
-    drive does not name him and a later relief appearance does not replace him. Without the
-    passer column the reader refuses by name rather than guessing off a column it has."""
-    pbp = pl.DataFrame({
-        "game_id": ["g1"] * 5 + ["g1p"], "season": [2026] * 6, "week": [1] * 5 + [19],
-        "season_type": ["REG"] * 5 + ["POST"],
-        "play_id": [10, 20, 30, 40, 50, 60],
-        "posteam": ["A", "A", "B", "A", "B", "A"],
-        "play_type": ["run", "pass", "pass", "pass", "run", "pass"],
-        "passer_player_id": [None, "a-starter", "b-starter", "a-backup", None, "a-playoff"]})
-    got = sc.starters_from_pbp(pbp).sort("team")
-    # the postseason game names no starter: this is a regular-season question (#420)
-    assert got["qb"].to_list() == ["a-starter", "b-starter"]
-    assert got["game_id"].to_list() == ["g1", "g1"]
-    with pytest.raises(ValueError, match="passer_player_id"):
-        sc.starters_from_pbp(pbp.drop("passer_player_id"))
-    with pytest.raises(ValueError, match="season_type"):
-        sc.starters_from_pbp(pbp.drop("season_type"))
-
-
-# --- the gate ----------------------------------------------------------------------------
-
-
-ARCHIVE = polls([
-    # KC-LA (week 3): a lookahead frozen at +3 through the week-2 game day, then repriced
-    # after Gabbert is named. Game day 2026-09-27; the previous KC game day 2026-09-20.
-    ("2026_03_LA_KC", 3.0, utc(15), 3), ("2026_03_LA_KC", 3.0, utc(19), 3),
-    ("2026_03_LA_KC", 3.0, utc(20, 12), 3),    # still the week-2 game day: not before it
-    ("2026_03_LA_KC", -1.0, utc(23), 3), ("2026_03_LA_KC", -2.0, utc(26), 3),
-    # KC-DEN (week 4): Mahomes back; frozen before 2026-09-27, close before 2026-10-04.
-    ("2026_04_DEN_KC", -3.0, utc(24), 4), ("2026_04_DEN_KC", 4.0, utc(30), 4),
-    # Another week-3 game, no change: the week's mean move between the same two poll days.
-    ("2026_03_SF_DEN", 1.0, utc(19), 3), ("2026_03_SF_DEN", 2.0, utc(26), 3),
-])
-
-
-def test_poll_day_converts_the_utc_capture_to_its_eastern_calendar_date():
-    """#304 (rule 15): `_last_before` and `_change_points` both read `_poll_day` through
-    several layers of joins and filters, so a test built through them can kill the
-    Eastern-conversion mutant without ever proving the function itself is what does it -- and
-    the archive fixtures above all capture in the afternoon UTC, where the Eastern date
-    already happens to agree with the UTC one. A capture at 2026-01-01T03:00 UTC is
-    2025-12-31, 22:00 Eastern (EST is UTC-5) -- the previous calendar date in the zone every
-    date comparison in this module goes through -- so the poll day is '2025-12-31', never the
-    UTC date '2026-01-01'."""
-    frame = pl.DataFrame({"captured_at": [dt.datetime(2026, 1, 1, 3, 0)]},
-                         schema={"captured_at": pl.Datetime("us")})
-    got = frame.select(sc._poll_day().alias("poll_day"))
-    assert got["poll_day"].to_list() == ["2025-12-31"]
-
-
-def test_the_frozen_price_predates_the_previous_game_day_and_the_close_the_game_day(rows):
-    """Strictly before, both: a poll on the previous game day could already carry an
-    in-game injury, and a poll on the game day is not a lookahead at all."""
-    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(rows))))
-    priced = sc.priced(ARCHIVE, games).sort("week")
-    assert priced["frozen"].to_list() == [3.0, -3.0]
-    assert priced["frozen_at"].to_list() == [utc(19), utc(24)]
-    assert priced["close"].to_list() == [-2.0, 4.0]
-
-
-def test_an_event_with_no_snapshot_before_its_previous_game_day_is_censored(rows):
-    """Seen only after it moved is not seen at all: the row is kept, marked and counted, so
-    the run says how many events the archive could not have caught."""
-    late = ARCHIVE.filter(pl.col("captured_at") >= utc(23))
-    games = sc.event_games(sc.in_season_events(sc.events(sc.team_games(rows))))
-    priced = sc.priced(late, games).sort("week")
-    assert priced["censored"].to_list() == [True, False]
-    assert priced.filter(pl.col("censored"))["frozen"].is_null().all()
 
 
 def test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter(rows):
@@ -466,8 +57,8 @@ def test_the_arm_is_the_shipped_seam_and_prices_the_departing_starter(rows):
     adjustment, because the file carries Gabbert on no row before his first start. Both
     arms score the home result by `MarketBaseline`'s conversion; the difference is
     unadjusted minus adjusted, positive when the adjustment helped."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    tg = se.team_games(rows)
+    games = se.event_games(se.in_season_events(se.events(tg)))
     paired = sc.gate_rows(ARCHIVE, games, tg, rows)
     assert paired["game_id"].to_list() == ["2026_03_LA_KC"]      # week 4 has no result yet
     row = paired.row(0, named=True)
@@ -486,8 +77,8 @@ def test_the_oracle_arm_knows_the_arriving_starter_and_is_reported_beside_the_ga
     """The diagnostic: the same estimator with the week's own rows as the state, so the
     frozen +3 moves by (-110 - (-90)) / 25 -- Gabbert against Bethard. Its difference is a
     separate column the rule never reads."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    tg = se.team_games(rows)
+    games = se.event_games(se.in_season_events(se.events(tg)))
     row = sc.gate_rows(ARCHIVE, games, tg, rows).row(0, named=True)
     assert row["oracle_adjustment"] == pytest.approx((-110.0 + 90.0) / quarterback.ELO_PER_POINT)
     assert row["oracle"] == pytest.approx(3.0 + row["oracle_adjustment"])
@@ -510,8 +101,8 @@ def test_a_game_whose_opponent_has_no_prior_state_is_excluded_not_zeroed():
         ("2026-09-13", 2026, "2.0", "A", "Z", "a2", "z1", 130.0, 95.0, 40.0, 4.0,
          17, 24, .60, .70),
     ])
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    tg = se.team_games(rows_)
+    games = se.event_games(se.in_season_events(se.events(tg)))
     assert games.height == 1                                   # A's week-2 change: the only event
     store_archive = polls([
         ("2026_02_Z_A", 2.0, utc(5), 2),      # before frozen_before (09-06): the frozen price
@@ -534,8 +125,8 @@ def test_the_pilot_reads_the_sources_own_two_columns_on_event_games_only(rows):
     """The power input: the source's base and quarterback-adjusted probabilities, scored on
     the same event games and nowhere else, per season; the target is the absolute mean of the
     season means and `s` their spread. One season has a mean and no spread."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    tg = se.team_games(rows)
+    games = se.event_games(se.in_season_events(se.events(tg)))
     pilot = sc.pilot(tg, games)
     assert pilot["seasons"] == 1 and pilot["n"] == 1        # week 4 is unplayed
     ll = lambda p, y: -(y * math.log(p) + (1 - y) * math.log(1 - p))  # noqa: E731
@@ -557,8 +148,8 @@ def test_the_pilot_target_is_the_absolute_mean_not_the_signed_one():
     means is negative -- and `target` must still be its absolute value, not the signed mean
     itself."""
     rows_ = source_rows(NEGATIVE_PILOT_GAME)
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
+    tg = se.team_games(rows_)
+    games = se.event_games(se.in_season_events(se.events(tg)))
     assert games.height == 1
     pilot = sc.pilot(tg, games)
     ll = lambda p, y: -(y * math.log(p) + (1 - y) * math.log(1 - p))  # noqa: E731
@@ -572,14 +163,15 @@ def test_event_seasons_needed_is_the_smallest_k_whose_mde_clears_the_target():
     """On the t reference: at s = 1 the MDE is 9.58 s at two seasons, 2.97 at three, 2.01 at
     four -- the table in the pre-registration -- so a target of 2.5 needs four and a target
     of 10 needs two. A target no cap reaches is None, not a number."""
-    assert sc.mde_at(2, 1.0) == pytest.approx(9.58, abs=0.01)
-    assert sc.mde_at(3, 1.0) == pytest.approx(2.97, abs=0.01)
-    assert sc.mde_at(4, 1.0) == pytest.approx(2.01, abs=0.01)
+    def mde_at(k):
+        return experiment.minimum_detectable_effect(1.0 / math.sqrt(k), k)
+
+    assert mde_at(2) == pytest.approx(9.58, abs=0.01)
+    assert mde_at(3) == pytest.approx(2.97, abs=0.01)
+    assert mde_at(4) == pytest.approx(2.01, abs=0.01)
     assert sc.event_seasons_needed(2.5, 1.0) == 4
     assert sc.event_seasons_needed(10.0, 1.0) == 2
     assert sc.event_seasons_needed(0.0001, 1.0, cap=50) is None
-    assert sc.mde_at(4, 1.0) == pytest.approx(
-        experiment.minimum_detectable_effect(1.0 / math.sqrt(4), 4))
 
 
 def _paired(seasons, n=6, diff=0.05):
@@ -664,553 +256,15 @@ def test_the_ceiling_arm_can_make_stage_2_fire(tmp_path):
     assert "event-season" not in run.verdict[1]              # not this module's own guard
 
 
-# --- the study ---------------------------------------------------------------------------
-
-
-def test_the_study_subtracts_the_weeks_mean_move_and_regresses_on_the_net_gap(rows):
-    """Week 3: KC-LA moved 3 -> -2 (-5), the other week-3 game moved 1 -> 2 (+1) over the
-    same two poll days, so the week-adjusted move is -6 on a net gap of -145 (KC's change
-    alone; LA's is offseason and not an event). Week 4 (KC-DEN) has no result yet -- the
-    fixture's own unplayed game (#303) -- and does not enter the study at all."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    study = sc.study_rows(ARCHIVE, games, tg).sort("week")
-    assert study["game_id"].to_list() == ["2026_03_LA_KC"]
-    assert study["move"].to_list() == [-5.0]
-    assert study["week_mean"].to_list() == [1.0]
-    assert study["adjusted_move"].to_list() == [-6.0]
-    assert study["net_gap"].to_list() == [-145.0]
-
-
-def test_an_in_flight_game_with_polls_after_kickoff_is_excluded_and_counted(rows):
-    """#303, defect 1: week 4 (KC-DEN) is a genuine in-season event -- Mahomes returns -- but
-    the fixture gives it no score, an in-flight game whose archive polls (utc(24), utc(30))
-    straddle its own kickoff. Before the fix, `study_rows` had never joined results, so its
-    'last snapshot before the game day' was just the latest snapshot of a game still being
-    played, and the move it fed the regression was truncated with nothing marking the row.
-    Excluded here, and `unplayed_study_games` reports the one game the exclusion dropped,
-    off the same uncensored/priced frame `study_rows` itself filters."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert games.height == 2                                    # both KC changes are events
-    study = sc.study_rows(ARCHIVE, games, tg)
-    assert "2026_04_DEN_KC" not in study["game_id"].to_list()
-    assert sc.unplayed_study_games(ARCHIVE, games, tg) == 1
-
-
-def test_the_change_point_compares_eastern_days_not_utc_ones():
-    """#303, defect 2: every other date comparison in this module goes through the poll-day
-    conversion; the change-point's own arithmetic didn't, comparing a poll's raw UTC calendar
-    date against `frozen_before`, an Eastern one. A capture at 2026-09-08T02:00 UTC is
-    2026-09-07, 22:00 Eastern -- the previous *Eastern* day -- so the correct change-point is
-    one day after the previous game day (09-06), not two: the UTC date alone would have
-    counted a day the poll never saw."""
-    rows_ = source_rows([
-        ("2026-09-06", 2026, "1.0", "AA", "BB", "a1", "b1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "AA", "CC", "a2", "c1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "DD", "EE", "d1", "e1", 100.0, 100.0, 0.0, 0.0,
-         14, 14, .5, .5),
-        ("2026-09-13", 2026, "2.0", "DD", "EE", "d1", "e1", 100.0, 100.0, 0.0, 0.0,
-         21, 21, .5, .5),
-    ])
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert games["game_id"].to_list() == ["2026_02_CC_AA"]
-    archive = polls([
-        # AA-CC: frozen before the previous game day (09-06); the 02:00 UTC capture on 09-08
-        # is 09-07 Eastern; close before the game day (09-13).
-        ("2026_02_CC_AA", 0.0, dt.datetime(2026, 9, 4, 20, 0), 2),
-        ("2026_02_CC_AA", 5.0, dt.datetime(2026, 9, 8, 2, 0), 2),
-        ("2026_02_CC_AA", 6.0, dt.datetime(2026, 9, 12, 16, 0), 2),
-        # DD-EE: not an event, polled the same two poll days as the control this week.
-        ("2026_02_EE_DD", 2.0, dt.datetime(2026, 9, 4, 20, 0), 2),
-        ("2026_02_EE_DD", 2.5, dt.datetime(2026, 9, 12, 16, 0), 2),
-    ])
-    study = sc.study_rows(archive, games, tg, floor_per_root_day=0.4)
-    assert study["days_to_change"].to_list() == pytest.approx([1.0])
-
-
-def test_the_change_point_scans_poll_days_and_is_bounded_at_the_game_day():
-    """#303, defect 3: two sub-cases of one defect.
-
-    **Several captures in one day** -- 09-09 carries an early spike (10.0, clears the floor
-    on its own) and a later same-day poll back near the frozen price (0.5, does not); the
-    Eastern-date convention (`hub.fetch.odds`: the last poll of a date stands for it) means
-    the day's own value is 0.5 and the threshold does not fire on 09-09 at all -- it fires
-    two days later, on 09-11, the first day whose own representative value clears it.
-
-    **Bounded at the game day** -- FF-HH's game day is 09-13; a poll on 09-15, after kickoff,
-    would clear the floor on its own, but no poll before the game day for GG-HH does, so the
-    scan -- which `priced`'s own `close` never reads past the game day either -- reports no
-    change-point rather than reading a lookahead nothing before kickoff could have seen.
-    """
-    rows_ = source_rows([
-        ("2026-09-06", 2026, "1.0", "FF", "GG", "f1", "g1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "FF", "HH", "f2", "h1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "II", "JJ", "i1", "j1", 100.0, 100.0, 0.0, 0.0,
-         14, 14, .5, .5),
-        ("2026-09-13", 2026, "2.0", "II", "JJ", "i1", "j1", 100.0, 100.0, 0.0, 0.0,
-         21, 21, .5, .5),
-    ])
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert games["game_id"].to_list() == ["2026_02_HH_FF"]
-    archive = polls([
-        ("2026_02_HH_FF", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),     # frozen
-        ("2026_02_HH_FF", 10.0, dt.datetime(2026, 9, 9, 14, 0), 2),    # 09-09 early: a spike
-        ("2026_02_HH_FF", 0.5, dt.datetime(2026, 9, 9, 22, 0), 2),     # 09-09 late: the day's value
-        ("2026_02_HH_FF", 6.0, dt.datetime(2026, 9, 11, 16, 0), 2),    # 09-11: really clears it
-        ("2026_02_HH_FF", 6.5, dt.datetime(2026, 9, 12, 16, 0), 2),    # close, before the game day
-        ("2026_02_HH_FF", 50.0, dt.datetime(2026, 9, 15, 16, 0), 2),   # after kickoff: unseen
-        ("2026_02_JJ_II", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_JJ_II", 1.5, dt.datetime(2026, 9, 12, 16, 0), 2),
-    ])
-    study = sc.study_rows(archive, games, tg, floor_per_root_day=0.4)
-    # frozen_before is FF's previous game day, 09-06; the change is seen 09-11, 5 days later.
-    assert study["days_to_change"].to_list() == pytest.approx([5.0])
-
-    # A second game whose only poll clearing the floor falls after its own game day: bounded
-    # scan finds nothing, where an unbounded one would have read the lookahead.
-    late_only = source_rows([
-        ("2026-09-06", 2026, "1.0", "KK", "LL", "k1", "l1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "KK", "MM", "k2", "m1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "NN", "OO", "n1", "o1", 100.0, 100.0, 0.0, 0.0,
-         14, 14, .5, .5),
-        ("2026-09-13", 2026, "2.0", "NN", "OO", "n1", "o1", 100.0, 100.0, 0.0, 0.0,
-         21, 21, .5, .5),
-    ])
-    tg2 = sc.team_games(late_only)
-    games2 = sc.event_games(sc.in_season_events(sc.events(tg2)))
-    assert games2["game_id"].to_list() == ["2026_02_MM_KK"]
-    archive2 = polls([
-        ("2026_02_MM_KK", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_MM_KK", 0.1, dt.datetime(2026, 9, 12, 16, 0), 2),    # close: never clears
-        ("2026_02_MM_KK", 50.0, dt.datetime(2026, 9, 15, 16, 0), 2),   # after kickoff: unseen
-        ("2026_02_OO_NN", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_OO_NN", 1.2, dt.datetime(2026, 9, 12, 16, 0), 2),
-    ])
-    study2 = sc.study_rows(archive2, games2, tg2, floor_per_root_day=0.4)
-    assert study2["days_to_change"].is_null().all()
-
-
-def test_a_weeks_control_set_excludes_every_other_event_game(rows):
-    """#303, defect 4, part one: a week with two starter changes never uses one treated game
-    as the other's control. AA and BB both change starters in week 2, and CC-DD, the week's
-    only other game, is the sole legitimate control -- if BB were left in AA's control set
-    (the pre-fix behaviour, which excluded only the row's own game_id), AA's week_mean would
-    read BB's own treated move instead."""
-    rows_ = source_rows([
-        ("2026-09-06", 2026, "1.0", "AA", "PP", "a1", "p1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "AA", "QQ", "a2", "q1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "BB", "RR", "b1", "r1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "BB", "SS", "b2", "s1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "CC", "DD", "c1", "d1", 100.0, 100.0, 0.0, 0.0,
-         14, 14, .5, .5),
-        ("2026-09-13", 2026, "2.0", "CC", "DD", "c1", "d1", 100.0, 100.0, 0.0, 0.0,
-         21, 21, .5, .5),
-    ])
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    # CC-DD keeps the same starters both weeks -- not an event, and the week's only control.
-    assert sorted(games["game_id"].to_list()) == ["2026_02_QQ_AA", "2026_02_SS_BB"]
-    archive = polls([
-        ("2026_02_QQ_AA", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_QQ_AA", 7.0, dt.datetime(2026, 9, 12, 16, 0), 2),      # AA moves 7
-        ("2026_02_SS_BB", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_SS_BB", -20.0, dt.datetime(2026, 9, 12, 16, 0), 2),    # BB moves -20
-        ("2026_02_DD_CC", 1.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_DD_CC", 2.0, dt.datetime(2026, 9, 12, 16, 0), 2),      # CC-DD moves 1
-    ])
-    study = sc.study_rows(archive, games, tg).sort("game_id")
-    aa = study.filter(pl.col("game_id") == "2026_02_QQ_AA").row(0, named=True)
-    assert aa["week_mean"] == pytest.approx(1.0)                # CC-DD only, BB excluded
-    assert aa["adjusted_move"] == pytest.approx(6.0)
-
-
-def test_a_row_with_no_control_left_is_refused_not_fitted_as_a_zero_week_mean(rows):
-    """#303, defect 4, part two: a week where the only two archived games are both event
-    games has no control for either -- `week_mean` cannot be a genuine zero, since there was
-    nothing to average, and the row is dropped from the study rather than fitted as though
-    the week moved by nothing."""
-    rows_ = source_rows([
-        ("2026-09-06", 2026, "1.0", "AA", "PP", "a1", "p1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "AA", "QQ", "a2", "q1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-        ("2026-09-06", 2026, "1.0", "BB", "RR", "b1", "r1", 100.0, 90.0, 5.0, 3.0,
-         20, 10, .55, .58),
-        ("2026-09-13", 2026, "2.0", "BB", "SS", "b2", "s1", 150.0, 95.0, 40.0, 4.0,
-         17, 24, .60, .70),
-    ])
-    tg = sc.team_games(rows_)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert sorted(games["game_id"].to_list()) == ["2026_02_QQ_AA", "2026_02_SS_BB"]
-    archive = polls([
-        ("2026_02_QQ_AA", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_QQ_AA", 7.0, dt.datetime(2026, 9, 12, 16, 0), 2),
-        ("2026_02_SS_BB", 0.0, dt.datetime(2026, 9, 4, 16, 0), 2),
-        ("2026_02_SS_BB", -20.0, dt.datetime(2026, 9, 12, 16, 0), 2),
-    ])
-    study = sc.study_rows(archive, games, tg)
-    assert study.is_empty()
-
-
-def test_censored_separates_never_polled_from_polled_after_the_change(rows):
-    """#303, defect 5: `censored` alone cannot tell "the archive holds nothing for this game"
-    from "the archive polled it, just not before the change" -- two different facts a run
-    reporting one number conflates. One event game the archive never polled at all, one it
-    polled only the day after the change (both censored), and one properly frozen."""
-    tg = sc.team_games(rows)
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    kc_la = games.filter(pl.col("game_id") == "2026_03_LA_KC")
-    never = kc_la.with_columns(pl.lit("2099_01_ZZ_ZZ").alias("game_id"))
-    late = kc_la.with_columns(pl.lit("2099_02_YY_YY").alias("game_id"))
-    both = pl.concat([kc_la, never, late])
-    archive = pl.concat([
-        ARCHIVE,
-        # "2099_02_YY_YY": polled, but only after the change (frozen_before is 09-20).
-        polls([("2099_02_YY_YY", 1.0, utc(21), 3), ("2099_02_YY_YY", 1.5, utc(26), 3)]),
-        # "2099_01_ZZ_ZZ" is never polled at all.
-    ])
-    priced = sc.priced(archive, both).sort("game_id")
-    never_row = priced.filter(pl.col("game_id") == "2099_01_ZZ_ZZ").row(0, named=True)
-    late_row = priced.filter(pl.col("game_id") == "2099_02_YY_YY").row(0, named=True)
-    kc_row = priced.filter(pl.col("game_id") == "2026_03_LA_KC").row(0, named=True)
-    assert never_row["censored"] and never_row["never_polled"]
-    assert late_row["censored"] and not late_row["never_polled"]
-    assert not kc_row["censored"] and not kc_row["never_polled"]
-
-
-def test_the_fit_recovers_the_slope_and_takes_its_error_from_the_floor():
-    """Moves manufactured at 0.132 points per unit of gap plus a week effect; after the
-    week's mean is subtracted the slope is the benchmark, and the standard error is the
-    floor per window over the gap's spread and root n - 1 (OLS's own denominator, #303),
-    not the residual's."""
-    gaps = [-150.0, -80.0, -20.0, 30.0, 90.0, 140.0]
-    rows_ = pl.DataFrame({
-        "season": [2026] * 6, "week": [1, 1, 2, 2, 3, 3], "game_id": [f"g{i}" for i in range(6)],
-        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps],
-        "window_days": [7.0] * 6})
-    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
-    assert fit["beta"] == pytest.approx(0.132)
-    assert fit["n"] == 6
-    floor_window = 0.4 * math.sqrt(7.0)
-    sd_gap = statistics.stdev(gaps)
-    assert fit["se"] == pytest.approx(floor_window / (sd_gap * math.sqrt(5)))
-    assert fit["mde"] == pytest.approx(
-        (experiment.t_quantile(0.975, 5) + 0.8416) * fit["se"], abs=1e-3)
-    assert fit["benchmark"] == sc.BENCHMARK == pytest.approx(3.3 / 25)
-    assert fit["t_vs_benchmark"] == pytest.approx(0.0)
-
-
-def test_the_slope_se_at_n_equals_2_differs_from_the_old_root_n_formula_by_41_percent():
-    """#303, defect 6, the n=2 case named in the ticket: dividing by root n instead of root
-    (n - 1) understates the standard error, and at n=2 the gap between the two denominators
-    (root 1 vs root 2) is its largest relative size, about 41%."""
-    gaps = [-60.0, 60.0]
-    rows_ = pl.DataFrame({
-        "season": [2026, 2026], "week": [1, 1], "game_id": ["g0", "g1"],
-        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps], "window_days": [7.0, 7.0]})
-    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
-    floor_window = 0.4 * math.sqrt(7.0)
-    sd_gap = statistics.stdev(gaps)
-    correct_se = floor_window / (sd_gap * math.sqrt(1))          # n - 1 = 1
-    old_wrong_se = floor_window / (sd_gap * math.sqrt(2))        # the bug's n
-    assert fit["se"] == pytest.approx(correct_se)
-    relative_gap = (correct_se - old_wrong_se) / old_wrong_se
-    assert relative_gap == pytest.approx(math.sqrt(2) - 1.0, rel=1e-9)
-    assert relative_gap > 0.4                                    # "41% at 2" (#303's ticket)
-
-
-def test_the_slope_se_at_n_equals_53_is_immaterially_different_from_root_n():
-    """#303, defect 6, the n=53 case named in the ticket: at a season's worth of events the
-    root n and root (n - 1) denominators are close, so the fix moves `se` by about 1%."""
-    gaps = [float(i - 26) * 5.0 for i in range(53)]               # 53 distinct, mean-zero-ish
-    rows_ = pl.DataFrame({
-        "season": [2026] * 53, "week": [1] * 53, "game_id": [f"g{i}" for i in range(53)],
-        "net_gap": gaps, "adjusted_move": [0.132 * g for g in gaps], "window_days": [7.0] * 53})
-    fit = sc.study_fit(rows_, floor_per_root_day=0.4)
-    floor_window = 0.4 * math.sqrt(7.0)
-    sd_gap = statistics.stdev(gaps)
-    correct_se = floor_window / (sd_gap * math.sqrt(52))
-    old_wrong_se = floor_window / (sd_gap * math.sqrt(53))
-    assert fit["se"] == pytest.approx(correct_se)
-    relative_gap = abs(correct_se - old_wrong_se) / old_wrong_se
-    assert relative_gap < 0.02                                    # "immaterial at 53"
-
-
-def test_the_study_mde_before_the_run_is_stated_from_the_events_gap_spread():
-    """With no archived event the MDE line is still stated: the pinned file's gap spread,
-    the noise floor per window, and the event count a season carries -- over root (n - 1),
-    matching `study_fit`'s own denominator (#303)."""
-    line = sc.study_mde(n=53, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4)
-    assert line == pytest.approx((experiment.t_quantile(0.975, 52) + 0.8416)
-                                 * 0.4 * math.sqrt(7.0) / (70.0 * math.sqrt(52)), abs=1e-4)
-
-
-def _fit(*, beta, se, n, sd_gap=float("nan"), floor_window=float("nan")):
-    """A `study_fit`-shaped summary built directly -- rule 15's fixture for a function whose
-    own input is a summary dict, not a frame `study_fit` would have to be driven through."""
-    return {"n": float(n), "beta": beta, "se": se,
-            "mde": experiment.minimum_detectable_effect(se, n), "benchmark": sc.BENCHMARK,
-            "t_vs_benchmark": (beta - sc.BENCHMARK) / se if se else float("nan"),
-            "sd_gap": sd_gap, "floor_window": floor_window}
-
-
-def test_verdict_adopts_when_the_lower_bound_clears_delta():
-    """n=10, se=0.002: the MDE clears delta (about 0.0062 against 0.0075) and beta=0.02 puts
-    the interval's lower bound, not the point estimate, above delta -- ADOPT reads the bound."""
-    fit = _fit(beta=0.02, se=0.002, n=10)
-    assert fit["mde"] < sc.DELTA
-    lo, _hi = sc.study_interval(fit)
-    assert lo > sc.DELTA
-    label, sentence = sc.verdict(fit)
-    assert label == "ADOPT"
-    assert f"{lo:+.4f}" in sentence
-    assert "route back opens" in sentence and "-qb mark" in sentence
-
-
-def test_verdict_shows_when_positive_but_the_lower_bound_does_not_clear_delta():
-    """Same n and se as the ADOPT fixture, beta lowered so the lower bound is positive but at
-    or below delta -- 'a real effect too small to price', the ADOPTED comment's own words."""
-    fit = _fit(beta=0.009, se=0.002, n=10)
-    assert fit["mde"] < sc.DELTA
-    lo, _hi = sc.study_interval(fit)
-    assert 0 < lo <= sc.DELTA
-    label, sentence = sc.verdict(fit)
-    assert label == "SHOW"
-    assert "too small to price" in sentence and "harness-only" in sentence
-
-
-def test_verdict_removes_when_the_interval_excludes_zero_negatively():
-    """Same n and se, beta negative enough that the whole interval sits below zero -- the
-    market moving the wrong way on a downgrade, REMOVE's own condition."""
-    fit = _fit(beta=-0.02, se=0.002, n=10)
-    assert fit["mde"] < sc.DELTA
-    _lo, hi = sc.study_interval(fit)
-    assert hi < 0
-    label, sentence = sc.verdict(fit)
-    assert label == "REMOVE"
-    assert "Exhibit" in sentence and "ADR-0007" in sentence and "hub.models" in sentence
-
-
-def test_verdict_is_not_runnable_when_the_mde_exceeds_delta_and_names_the_events_needed():
-    """A wide se (0.01 against 0.002 above) pushes the MDE above delta regardless of the point
-    estimate -- no branch reads the interval, and the sentence names the event games delta
-    needs, off the same sd_gap/floor_window `study_events_needed` itself reads."""
-    fit = _fit(beta=0.132, se=0.01, n=10, sd_gap=66.3, floor_window=0.4 * math.sqrt(7.0))
-    assert fit["mde"] > sc.DELTA
-    needed = sc.study_events_needed(fit["sd_gap"], fit["floor_window"])
-    assert needed is not None
-    label, sentence = sc.verdict(fit)
-    assert label == "NOT-RUNNABLE"
-    assert "No branch below is read" in sentence
-    assert str(needed) in sentence
-
-
-def test_verdict_is_not_runnable_with_no_usable_spread_and_says_so():
-    """No rows at all -- `study_fit`'s own n<2 shape, sd_gap and floor_window both NaN. The
-    sentence says the event count cannot be stated rather than printing a stale or NaN one."""
-    fit = _fit(beta=float("nan"), se=float("nan"), n=0)
-    label, sentence = sc.verdict(fit)
-    assert label == "NOT-RUNNABLE"
-    assert "cannot be stated from these inputs" in sentence
-
-
-def test_the_gap_sd_restatement_flag_is_silent_inside_the_band_and_fires_outside_it():
-    """50-85 inclusive, the band the per-season gap sds (50.3-80.4) DELTA was derived from
-    round out to; a value the pre-registration's own worked example would have flagged."""
-    assert sc.gap_sd_restatement_flag(66.3) is None
-    assert sc.gap_sd_restatement_flag(50.0) is None
-    assert sc.gap_sd_restatement_flag(85.0) is None
-    below = sc.gap_sd_restatement_flag(49.9)
-    above = sc.gap_sd_restatement_flag(85.1)
-    assert below is not None and "derivation flagged for restatement" in below
-    assert above is not None and "derivation flagged for restatement" in above
-
-
-def test_the_benchmark_reading_is_replication_below_or_above():
-    """Three fitted intervals against 0.132 -- containing it, entirely below, entirely above.
-    None of the three verdict sentences above (ADOPT/SHOW/REMOVE) mention 0.132: the reading
-    is informational and never part of the rule."""
-    assert (sc.benchmark_reading(0.132, 0.10, 0.16)
-            == "replication (the interval contains 0.132)")
-    assert sc.benchmark_reading(0.05, 0.02, 0.09) == "below 0.132"
-    assert sc.benchmark_reading(0.20, 0.15, 0.25) == "above 0.132"
-
-
-def test_study_events_needed_matches_the_mde_search_it_runs():
-    """Constructed against the search itself rather than a hardcoded n: the returned count's
-    own MDE clears delta and one fewer event game's does not. The denominator is n - 1,
-    matching `study_fit`'s own (#303)."""
-    sd_gap, floor_window = 66.3, 0.4 * math.sqrt(7.0)
-    n = sc.study_events_needed(sd_gap, floor_window)
-    assert n is not None
-    se_n = floor_window / (sd_gap * math.sqrt(n - 1))
-    se_prev = floor_window / (sd_gap * math.sqrt(n - 2))
-    assert experiment.minimum_detectable_effect(se_n, n) <= sc.DELTA
-    assert experiment.minimum_detectable_effect(se_prev, n - 1) > sc.DELTA
-
-
-def test_study_events_needed_is_none_with_no_usable_spread():
-    assert sc.study_events_needed(float("nan"), float("nan")) is None
-    assert sc.study_events_needed(0.0, 1.0) is None
-
-
-def test_the_noise_floor_excludes_a_change_the_chart_dates_between_the_polls():
-    """#330: `starters` is the depth-chart frame `odds.load_qb_starters` returns -- `dt` the
-    chart's own timestamp, published day by day through the week -- and never this module's
-    own team-game rows, whose `date` is *kickoff*. A real archive's polls of a game all
-    precede that game's own kickoff, so a change dated at kickoff is invisible to every one
-    of them and a starters frame built off kickoff dates can never exclude the interval it
-    exists to exclude -- which is exactly the shape the superseded fixture missed, dating a
-    team's *other* game between two polls of this one, a shape no real archive has.
-
-    Same three pre-kickoff polls of DAL-PHI, KC-LAC and SF-SEA throughout: a chart entry
-    dated *between* the DAL-PHI polls excludes that interval (KC-LAC and SF-SEA are the two
-    left); the identical chart dating the same change *at* kickoff -- after both polls --
-    does not, because neither poll's as-of lookup ever sees it."""
-    g1, g2, g3 = "2026_01_DAL_PHI", "2026_01_KC_LAC", "2026_01_SF_SEA"
-    tue = dt.datetime(2026, 8, 25, 4, 58)
-    thu = dt.datetime(2026, 8, 28, 2, 1)
-    kickoff = dt.datetime(2026, 9, 13, 17, 0)                    # well after both polls
-    polls_ = pl.DataFrame({
-        "game_id": [g1, g1, g2, g2, g3, g3],
-        "close_spread": [-3.0, -3.5, -3.0, -3.5, 1.0, 1.5],
-        "captured_at": [tue, thu, tue, thu, tue, thu],
-        "week": [1, 1, 1, 1, 1, 1]},
-        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
-                "captured_at": pl.Datetime("us"), "week": pl.Int64})
-    base = [(dt.datetime(2026, 8, 1), "PHI", "qb-phi"), (dt.datetime(2026, 8, 1), "DAL", "qb-dal-1"),
-            (dt.datetime(2026, 8, 1), "KC", "qb-kc"), (dt.datetime(2026, 8, 1), "LAC", "qb-lac"),
-            (dt.datetime(2026, 8, 1), "SF", "qb-sf"), (dt.datetime(2026, 8, 1), "SEA", "qb-sea")]
-
-    def _chart(extra):
-        rows_ = [*base, extra]
-        return pl.DataFrame({"dt": [r[0] for r in rows_], "team": [r[1] for r in rows_],
-                             "qb": [r[2] for r in rows_]})
-
-    mid_week = _chart((dt.datetime(2026, 8, 26), "DAL", "qb-dal-2"))
-    floor, floor_games, not_applied = sc.noise_floor_per_root_day([(2026, polls_, mid_week)])
-    assert not_applied == ()
-    assert floor_games == 2 and math.isfinite(floor)      # KC-LAC and SF-SEA survive
-
-    at_kickoff = _chart((kickoff, "DAL", "qb-dal-2"))
-    floor2, floor_games2, not_applied2 = sc.noise_floor_per_root_day([(2026, polls_, at_kickoff)])
-    assert not_applied2 == ()
-    assert floor_games2 == 3 and math.isfinite(floor2)    # neither poll sees the change
-
-
-def test_the_noise_floor_with_no_starters_names_the_season_not_applied():
-    """The degradation `noise_floor_per_root_day` shares with `noise_floor_report`: with no
-    chart for a season, that season's live intervals are still counted -- not dropped as
-    unknown -- and the season is named in the returned `not_applied` tuple rather than
-    letting a caller print an unconditioned number under the same-quarterback label."""
-    polls_ = pl.DataFrame({
-        "game_id": ["2026_01_DAL_PHI", "2026_01_DAL_PHI"],
-        "close_spread": [-3.0, -3.5],
-        "captured_at": [dt.datetime(2026, 8, 25, 4, 58), dt.datetime(2026, 8, 28, 2, 1)],
-        "week": [1, 1]},
-        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
-                "captured_at": pl.Datetime("us"), "week": pl.Int64})
-    _floor, floor_games, not_applied = sc.noise_floor_per_root_day([(2026, polls_, None)])
-    assert not_applied == (2026,)
-    assert floor_games == 1
-
-
-def test_the_noise_floor_covers_every_season_with_its_own_chart():
-    """#331: `odds._starter_at` is a backward as-of join, so a chart fetched for one season
-    cannot condition another season's polls -- fetching once for the last season only left
-    every earlier season's intervals with `same_qb` null, dropped as unknown, and the run
-    line still called the result same-quarterback. One `(season, polls, starters)` triple
-    per season: with a chart for both 2025 and 2026, both seasons' games reach `floor_games`
-    -- neither silently drops out for lacking the other season's chart; with a chart for
-    2026 only, 2025's game is still counted (unconditioned rather than dropped) and 2025 is
-    the one named in `not_applied`."""
-    g2025, g2026_stable, g2026_change = "2025_01_AA_BB", "2026_01_KC_LAC", "2026_01_DAL_PHI"
-    tue, thu = dt.datetime(2026, 8, 25, 4, 58), dt.datetime(2026, 8, 28, 2, 1)
-    polls_2025 = pl.DataFrame({
-        "game_id": [g2025, g2025], "close_spread": [1.0, 1.5],
-        "captured_at": [dt.datetime(2025, 8, 25, 4, 58), dt.datetime(2025, 8, 28, 2, 1)],
-        "week": [1, 1]},
-        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
-                "captured_at": pl.Datetime("us"), "week": pl.Int64})
-    polls_2026 = pl.DataFrame({
-        "game_id": [g2026_stable, g2026_stable, g2026_change, g2026_change],
-        "close_spread": [-3.0, -3.5, 2.0, 2.5], "captured_at": [tue, thu, tue, thu],
-        "week": [1, 1, 1, 1]},
-        schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
-                "captured_at": pl.Datetime("us"), "week": pl.Int64})
-    chart_2025 = pl.DataFrame({
-        "dt": [dt.datetime(2025, 8, 1), dt.datetime(2025, 8, 1)], "team": ["AA", "BB"],
-        "qb": ["qb-aa", "qb-bb"]})
-    chart_2026 = pl.DataFrame({
-        "dt": [dt.datetime(2026, 8, 1)] * 4 + [dt.datetime(2026, 8, 26)],
-        "team": ["KC", "LAC", "PHI", "DAL", "DAL"],
-        "qb": ["qb-kc", "qb-lac", "qb-phi", "qb-dal-1", "qb-dal-2"]})
-
-    both = sc.noise_floor_per_root_day(
-        [(2025, polls_2025, chart_2025), (2026, polls_2026, chart_2026)])
-    floor, floor_games, not_applied = both
-    assert not_applied == ()
-    assert floor_games == 2 and math.isfinite(floor)      # 2025's game and KC-LAC both count
-
-    one = sc.noise_floor_per_root_day(
-        [(2025, polls_2025, None), (2026, polls_2026, chart_2026)])
-    floor2, floor_games2, not_applied2 = one
-    assert not_applied2 == (2025,)
-    assert floor_games2 == 2 and math.isfinite(floor2)    # 2025's game still counted
-
-
-# --- typed results (#345): the CLI's own computation, extracted so a test can assert on
-# values instead of driving `main` and parsing sentences.
-
-
-def test_same_quarterback_floor_label_applied_when_every_season_with_polls_has_a_chart():
-    label, note = sc.same_quarterback_floor_label(2, (), [])
-    assert label == "same-quarterback floor" and note == ""
-
-
-def test_same_quarterback_floor_label_applied_when_no_season_has_polls_to_condition():
-    """`n_seasons == 0` reads the same as `not not_applied`: nothing to try is not a failure
-    to try, and the label says nothing failed rather than naming an empty list."""
-    label, note = sc.same_quarterback_floor_label(0, (), [])
-    assert label == "same-quarterback floor" and note == ""
-
-
-def test_same_quarterback_floor_label_is_partial_when_some_seasons_charts_fail():
-    label, note = sc.same_quarterback_floor_label(
-        2, (2025,), ["2025 (ConnectionError: no network)"])
-    assert label == "same-quarterback floor, PARTIAL"
-    assert "same-quarterback NOT applied for 2025" in note and "ConnectionError" in note
-
-
-def test_same_quarterback_floor_label_is_not_applied_when_every_seasons_chart_fails():
-    label, note = sc.same_quarterback_floor_label(
-        2, (2025, 2026), ["2025 (ConnectionError: a)", "2026 (ConnectionError: b)"])
-    assert label == "all-games floor, SAME-QUARTERBACK NOT APPLIED"
-    assert "2025" in note and "2026" in note
-
-
 def test_season_event_summaries_returns_one_typed_record_per_season(rows):
     """KC's two in-season changes (Gabbert in, Mahomes back) and LA's one offseason change
     (flagged, not an event) are all dated season 2026 -- the fixture `SEASON`'s own comment
     names the Rams' change as the offseason one. Cross-checked against `_event_lines`'
     sentence, built from the same inputs, so a divergence between the typed record and the
     printed line cannot land unnoticed."""
-    tg = sc.team_games(rows)
-    ev = sc.events(tg)
-    games = sc.event_games(sc.in_season_events(ev))
+    tg = se.team_games(rows)
+    ev = se.events(tg)
+    games = se.event_games(se.in_season_events(ev))
     got = sc.season_event_summaries(ev, games)
     assert [s.season for s in got] == [2026]
     s = got[0]
@@ -1219,43 +273,6 @@ def test_season_event_summaries_returns_one_typed_record_per_season(rows):
     line = f"    {s.season}: {s.changes} changes on {s.games} event games, gap sd {s.gap_sd:.1f} " \
            f"value units (n={s.n_gaps}); {s.offseason} offseason change(s) not events"
     assert line in sc._event_lines(ev, games, since=2022)
-
-
-def test_study_report_returns_typed_results_matching_its_own_components(rows):
-    """Built the same way `main`'s `--study` block builds its inputs, with no depth chart for
-    the fixture's one season. Calling `study_report`'s own components by hand on the same
-    inputs is the check that the typed result computes nothing differently from what `main`
-    used to compute inline before #345."""
-    tg = sc.team_games(rows)
-    ev = sc.events(tg)
-    games = sc.event_games(sc.in_season_events(ev))
-    season_games = games
-    study_parts: list[tuple[int, pl.DataFrame, pl.DataFrame | None]] = [(2026, ARCHIVE, None)]
-    qb_notes = ["2026 (ConnectionError: no chart)"]
-
-    rep = sc.study_report(study_parts, qb_notes, ev, games, ARCHIVE, season_games, tg)
-    assert isinstance(rep, sc.StudyReport)
-
-    floor, floor_games, not_applied = sc.noise_floor_per_root_day(study_parts)
-    label, qb_note = sc.same_quarterback_floor_label(len(study_parts), not_applied, qb_notes)
-    assert rep.floor == floor and rep.floor_games == floor_games
-    assert rep.label == label and rep.qb_note == qb_note
-    assert rep.unplayed == sc.unplayed_study_games(ARCHIVE, season_games, tg)
-
-    rows_ = sc.study_rows(ARCHIVE, season_games, tg,
-                          floor_per_root_day=floor if math.isfinite(floor) else None)
-    assert rep.established == (not rows_.is_empty())
-    assert rep.n_events == rows_.height
-    fit = sc.study_fit(rows_, floor_per_root_day=rep.used)
-    for key, want in fit.items():
-        got = rep.fit[key]
-        assert got == pytest.approx(want, nan_ok=True), key
-    assert (rep.verdict_label, rep.verdict_sentence) == sc.verdict(fit)
-    if rep.established:
-        lo, hi = sc.study_interval(fit)
-        assert rep.benchmark_sentence == sc.benchmark_reading(fit["beta"], lo, hi)
-    else:
-        assert rep.benchmark_sentence is None
 
 
 # --- the entry point ---------------------------------------------------------------------
@@ -1315,38 +332,17 @@ def test_the_cli_without_a_cache_is_a_sentence_not_a_traceback(tmp_path, capsys)
     assert "nfeloqb" in capsys.readouterr().err
 
 
-def test_events_found_in_play_by_play_price_off_the_pinned_file(rows):
-    """The other starter source: a change identified by passer id joins the source's values
-    by (team, game) and by (team, previous game), so the gap is the pinned file's whichever
-    source named the change."""
-    tg = sc.team_games(rows)
-    starters = tg.select("game_id", "season", "week", "team").with_columns(
-        pl.when((pl.col("team") == "KC") & (pl.col("week") == 3)).then(pl.lit("00-gabbert"))
-          .when(pl.col("team") == "KC").then(pl.lit("00-mahomes"))
-          .otherwise(pl.lit("00-other")).alias("qb"))
-    ev = sc.with_values(sc.in_season_events(sc.events(starters)), tg)
-    kc = ev.sort("week")
-    assert kc["departing"].to_list() == ["00-mahomes", "00-gabbert"]
-    assert kc["gap"].to_list() == [60.0 - 205.0, 199.0 - 60.0]
-    assert kc["prev_date"].to_list() == ["2026-09-20", "2026-09-27"]
-
-
 def test_no_event_at_all_yields_empty_frames_with_the_schema(rows):
     """A season with no change: the readers get the empty frame in the declared shape, not
     a traceback from a group_by over nothing."""
-    tg = sc.team_games(rows).filter(pl.col("team") == "DEN")
-    games = sc.event_games(sc.in_season_events(sc.events(tg)))
-    assert games.is_empty() and list(games.columns) == list(sc.EVENT_GAME_SCHEMA)
+    tg = se.team_games(rows).filter(pl.col("team") == "DEN")
+    games = se.event_games(se.in_season_events(se.events(tg)))
+    assert games.is_empty() and list(games.columns) == list(se.EVENT_GAME_SCHEMA)
     assert sc.gate_rows(ARCHIVE, games, tg, rows).is_empty()
-    assert sc.study_rows(ARCHIVE, games, tg).is_empty()
+    assert ss.study_rows(ARCHIVE, games, tg).is_empty()
     assert math.isnan(
-        sc.study_fit(sc.study_rows(ARCHIVE, games, tg), floor_per_root_day=0.4)["beta"])
-    assert math.isnan(sc.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
-
-
-def test_rows_without_a_week_are_refused_by_name():
-    with pytest.raises(ValueError, match="week"):
-        sc.team_games(source_rows(SEASON).drop("week"))
+        ss.study_fit(ss.study_rows(ARCHIVE, games, tg), floor_per_root_day=0.4)["beta"])
+    assert math.isnan(ss.study_mde(n=1, sd_gap=70.0, window_days=7.0, floor_per_root_day=0.4))
 
 
 def test_the_cli_reads_a_store_with_an_archive_and_reports_the_study(tmp_path, capsys,
@@ -1491,65 +487,6 @@ def test_the_cli_with_no_reader_asked_for_prints_usage(capsys):
     assert "usage:" in capsys.readouterr().out
 
 
-# --- the event source is play-by-play (#420, ADOPTED (B) on #421) -----------------------------
-#
-# Rule 18: each check below is run against the condition it exists to detect. The mutation
-# each one was seen red under is named in its docstring.
-
-
-def _pbp_events(rows_df, pbp=None):
-    """The in-season events the study reads, built as `study_events` builds them."""
-    frame = pbp_for(rows_df) if pbp is None else pbp
-    tg = sc.team_games_from_pbp(frame, schedule_for(rows_df))
-    return tg, sc.in_season_events(sc.events(sc.observed(tg)))
-
-
-def test_a_starter_change_in_play_by_play_is_detected_as_an_event(rows):
-    """#420's control 1: KC's first pass goes from Mahomes to Gabbert in week 3 and back in
-    week 4, and both are events, dated off the schedule with the previous-game link. The Rams'
-    change across the offseason is flagged, not counted. Mutation: `events` filtering on
-    `arriving == departing` (or `starters_from_pbp` reading the last passer, which is the
-    backup here) leaves this red."""
-    _, ev = _pbp_events(rows)
-    got = ev.sort("team", "week").select("team", "week", "departing", "arriving", "prev_date")
-    assert got.rows() == [("KC", 3, "Mahomes", "Gabbert", "2026-09-20"),
-                          ("KC", 4, "Gabbert", "Mahomes", "2026-09-27")]
-
-
-def test_the_same_starter_across_games_is_no_event(rows):
-    """Control 2: with Gabbert's game given to Mahomes, nobody changes in-season -- the Rams'
-    offseason change is still flagged and still not counted. Mutation: dropping the
-    `in_season` filter from `in_season_events` turns the Rams' offseason change into an event
-    and this red."""
-    same = rows.with_columns(pl.col("qb1").str.replace("Gabbert", "Mahomes"))
-    tg, ev = _pbp_events(same)
-    assert ev.is_empty()
-    assert sc.events(sc.observed(tg)).filter(~pl.col("in_season")).height == 1
-
-
-def test_a_later_trick_play_is_not_a_change_and_a_first_one_is_the_rules_counted_cost(rows):
-    """Control 3. The rule is the passer of the *first* pass play, so a wide receiver's pass
-    after it changes nothing; and a wide receiver's pass that *opens* a game names him the
-    starter, which reads as a change out and a change back. The second half is what the rule
-    does, not what a position-aware rule would do, and it is pinned so that adding a guard is
-    a decision with this test's name on it: the reconciliation counts the exposure at six of
-    2,174 team-games with a first passer who threw two or fewer, and a guard chosen after
-    that count would be a second definition of "starter" (method rule 1). Mutation: sorting
-    `starters_from_pbp` by passer id, not play id, turns the first assertion red."""
-    base = pbp_for(rows)
-    kc2 = (pl.col("game_id") == "2026_02_KC_DEN") & (pl.col("posteam") == "KC")
-    later = pl.concat([base, base.filter(kc2 & (pl.col("play_id") == 2.0)).with_columns(
-        pl.lit(2.5).alias("play_id"), pl.lit("00-aaa-wr").alias("passer_player_id"))])
-    _, ev = _pbp_events(rows, later)
-    assert ev.sort("week")["arriving"].to_list() == ["Gabbert", "Mahomes"]      # unchanged
-
-    opened = base.with_columns(
-        pl.when(kc2 & (pl.col("play_id") == 2.0)).then(pl.lit("00-wr"))
-          .otherwise(pl.col("passer_player_id")).alias("passer_player_id"))
-    _, ev = _pbp_events(rows, opened)
-    assert ev.sort("week")["arriving"].to_list() == ["00-wr", "Gabbert", "Mahomes"]
-
-
 def test_an_event_with_no_lookahead_price_is_censored_and_counted_not_dropped(
         tmp_path, capsys, rows):
     """Control 4: both of the fixture's event games are priced by no poll at all -- the state of
@@ -1569,89 +506,6 @@ def test_an_event_with_no_lookahead_price_is_censored_and_counted_not_dropped(
     assert "reconciliation against the pinned file" in out          # the pbp path, not the file's
 
 
-def test_a_frozen_price_that_is_also_the_only_pre_game_price_has_no_window(rows):
-    """The 2026 shape the maintainer's note ("weeks 1-5 stay censored") did not name: the
-    back-filled lookahead predates the season, so a week-2 event *has* a frozen price -- and
-    the same capture is its last one before the game day. It is not censored, and it is not
-    a move of zero; `priced` marks it `windowless` and `study_rows` refuses it. The positive
-    control is the same game with a later poll, which has a window. Mutation: dropping the
-    `windowless` term from `_priced_both_ways` leaves the first block red."""
-    tg, ev = _pbp_events(rows)
-    games = sc.event_games(sc.with_values(ev, sc.team_games(rows)))
-    lone = polls([("2026_03_LA_KC", 3.0, utc(15), 3)])
-    got = sc.priced(lone, games).filter(pl.col("game_id") == "2026_03_LA_KC")
-    assert got["censored"].to_list() == [False] and got["windowless"].to_list() == [True]
-    assert sc._priced_both_ways(lone, games).is_empty()
-    assert sc.study_rows(lone, games, tg).is_empty()
-
-    later = polls([("2026_03_LA_KC", 3.0, utc(15), 3), ("2026_03_LA_KC", 2.0, utc(24), 3)])
-    got = sc.priced(later, games).filter(pl.col("game_id") == "2026_03_LA_KC")
-    assert got["windowless"].to_list() == [False]
-    assert sc._priced_both_ways(later, games)["game_id"].to_list() == ["2026_03_LA_KC"]
-
-
-def test_an_event_whose_starter_the_pinned_file_cannot_value_has_no_gap_not_a_zero(rows):
-    """A change whose arriving starter the pinned file holds no value for -- every 2026 event
-    past the pin -- joins to a null gap, and its game has a null net gap: unknown, never zero.
-    The study refuses it and counts it (`unvalued_study_games`); the game where the file does
-    value both starters is untouched. Mutation: restoring `fill_null(0.0)` over the changed
-    side's gap (the old `net_gap`) makes `net_gap` 0.0 and the first assertion red."""
-    tg, ev = _pbp_events(rows)
-    file_tg = sc.team_games(rows)
-    blind = file_tg.filter(pl.col("game_id") != "2026_03_LA_KC")        # no values for week 3
-    games = sc.event_games(sc.with_values(ev, blind))
-    by_game = dict(zip(games["game_id"], games["net_gap"], strict=True))
-    assert by_game["2026_03_LA_KC"] is None
-    assert by_game["2026_04_DEN_KC"] is None            # its departing starter is the week-3 one
-    valued = sc.event_games(sc.with_values(ev, file_tg))
-    assert valued["net_gap"].null_count() == 0
-    assert sc.unvalued_study_games(ARCHIVE, games) == 2
-    assert sc.unvalued_study_games(ARCHIVE, valued) == 0
-    assert sc.study_rows(ARCHIVE, games, tg).is_empty()
-
-
-def test_with_values_keeps_the_dates_events_already_carry(rows):
-    """Events built off the schedule carry a date for every game; the pinned file has dates
-    for only the games it holds. `with_values` joins values and leaves dates alone -- so a
-    game the file does not hold (here, every week after week 3) keeps its date rather than
-    losing it to a null join. Mutation: re-deriving the dates from `tg` (the old behaviour)
-    nulls `prev_date` for week 4 and this goes red."""
-    _, ev = _pbp_events(rows)
-    only_early = sc.team_games(rows).filter(pl.col("week") <= 3)
-    got = sc.with_values(ev, only_early).sort("week")
-    assert got["prev_date"].to_list() == ["2026-09-20", "2026-09-27"]
-    assert got["date"].to_list() == ["2026-09-27", "2026-10-04"]
-    assert got["arriving_value"].to_list() == [60.0, None]
-
-
-def test_the_reconciliation_counts_agreement_and_stays_inside_what_both_observe(rows):
-    """Both sources name the same two KC changes, over the team-games both hold. Give
-    play-by-play a week-3 starter equal to week 2's and the file's two events become a
-    disagreement it counts (file 2, pbp 0, both 0); take week 4 out of the file and that game
-    is outside the comparison rather than a miss. Mutation: counting a game one source lacks
-    (dropping the semi-join that restricts play-by-play to the file's games) leaves the last block red."""
-    file_tg = sc.team_games(rows)
-    pbp_tg = sc.team_games_from_pbp(pbp_for(rows), schedule_for(rows))
-    agree = sc.reconcile(pbp_tg, file_tg)
-    assert agree == sc.Reconciliation(compared=file_tg.height, file=2, pbp=2, both=2)
-
-    same = sc.team_games_from_pbp(
-        pbp_for(rows.with_columns(pl.col("qb1").str.replace("Gabbert", "Mahomes"))),
-        schedule_for(rows))
-    assert sc.reconcile(same, file_tg) == sc.Reconciliation(
-        compared=file_tg.height, file=2, pbp=0, both=0)
-
-    early = file_tg.filter(pl.col("week") <= 3)
-    got = sc.reconcile(pbp_tg, early)
-    assert got == sc.Reconciliation(compared=early.height, file=1, pbp=1, both=1)
-
-
-def _played(rows_df):
-    """The fixture with its week-4 game played, so a game with a result and no observed
-    starter is something a test can make."""
-    return rows_df.with_columns(pl.col("score1").fill_null(24), pl.col("score2").fill_null(17))
-
-
 def test_a_season_played_past_the_source_is_not_established_and_counts_once_it_is(
         tmp_path, capsys):
     """#420's positive control (rule 18): week 4 is played and play-by-play has no pass for
@@ -1661,7 +515,7 @@ def test_a_season_played_past_the_source_is_not_established_and_counts_once_it_i
     (week 4's passes present) prints the season's two changes and no such line. Mutation:
     `beyond_event_horizon` returning `{}` leaves the first block red; ignoring `qb` nulls in
     it leaves the second red."""
-    played = _played(source_rows(PRIOR + SEASON))
+    played = played_rows(source_rows(PRIOR + SEASON))
     cache = tmp_path / "nfeloqb"
     cache.mkdir()
     played.write_csv(cache / nfeloqb.FILE)
@@ -1705,7 +559,7 @@ def test_prices_past_the_archives_last_poll_are_not_established_and_are_once_it_
     game on 2026-10-04 cannot have a frozen price from them. Advanced past the last game, no
     season is reported. Mutation: comparing `date` to the *first* poll day instead of the last
     leaves the second assertion red."""
-    played_tg = sc.team_games(_played(rows))
+    played_tg = se.team_games(played_rows(rows))
     got = sc.beyond_price_horizon(ARCHIVE, played_tg)
     assert got == {2026: sc.Beyond("2026-09-30", 2)}
     ahead = polls([("2026_04_DEN_KC", 1.0, dt.datetime(2026, 10, 5, 16), 4)])
@@ -1744,34 +598,3 @@ def test_the_study_reads_the_committed_snapshots_and_prices_an_event_off_them(
     assert "committed snapshots read: 2 file(s)" in out
     assert "2026: 2 event games; 1 censored (no snapshot before the change could be known: " \
            "1 never polled at all, 0 polled only after the change), 1 with a frozen price" in out
-
-
-def test_a_schedule_without_the_dates_and_results_is_refused_by_name(rows):
-    """The study cannot date or settle a game off a schedule that lacks the columns, and says
-    which ones rather than failing in a join. Mutation: removing the check turns this red with
-    a polars error instead of the sentence."""
-    with pytest.raises(ValueError, match="gameday"):
-        sc.schedule_team_games(schedule_for(rows).drop("gameday"))
-
-
-def test_a_refresh_that_fails_is_served_last_good_and_named(rows):
-    """The season in progress is refreshed on every run; if the wire is down the cached entry
-    answers and the run line says which source it was (graceful degradation, CLAUDE.md). Each
-    source here raises on its first read and serves on its second, so the refresh fails and
-    the fallback read succeeds. Mutation: `_last_good` letting the refresh's error through
-    makes this red; dropping the `stale` bookkeeping makes the tuple come back empty."""
-    calls = {"pbp": 0, "schedules": 0}
-    frame, sched = pbp_for(rows), schedule_for(rows)
-
-    def flaky(name, table):
-        def read(keys):
-            calls[name] += 1
-            if calls[name] == 1:
-                raise ConnectionError("wire down")
-            return table.filter(pl.col("season").is_in([int(k) for k in keys]))
-        return read
-
-    replay.serve(pbp=flaky("pbp", frame), schedules=flaky("schedules", sched))
-    got = sc.pbp_team_games([2026])
-    assert got.stale == ("play-by-play 2026", "schedules")
-    assert got.tg.filter(pl.col("qb").is_not_null()).height > 0

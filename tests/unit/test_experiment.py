@@ -2059,3 +2059,29 @@ def test_the_rate_is_a_stated_choice_and_the_default():
 def test_an_empty_family_is_reported_as_empty():
     fd = experiment.false_discovery([])
     assert fd.tests == 0 and fd.threshold == 0.0 and fd.adjusted == () and fd.rejected == ()
+
+
+def test_smallest_n_resolving_is_the_first_n_whose_mde_clears_the_target():
+    """#346: the one search for "how many would it take". At se = 1/sqrt(n) the MDE is 9.58 at
+    two clusters, 2.97 at three and 2.01 at four, so a target of 2.5 needs four and a target of
+    10 needs two -- and the answer is the same loop written out by hand."""
+    def se_at(n):
+        return 1.0 / math.sqrt(n)
+
+    assert experiment.smallest_n_resolving(2.5, se_at, cap=100) == 4
+    assert experiment.smallest_n_resolving(10.0, se_at, cap=100) == 2
+    by_hand = next(n for n in range(2, 101)
+                   if experiment.minimum_detectable_effect(se_at(n), n) <= 2.5)
+    assert experiment.smallest_n_resolving(2.5, se_at, cap=100) == by_hand
+
+
+def test_smallest_n_resolving_is_none_when_no_n_up_to_the_cap_reaches_the_target():
+    """A target the cap cannot reach is None, not the cap; and a design with no usable standard
+    error (NaN, so a NaN MDE) never reaches anything, rather than stopping the search early."""
+    assert experiment.smallest_n_resolving(0.0001, lambda n: 1.0 / math.sqrt(n), cap=50) is None
+    assert experiment.smallest_n_resolving(1e9, lambda n: float("nan"), cap=50) is None
+
+
+def test_smallest_n_resolving_starts_where_asked():
+    assert experiment.smallest_n_resolving(10.0, lambda n: 1.0 / math.sqrt(n), cap=50,
+                                           start=7) == 7

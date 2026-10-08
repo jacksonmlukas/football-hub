@@ -419,6 +419,24 @@ def minimum_detectable_effect(se: float, clusters: int) -> float:
             + statistics.NormalDist().inv_cdf(POWER)) * se
 
 
+def smallest_n_resolving(target: float, se_at: Callable[[int], float], *, cap: int,
+                         start: int = 2) -> int | None:
+    """The smallest cluster count `n` in `start..cap` at which the MDE is at or below `target`,
+    or None when none reaches it (#346).
+
+    `se_at(n)` is the standard error the design would have at `n` clusters; the MDE at `n` is
+    `minimum_detectable_effect(se_at(n), n)`, so this is the one search for "how many would it
+    take" -- the pilot's event-seasons for the quarterback gate and the event games for the
+    line-move study both ask it, each with its own `se_at`, rather than each writing the loop.
+    A NaN MDE (no usable `se_at`) never reaches the target, so a design with no spread returns
+    None and does not stop the search early. The caller guards what its own inputs must satisfy
+    before the search is meaningful (a finite target, a positive spread)."""
+    for n in range(start, cap + 1):
+        if minimum_detectable_effect(se_at(n), n) <= target:
+            return n
+    return None
+
+
 def t_interval(mean: float, se: float, clusters: int) -> tuple[float, float]:
     """The t-based interval `mean +/- t(1 - alpha/2, clusters - 1) * se`.
 

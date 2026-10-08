@@ -126,7 +126,7 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_lump_on_the_favourite_s_side_keeps_the_gaussian",
         "test_a_binding_ceiling_makes_the_shape_gate_not_runnable",
     )),
-    "hub.models.starter_change.verdict": ("tests/unit/test_starter_change.py", (
+    "hub.models.starter_study.verdict": ("tests/unit/test_starter_study.py", (
         "test_verdict_adopts_when_the_lower_bound_clears_delta",
         "test_verdict_removes_when_the_interval_excludes_zero_negatively",
         "test_verdict_is_not_runnable_when_the_mde_exceeds_delta_and_names_the_events_needed",

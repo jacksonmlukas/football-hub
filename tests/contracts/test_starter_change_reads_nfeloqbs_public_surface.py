@@ -1,4 +1,5 @@
-"""`hub.models.starter_change` reads `hub.fetch.nfeloqb` through its public surface only (#339).
+"""The starter-change modules read `hub.fetch.nfeloqb` through its public surface only (#339,
+#346: the events, the gate and the study are three modules now, and each is scanned).
 
 Before this ticket the event construction reached past the fetch module's public surface six
 times -- `nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank` once -- to rebuild, by
@@ -21,7 +22,10 @@ import ast
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "hub"
-MODULE_PATH = SRC / "models" / "starter_change.py"
+MODULE_PATHS = tuple(SRC / "models" / f"{name}.py"
+                     for name in ("starter_events", "starter_study", "starter_change"))
+# The two that read the source at all; the study reads it through the events.
+READERS = (SRC / "models" / "starter_events.py", SRC / "models" / "starter_change.py")
 
 # The fetch module `hub.models.starter_change` is asked to read through its public surface
 # only, and the one column name -- 538's own spelling table -- reaching it directly would be
@@ -51,9 +55,10 @@ def _violations(text: str) -> list[str]:
 
 
 def test_starter_change_imports_no_underscore_name_from_nfeloqb_and_reads_no_abbreviations():
-    hits = _violations(MODULE_PATH.read_text())
+    hits = [f"{path.name} {hit}" for path in MODULE_PATHS
+            for hit in _violations(path.read_text())]
     assert hits == [], (
-        "hub.models.starter_change reaches past hub.fetch.nfeloqb's public surface:\n  "
+        "a starter-change module reaches past hub.fetch.nfeloqb's public surface:\n  "
         + "\n  ".join(hits) + "\n"
         "hub.fetch.nfeloqb owns the source's raw schema -- the two-sided row, the blank "
         "convention, the abbreviation map -- and a reach past its public names here is "
@@ -107,11 +112,13 @@ def main():
 
 
 def test_the_module_still_imports_nfeloqb_at_all():
-    """The denominator the two tests above assume: if `starter_change.py` stopped importing
-    `hub.fetch.nfeloqb` altogether, both would pass over a file that reads nothing from it,
+    """The denominator the two tests above assume: if `starter_events.py` or `starter_change.py` stopped
+    importing `hub.fetch.nfeloqb` altogether, both would pass over a file that reads nothing from it,
     which is not the property #339 established."""
-    tree = ast.parse(MODULE_PATH.read_text())
-    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
-    assert "hub.fetch" in imported, (
-        "hub/models/starter_change.py no longer imports from hub.fetch at all -- the tests "
-        "above are vacuous over a module that reads nothing from hub.fetch.nfeloqb")
+    for path in READERS:
+        tree = ast.parse(path.read_text())
+        imported = {(node.module, alias.name) for node in ast.walk(tree)
+                    if isinstance(node, ast.ImportFrom) for alias in node.names}
+        assert ("hub.fetch", "nfeloqb") in imported, (
+            f"{path.name} no longer imports hub.fetch.nfeloqb at all -- the tests above are "
+            f"vacuous over a module that reads nothing from it")
