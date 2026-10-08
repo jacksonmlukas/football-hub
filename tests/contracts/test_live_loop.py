@@ -26,6 +26,7 @@ for the reason `heartbeat.sh` takes a URL. Everything between them -- `live-loop
 that will run on a Sunday.
 """
 import json
+import os
 import re
 import subprocess
 import time
@@ -82,6 +83,22 @@ requests.get = _get
 '''
 
 
+# A clock the loop reads instead of the machine's: `date +%s` is a counter that ticks once per
+# reading, and `sleep N` advances it by N without waiting. Put first on PATH for the one test
+# whose property is arithmetic on the clock (#459). Every cycle then "costs" the same few
+# ticks, whatever the machine is doing.
+FAKE_DATE = """#!/usr/bin/env bash
+[ "${1:-}" = "+%s" ] || exec /bin/date "$@"
+n=$(cat "$FAKE_CLOCK" 2>/dev/null || echo 1000)
+echo $(( n + 1 )) > "$FAKE_CLOCK"
+echo "$n"
+"""
+FAKE_SLEEP = """#!/usr/bin/env bash
+n=$(cat "$FAKE_CLOCK" 2>/dev/null || echo 1000)
+echo $(( n + ${1%.*} )) > "$FAKE_CLOCK"
+"""
+
+
 class Run:
     """One run of the loop, and everything it left behind."""
 
@@ -113,13 +130,22 @@ class Run:
         self.board.write_text("down" if payload == "down" else json.dumps(payload))
 
     def go(self, seconds: int, interval: int, league: str = "nfl",
-           deploy_exit: int = 0) -> subprocess.CompletedProcess:
+           deploy_exit: int = 0, fake_clock: bool = False) -> subprocess.CompletedProcess:
+        extra: dict[str, str] = {}
+        if fake_clock:
+            bindir = self.root / "clockbin"
+            bindir.mkdir(exist_ok=True)
+            for name, body in (("date", FAKE_DATE), ("sleep", FAKE_SLEEP)):
+                (bindir / name).write_text(body)
+                (bindir / name).chmod(0o755)
+            extra = {"FAKE_CLOCK": str(self.root / "clock"),
+                     "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
         got = subprocess.run(
             [str(SCRIPT), str(seconds), str(interval), league, str(self.site),
              str(self.deploy)],
             capture_output=True, text=True, timeout=300,
             env={**_env(), "PYTHONPATH": str(self.shim), "FAKE_ESPN": str(self.board),
-                 "DEPLOY_EXIT": str(deploy_exit)})
+                 "DEPLOY_EXIT": str(deploy_exit), **extra})
         assert got.returncode == 0, got.stdout + got.stderr
         return got
 
@@ -137,7 +163,6 @@ class Run:
 
 
 def _env() -> dict:
-    import os
     return {k: v for k, v in os.environ.items() if k not in ("FAKE_ESPN",)}
 
 
@@ -321,9 +346,16 @@ def test_the_cycles_land_at_the_interval_asked_for(run):
     pacing from the cycle start makes `nap` shrink as the work grows, and the two always sum
     to the interval. Sleeping the interval *after* the work makes `nap` the interval every
     time, whatever the work cost. Load moves both numbers and cannot break the identity.
+
+    **The clock is the loop's own, not the machine's (#459).** The window is 9s of the
+    loop's time and one cycle must finish and nap inside it for any schedule to print. On the
+    real clock a first cycle of 7s or more (two interpreter starts on a machine at load ~40)
+    ended the loop before it printed a line, and this failed with "no schedule at all" --
+    reproduced 6 of 6 at 100 busy processes. The fake clock makes every cycle cost the same
+    few ticks, so the property no longer depends on how fast the machine is.
     """
     run.espn(ONE_GAME)
-    got = run.go(seconds=9, interval=2)
+    got = run.go(seconds=9, interval=2, fake_clock=True)
 
     paced = [tuple(int(n) for n in m)
              for m in re.findall(r"paced: work (\d+)s, nap (\d+)s, interval (\d+)s",
