@@ -979,16 +979,8 @@ ACTIONS = Actions(
 # that separate frame (`top`, below) rather than `paired` itself.
 HARNESS = Harness(name="draft", arm_a="optimizer", arm_b="market", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS, ceiling_column="diff",
-                  # The import closure `test_every_gate_declares_the_code_it_runs` walks (#439);
-                  # `championship_equity` scores arm B.
-                  arm_modules=(
-                      "hub.draft.adp_history", "hub.draft.availability", "hub.draft.backtest",
-                      "hub.draft.board", "hub.draft.cohort", "hub.draft.durability",
-                      "hub.draft.optimize", "hub.draft.picks", "hub.draft.playoff_sos",
-                      "hub.draft.prior_signal", "hub.draft.regression", "hub.draft.report",
-                      "hub.draft.season", "hub.draft.state", "hub.exhibits.championship_equity",
-                      "hub.holdout", "hub.league", "hub.models.components", "hub.models.predict",
-                      "hub.models.volume", "hub.names"))
+                  # `championship_equity` (arm B's scorer) is reached by import (#442).
+                  arm_roots=("hub.draft.backtest",))
 
 
 def run_recipe(*, seasons: Sequence[int], drafts: int, rounds: int, draft_sims: int,

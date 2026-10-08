@@ -43,11 +43,11 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.cli import unavailable
+from hub.closure import import_closure, module_digests
 from hub.config import FANTASY_WEEKS
 from hub.declare import decision, not_an_input
 from hub.fetch import consensus
 from hub.fetch.consensus import Capture
-from hub.ledger import import_closure, module_digests
 from hub.models.experiment import PLAYER_STATS_COLS, Actions, Ceiling, GateRun, gate
 from hub.season.weekly_gate import CEILING_ARM, WITHIN, void_condition
 
@@ -60,7 +60,7 @@ DESIGN = "docs/weekly-forward.md"
 
 # The arm the design pinned (#456): the first-party import closure of the code the forward
 # measurement runs, walked from the modules that define the arm (`ARM_ROOTS`) with the same
-# walker and the same exemptions as the ledger's code declaration (`hub.ledger.import_closure`,
+# walker and the same exemptions as the ledger's code declaration (`hub.closure.import_closure`,
 # `CLOSURE_EXEMPT`, #439), each module's source hashed. A reading taken on a closure that differs
 # in any module -- one edited, one added, one gone -- refuses, and the refusal names which. It
 # replaces #432's pin of the blob of `hub/exhibits/weekly_projection.py` alone, which could not
@@ -89,15 +89,15 @@ PINNED_ARM_MODULES: dict[str, str] = {
     "hub.models.base": "8c41cd5f26d1",
     "hub.models.components": "c402b0c4856f",
     "hub.models.conformal": "f98558ab2051",
-    "hub.models.coverage": "e036e1981cef",
-    "hub.models.margin": "9da0f4839e89",
+    "hub.models.coverage": "fcfc597b98e8",
+    "hub.models.margin": "8d58c201cc4b",
     "hub.models.market": "098baf487556",
     "hub.models.panel": "2f9f2aad1946",
     "hub.models.predict": "ddf960a1dfe6",
     "hub.models.scoring_rules": "3c201f3a0d6f",
     "hub.models.volume": "31e5321b1e6d",
     "hub.names": "93e503040186",
-    "hub.season.weekly_gate": "211f84e4a564",
+    "hub.season.weekly_gate": "73cc434a55db",
     "hub.season.weekly_gate_data": "1823ccae01c3",
 }
 

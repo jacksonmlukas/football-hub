@@ -208,7 +208,7 @@ def test_an_edit_to_an_exempt_module_does_not_refuse_and_the_exemption_holds(mon
     leaves the reading alone. The reason holds only if the module really is outside what the arm
     computes: `hub.paths` is constants and `hub.config` is hashed by `config_digest`; neither is
     reached except as an exempt import. Plant an edit in each and the closure is unchanged."""
-    from hub.ledger import CLOSURE_EXEMPT, closure_exempt
+    from hub.closure import CLOSURE_EXEMPT, closure_exempt
 
     for module in ("hub.paths", "hub.config", "hub.jsonio"):
         assert closure_exempt(module) and module in CLOSURE_EXEMPT and CLOSURE_EXEMPT[module]
@@ -225,7 +225,7 @@ def test_an_edit_to_an_exempt_module_does_not_refuse_and_the_exemption_holds(mon
 def test_the_pinned_closure_is_the_roots_import_closure_and_holds_both_roots():
     """The pin follows the imports: the roots are in it, the walk is the ledger's, and the
     forward harness itself (which reads the verdict, not the arm) is not."""
-    from hub.ledger import import_closure
+    from hub.closure import import_closure
 
     assert set(wf.PINNED_ARM_MODULES) == import_closure(wf.ARM_ROOTS)
     assert set(wf.ARM_ROOTS) <= set(wf.PINNED_ARM_MODULES)
