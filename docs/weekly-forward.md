@@ -541,3 +541,15 @@ read by the arm.
 | `hub.models.panel` `99d19fba99e0` | `2f9f2aad1946` |
 
 The other 27 rows of the table above stand. (Previous digest `7bc93c290a5cc331`.)
+
+## Amended 2026-10-08: the two re-pins above, combined (#442 with #313; prior text kept)
+
+Both re-pins above were taken from the #456 table (digest `7bc93c290a5cc331`) and landed
+together, so neither section's digest is the pin now. They touch disjoint modules: #442 moved
+`hub.models.coverage`, `hub.models.margin` and `hub.season.weekly_gate`; #313 moved
+`hub.models.components` and `hub.models.panel`. Each table row above that is not one of those
+five stands. Nothing else changed in the merge, and the closure is still the same 29 modules.
+
+**The pin now, digest `cf9b4b9eea056369`** (was `fc8042b7baaf9f88` on #442 alone and
+`c891aaf58f135479` on #313 alone): the #442 table with `hub.models.components` `b23c5d7d0c49`
+and `hub.models.panel` `99d19fba99e0` taken from #313's.
