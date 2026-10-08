@@ -19,10 +19,15 @@ no length of a game is written below. A game belongs to a window when its kickof
 reports it, falls inside the window -- which is how the windows were drawn (each opens at or
 before the earliest kickoff it is for).
 
-**What counts as a check.** Any run of the watchdog workflow created inside the window, of any
-event and any conclusion. A run that failed still ran, and a failed *job* is its own report.
-A run created after the window closed -- the late delivery that does the reporting -- is not
-inside it, which is the point.
+**What counts as a check.** Two things (#457). Any run of the watchdog workflow created inside
+the window, of any event and any conclusion -- a run that failed still ran, and a failed *job*
+is its own report. And any `live` run that *ended* inside the window having finished or been
+handed over (`success` or `cancelled`), because `live.yml` performs the watchdog check as the
+last step of its own loop, so a window with a refresher has a check by construction. A `live`
+run is dated by when it ended, because that is when its check happened; one still running has
+not checked yet, and one that failed may have died before its check step. A run created after
+the window closed -- the late delivery that does the reporting -- is not inside it, which is
+the point.
 
 **What it cannot see.** A window in which one check ran at the very end and nothing before it
 is not reported: "no check ran" is the claim, and that window had one. A refresher that was
@@ -179,10 +184,11 @@ def render(gaps: Sequence[Gap], watchdog: str = "watchdog") -> str:
     `--body-file`, never substituted into a shell string."""
     lines = [
         MARKER,
-        f"No `{watchdog}` check ran during {len(gaps)} game window(s). The workflow shares a "
-        f"scheduler with `live`, and GitHub drops scheduled runs under load, so a window can "
-        f"pass with no refresher and no alarm about it (#391). This was found after the fact, "
-        f"by the first run delivered since.",
+        f"No `{watchdog}` check ran during {len(gaps)} game window(s), and no `live` run "
+        f"finished in it either. `live` performs the check as a step of its own loop (#457), "
+        f"so this is a window with no refresher at all: GitHub drops scheduled runs under "
+        f"load, and the cron that should have started one was never delivered (#391). This "
+        f"was found after the fact, by the daily look-back.",
         "",
     ]
     for g in gaps:
@@ -241,12 +247,27 @@ def espn_kickoffs(window: Window) -> list[dt.datetime]:
     return out
 
 
+# Workflows whose check is a step at the end of the run rather than the run itself (#457):
+# the check happened when the run ended, and only a run that got to the end counts.
+CHECK_AT_END = frozenset({"live.yml"})
+FINISHED = frozenset({"success", "cancelled"})
+
+
 def check_times(workflow: str, repo: str) -> list[dt.datetime]:
-    """When each recent run of `workflow` was created. Raises when `gh` cannot say."""
+    """When each recent run of `workflow` performed a check. Raises when `gh` cannot say.
+
+    A watchdog run is its creation time. A `live` run (`CHECK_AT_END`) is its end time, and
+    only if it finished or was handed over -- see the module docstring.
+    """
+    at_end = workflow in CHECK_AT_END
     got = subprocess.run(
         ["gh", "run", "list", "--workflow", workflow, "--repo", repo, "--limit", "500",
-         "--json", "createdAt"], capture_output=True, text=True, timeout=120, check=True)
-    return [parse_kickoff(r["createdAt"]) for r in json.loads(got.stdout)]
+         "--json", "createdAt,updatedAt,conclusion"],
+        capture_output=True, text=True, timeout=120, check=True)
+    rows = json.loads(got.stdout)
+    if not at_end:
+        return [parse_kickoff(r["createdAt"]) for r in rows]
+    return [parse_kickoff(r["updatedAt"]) for r in rows if r.get("conclusion") in FINISHED]
 
 
 # --- the CLI ----------------------------------------------------------------------------------
@@ -260,7 +281,9 @@ def main(argv: Sequence[str] | None = None,
                     "`new=M` for $GITHUB_OUTPUT; writes the incident text to --report when "
                     "there is something new to say.")
     ap.add_argument("--live-yml", type=Path, default=Path(".github/workflows/live.yml"))
-    ap.add_argument("--workflow", default="watchdog.yml")
+    ap.add_argument("--workflow", action="append", default=None,
+                    help="a workflow whose runs count as a check; repeatable "
+                         "(default: watchdog.yml and live.yml)")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--season-opens", default="",
                     help="ISO date; windows that closed before it are not looked at")
@@ -277,7 +300,8 @@ def main(argv: Sequence[str] | None = None,
         if args.season_opens:
             opens = dt.datetime.fromisoformat(args.season_opens).replace(tzinfo=UTC)
             wins = [w for w in wins if w.start >= opens]
-        checks = checks_fn(args.workflow, args.repo)
+        checks = [t for w in (args.workflow or ["watchdog.yml", "live.yml"])
+                  for t in checks_fn(w, args.repo)]
     except Exception as e:
         # Not "no gaps". A check that cannot read the run list has established nothing, and
         # exiting 0 here is how it would stay quiet for as long as its token was wrong.
@@ -290,7 +314,7 @@ def main(argv: Sequence[str] | None = None,
     print(f"gaps={len(gaps)}")
     print(f"new={len(fresh)}")
     if fresh and args.report:
-        atomic.write_text(args.report, render(fresh, args.workflow.removesuffix(".yml")))
+        atomic.write_text(args.report, render(fresh))
     return 0
 
 

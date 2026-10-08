@@ -277,3 +277,81 @@ def test_check_times_reads_gh_json(monkeypatch):
     assert wg.check_times("watchdog.yml", "o/r") == [dt.datetime(2026, 9, 29, 6, 42, 11,
                                                                  tzinfo=UTC)]
     assert seen["cmd"][:3] == ["gh", "run", "list"] and "watchdog.yml" in seen["cmd"]
+
+
+# --- #457: a `live` run is a check, and a window with neither is still found -----------------
+#
+# `live.yml` performs the watchdog check at the end of its loop, so the look-back counts a
+# finished `live` run as one. The planted timestamps are the 2026-10-06 window (the second of
+# #416's two): one kickoff at 00:15Z, the look-back run delivered at 06:42Z.
+
+OCT6_KICK = dt.datetime(2026, 10, 6, 0, 15, tzinfo=UTC)
+OCT6_NOW = dt.datetime(2026, 10, 6, 6, 42, tzinfo=UTC)
+
+
+def _by_workflow(watchdog=(), live=()):
+    def fn(workflow, repo):
+        return list({"watchdog.yml": watchdog, "live.yml": live}[workflow])
+    return fn
+
+
+def _lookback(tmp_path, capsys, checks_fn, kicks=(OCT6_KICK,)):
+    report = tmp_path / "gap.md"
+    args = ["--live-yml", str(LIVE_YML), "--repo", "o/r", "--now", OCT6_NOW.isoformat(),
+            "--report", str(report), "--season-opens", "2026-10-06"]
+    assert wg.main(args, _board(*kicks), checks_fn) == 0
+    return capsys.readouterr().out.split(), report
+
+
+def test_planted_a_window_with_no_live_run_and_no_watchdog_run_is_still_detected(
+        tmp_path, capsys):
+    """The Rule-18 control for 'the look-back still catches a window where live did not
+    run'. The only evidence anywhere is a live run that ended *before* the window opened."""
+    before = dt.datetime(2026, 10, 5, 22, 0, tzinfo=UTC)
+    out, report = _lookback(tmp_path, capsys, _by_workflow(live=[before]))
+    assert out == ["gaps=1", "new=1"]
+    assert "2026-10-06T00:00Z" in report.read_text()
+
+
+def test_planted_a_live_run_that_ended_inside_the_window_is_a_check(tmp_path, capsys):
+    ended = dt.datetime(2026, 10, 6, 2, 5, tzinfo=UTC)
+    out, report = _lookback(tmp_path, capsys, _by_workflow(live=[ended]))
+    assert out == ["gaps=0", "new=0"]
+    assert not report.exists()
+
+
+def test_a_live_run_that_started_before_the_window_and_ended_in_it_is_a_check(
+        tmp_path, capsys):
+    """Dated by its end: the check is the loop's last step, so it happened in the window
+    even though the run was created before it."""
+    out, _ = _lookback(tmp_path, capsys,
+                       _by_workflow(live=[dt.datetime(2026, 10, 6, 1, 55, tzinfo=UTC)]))
+    assert out == ["gaps=0", "new=0"]
+
+
+def test_the_incident_text_says_no_refresher_ran_either(tmp_path, capsys):
+    _, report = _lookback(tmp_path, capsys, _by_workflow())
+    assert "no `live` run" in report.read_text()
+
+
+@pytest.mark.parametrize("workflow, conclusion, counts", [
+    ("live.yml", "success", True),
+    ("live.yml", "cancelled", True),          # the normal hand-over ends a run this way
+    ("live.yml", "failure", False),           # may have died before its check step
+    ("live.yml", "", False),                  # still running: has not checked yet
+    ("watchdog.yml", "failure", True),        # unchanged: a failed watchdog run still ran
+])
+def test_which_runs_count_as_a_check(monkeypatch, workflow, conclusion, counts):
+    import subprocess
+
+    class Done:
+        stdout = ('[{"createdAt": "2026-10-06T00:30:00Z", "updatedAt": "2026-10-06T02:30:00Z", '
+                  f'"conclusion": "{conclusion}"}}]')
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: Done())
+    got = wg.check_times(workflow, "o/r")
+    if not counts:
+        assert got == []
+    elif workflow == "live.yml":
+        assert got == [dt.datetime(2026, 10, 6, 2, 30, tzinfo=UTC)], "dated by its end"
+    else:
+        assert got == [dt.datetime(2026, 10, 6, 0, 30, tzinfo=UTC)], "dated by its start"

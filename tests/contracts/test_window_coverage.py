@@ -10,7 +10,7 @@ from pathlib import Path
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 LIVE = (WORKFLOWS / "live.yml").read_text()
-WATCHDOG = (WORKFLOWS / "watchdog.yml").read_text()
+WATCHDOG = (WORKFLOWS / "watchdog-lookback.yml").read_text()   # the gaps job moved here (#457)
 
 
 def _step(text: str, name: str) -> str:
@@ -39,20 +39,23 @@ def test_the_re_dispatch_carries_no_window_of_its_own():
 
 
 def test_the_continue_step_runs_after_the_loop_and_is_the_last_step():
+    """The watchdog check (#457) sits between them: the hand-over dispatches the run that
+    cancels this one, so anything after it may never run."""
     steps = re.findall(r"^      - (?:name|uses|run): (.*)$", LIVE, flags=re.MULTILINE)
     loop = next(i for i, s in enumerate(steps) if s.startswith("Refresh the overlay"))
+    check = next(i for i, s in enumerate(steps) if s.startswith("Watchdog check"))
     cont = next(i for i, s in enumerate(steps) if s.startswith("Continue while"))
-    assert cont == loop + 1 == len(steps) - 1
+    assert loop < check < cont == len(steps) - 1
 
 
 def test_the_dispatch_has_the_permission_it_needs_and_the_group_still_hands_over():
-    assert re.search(r"permissions:\n  contents: read\n  actions: write", LIVE)
+    assert re.search(r"permissions:\n  contents: read\n  actions: write\n  issues: write", LIVE)
     assert re.search(r"concurrency:\n  group: live-loop\n  cancel-in-progress: true", LIVE), (
         "the hand-over relies on the new run replacing this one; a group that queued instead "
         "would leave two loops, or the new one waiting out a loop that has already finished")
 
 
-def test_the_watchdog_has_a_gap_job_and_no_new_cron():
+def test_the_look_back_has_a_gap_job_and_no_window_cron():
     job = re.search(r"\n  gaps:\n(.*)", WATCHDOG, flags=re.DOTALL)
     assert job, "no gaps job"
     body = job.group(1)
@@ -60,7 +63,7 @@ def test_the_watchdog_has_a_gap_job_and_no_new_cron():
     assert "<!-- watchdog-gap -->" in body, "its own marker, so it closes only its own incident"
     assert "actions: read" in body, "`gh run list` needs it, and a job-level block replaces the workflow's"
     assert "issues: write" in body and "contents: read" in body
-    assert "cron:" not in body, "the window is the crons above, not a second schedule"
+    assert "cron:" not in body, "the window is live.yml's crons, not a second schedule"
 
 
 def test_a_failure_to_read_the_run_history_fails_the_job():
