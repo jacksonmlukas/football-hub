@@ -585,13 +585,31 @@ NEXTGEN_STATS = Contract(
 # roster spot to a person. `pos_slot` and `pos_rank` ran 1-12 and 1-15 across that pull;
 # widened per the data-contracts skill's rule (from history, not theory) to leave room for a
 # deeper chart without admitting a units change.
+#
+# **The position and the depth order (#336).** Three columns say who is where, and they are not
+# interchangeable. `pos_abb` is the position itself (`QB`, `WR`, `LT`, ... -- 31 values across
+# the 2025 pull); `pos_grp` is the *formation* the chart is drawn in (`3WR 1TE`, `Base 4-3 D`,
+# `Base 3-4 D`, `Special Teams`) and says nothing about position -- every quarterback sits in
+# `3WR 1TE`. `pos_slot` numbers the slot within that formation (the quarterback is always
+# slot 9; wide receivers are 1, 2 and 8) and `pos_rank` is the depth at the slot, 1 the
+# starter. So "the starting quarterback" is `pos_abb == "QB"` and `pos_rank == 1`, and it is
+# exactly one row per (`dt`, `team`) -- 7,071 charts of 7,071 across the 2025 pull. `pos_abb`
+# was read by `hub.fetch.odds._qb_starters` and declared by nothing here, so the day nflverse
+# renamed it the contract would have passed and the study would have failed one layer later
+# with a bare column error; it is required now. `dt` is non-null because it is the chart's own
+# timestamp, which `odds._starter_at`'s as-of join reads a chart's moment from.
+#
+# Checked against `nflverse_depth_charts.json`, a real 2025 capture (#336): one team's
+# quarterback room on the two charts either side of a real change of starter.
 DEPTH_CHARTS = Contract(
     name="nflverse_depth_charts",
     required={"dt": pl.Utf8, "team": pl.Utf8, "player_name": pl.Utf8, "gsis_id": pl.Utf8,
-              "pos_grp": pl.Utf8, "pos_slot": pl.Int32, "pos_rank": pl.Int32},
-    non_null=("dt", "team", "pos_grp", "pos_slot", "pos_rank"),
+              "pos_grp": pl.Utf8, "pos_abb": pl.Utf8, "pos_slot": pl.Int32,
+              "pos_rank": pl.Int32},
+    non_null=("dt", "team", "pos_grp", "pos_abb", "pos_slot", "pos_rank"),
     ranges={"pos_slot": (1, 20), "pos_rank": (1, 20)},
     min_rows=1,
+    verified_against_live=True,
 )
 
 PLAYER_STATS = Contract(

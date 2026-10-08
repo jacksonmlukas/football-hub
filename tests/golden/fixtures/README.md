@@ -40,6 +40,7 @@ sentence stop agreeing.
 | `nflverse_ff_rankings.json` | **Captured** 2026-09-05 from the `all` archive, 8 rows scraped 2025-08-29 — see below |
 | `nflverse_injuries.json` | **Captured** 2026-09-05, real 2024 injury report, 8 rows — see below |
 | `nflverse_snap_counts.json` | **Captured** 2026-09-05, real 2024 snap counts, 8 rows — see below |
+| `nflverse_depth_charts.json` | **Captured** 2026-10-08, real 2025 depth charts (`load_depth_charts([2025])`, 554,215 rows), 10 rows — see below |
 | `espn_scoreboard_cfb.json` | **Captured** 2026-09-05, the college board, all three states, trimmed — see below |
 | `espn_scoreboard_nfl.json` | **Captured** 2026-09-05, the NFL board, `pre` only — see below |
 | `cfbd_games.synthetic.json` | **Hand-built** from CFBD's documented response shape |
@@ -202,6 +203,23 @@ offensive snap, so the bottom of the `offense_pct` range is exercised as well as
 
 CFBD prohibits redistributing its data. A hand-built two-row shape sample is not a dataset,
 but a real capture would be -- if you replace these, keep them minimal.
+
+## `nflverse_depth_charts.json` — what #336 added
+
+Captured 2026-10-08 from `nflreadpy.load_depth_charts([2025])` (one bulk call, 554,215 rows,
+12 columns, 221 distinct `dt`), cut to ten rows: all of New Orleans' quarterbacks on the two
+charts either side of the first real change of starter in the season (`2025-08-03T10:09:07Z`
+and `2025-08-07T11:57:14Z`, the rank-1 quarterback differing between them), one wide receiver
+at rank 1 (so `pos_slot` is not constant), one entry carrying a name and no `gsis_id`, and one
+carrying neither. All twelve columns are kept, including the four `DEPTH_CHART_COLS` drops, so
+the capture is the table the source ships and `nflverse.load`'s narrowing is exercised on it.
+
+What the trim keeps is the path `hub.fetch.odds.qb_starters` walks: `pos_abb == "QB"`,
+`pos_rank == 1`, `dt` as an ISO string ending in `Z`. What it cannot show is a team with no
+quarterback on a chart, or more than one at rank 1 -- neither occurs in the 2025 pull (every
+(chart, team) has exactly one), so `qb_starters`'s refusal of a second is planted in
+`tests/unit/test_fetch_odds.py` instead. It is a 2025-shape capture; 2024-and-earlier arrives
+in a different shape that `DEPTH_CHARTS` does not describe (see its comment).
 
 ## `panel_archive/` — the seven #108 added
 
