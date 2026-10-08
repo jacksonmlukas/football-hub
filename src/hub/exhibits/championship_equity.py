@@ -83,7 +83,8 @@ from hub.draft.season import (
     talent_cv_for,
 )
 from hub.draft.state import DraftState
-from hub.models.predict import WEEKLY_SKEW_POOLED, CorrelationReport, moments
+from hub.models import predict
+from hub.models.predict import CorrelationReport, moments
 
 if TYPE_CHECKING:                  # `board` reaches this module function-locally, both ways
     from hub.draft.board import BuildReport
@@ -180,7 +181,7 @@ def win_probability(board: pl.DataFrame, state: DraftState, candidates: list[str
     # recompute it from `pos`, which agreed only because both routes read one table --
     # a per-player skew (from components, say) would have been computed here and silently
     # dropped on the way in.
-    skew = pred["skew"].fill_null(WEEKLY_SKEW_POOLED).to_numpy()
+    skew = pred["skew"].fill_null(predict.WEEKLY_SKEW_POOLED).to_numpy()
     pos = pool["pos"].fill_null("NA").to_numpy()
     # NFL team, so the simulator can correlate a quarterback with his own pass catchers.
     # Without it a stacked roster is drawn independent and comes out less volatile than it

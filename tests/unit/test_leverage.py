@@ -336,7 +336,7 @@ def test_it_draws_through_the_real_simulator():
     pts, _, _ = leverage._season(1.0, 1.0, 1.0, 64, 11)
     direct = simulate_weeks(
         leverage.ROSTERS, np.tile(leverage.MU, leverage.TEAMS),
-        np.tile(leverage.SD, leverage.TEAMS), leverage.POOL_POS,
+        np.tile(leverage.position_sd(), leverage.TEAMS), leverage.POOL_POS,
         n_sims=64, weeks=leverage.SIM_WEEKS, rng=np.random.default_rng(11),
         talent_cv=leverage._talent_cv(1.0))
     assert np.allclose(pts, direct)
@@ -344,7 +344,7 @@ def test_it_draws_through_the_real_simulator():
 
 def test_the_harness_uses_the_square_root_spread_law():
     """It hardcoded SD = MU * 0.55, which is the constant docs/weekly-spread.md replaced."""
-    from hub.draft.season import WEEKLY_K
+    from hub.models.predict import WEEKLY_K
     for i, p in enumerate(leverage.POS):
-        assert leverage.SD[i] == pytest.approx(
+        assert leverage.position_sd()[i] == pytest.approx(
             WEEKLY_K[str(p)] * np.sqrt(leverage.MU[i]), rel=1e-6)
