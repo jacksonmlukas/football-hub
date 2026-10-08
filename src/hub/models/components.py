@@ -24,6 +24,13 @@ Distributions are chosen from measured dispersion, not assumed. Weekly variance-
 ratios come out at 1.11 for receptions and 0.83-0.86 for each kind of touchdown -- all close
 enough to Poisson to use it -- while yards are continuous and right-skewed, so Gamma with a
 fitted coefficient of variation.
+
+**The expected columns are not point-in-time (named 2026-10-07, #313, audit IV R11).** The
+`_exp` columns `EXPECTED` maps are the output of a model nflverse fitted over its whole history,
+so a 2022 board reading 2021 values is reading numbers produced with sight of 2022 through 2025.
+The weeks averaged are point-in-time; the values are not, and everything downstream of the
+expected components (xFP, the Board, the Panel's `expected` priors) inherits it. The direction
+is not known, and no figure here measures it.
 """
 from __future__ import annotations
 

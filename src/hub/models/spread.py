@@ -43,6 +43,16 @@ review, and the four stamps.
 
 Both arms are always given the *same* `mu`, so the comparison isolates the spread question
 from projection error and cannot favour either arm.
+
+**The shape constant is fitted on survivors (named 2026-10-07, #313, audit IV R11).**
+`player_seasons` keeps a player-season only at `MIN_GAMES` games and a mean above `MIN_PPG` --
+both conditions on the realised outcome -- and `fit_weekly_law` fits `WEEKLY_K` on what is left,
+which `predict.moments` then applies to every player, the sub-three bench included. The excluded
+population is the high-variance tail, so the constant is biased *low* exactly where it is most
+often applied: intervals on low-mean players are too narrow (the direction is #313's argument,
+not yet a measurement; the refit is what measures it). The refit without the exclusion is
+#313's and waits on a pre-registered, adopted design (`docs/gate-power.md`); until it lands the
+shipped constant is the filtered one and this is its stated direction.
 """
 from __future__ import annotations
 

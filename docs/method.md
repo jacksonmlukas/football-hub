@@ -99,6 +99,29 @@ Four hand-written copies of a leakage invariant is four places a `<` can become 
 it would be silent, because a leaking model does not crash, it looks good. The AST guard
 `test_the_split_is_written_once` is what stops the four copies coming back.
 
+**Three leakage surfaces rule 2 does not close, named 2026-10-07 (#313, audit IV R11).** The
+rule says the *weeks* a feature averages are strictly before the outcome. It is silent on three
+ways the outcome window still reaches a figure, and they were true before they were written here.
+
+* *The expected-fantasy-point columns are not point-in-time.* They are the output of a model
+  nflverse fitted over its whole history, so a 2022 board reading 2021 values is reading numbers
+  produced with sight of 2022 through 2025. The weeks averaged are point-in-time; the values are
+  not. Everything built on xFP inherits it (the Board, the draft backtest's arm B, the screen
+  under `--expected`), and the direction is unmeasured.
+* *The Panel's inner join on consensus is a collider.* Every screen figure is conditional on
+  the player being ranked that week, which conditions on talent and opportunity jointly and
+  attenuates any feature whose effect runs through *he became relevant*. It was acknowledged as
+  a spec choice and never as a bias. The gate consumers do not take the join.
+* *The Friday scrape has seen Thursday night.* Conservative for the arm under test, not for the
+  consensus control: a control with one game of hindsight over-absorbs signal and biases every
+  partial correlation toward zero. (`panel.assign_weeks` said only the first half until today;
+  its sentence is kept and corrected beside it.)
+
+None of the three is fixed by this note; each is now named where the consumer renders its
+limits (`weekly_screen`'s printed limitations, `backtest.LIMITATIONS`) and in the owning
+module's docstring. The fourth leakage of audit IV R11, the spread law fitted on survivors, is
+a refit, not a disclosure; its state is in [weekly-spread.md](weekly-spread.md).
+
 ### 3. Repeated measures are not independent observations
 
 **The incident.** Eight weeks of the same player is not eight data points. Pooling them turned

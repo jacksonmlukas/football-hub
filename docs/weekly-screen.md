@@ -921,6 +921,19 @@ than the plan assumed. The gate should say so, and should report the same split:
 any win comes from features consensus could have priced, and how much from being newer than the
 snapshot we are measuring against.
 
+## Three leakage surfaces the screen inherits, named 2026-10-07 (#313)
+
+Every figure on this page is conditional on the player being ranked that week: the Panel's
+inner join on consensus is a collider, so the screen measures a feature *among players the
+consensus already ranked*, which attenuates any feature whose effect runs through his becoming
+relevant. The consensus control is a Friday scrape that has seen Thursday night, conservative
+for the feature under test and not for the control, which over-absorbs signal and biases the
+partial correlations toward zero. And under `--expected` the priors are nflverse's expected-point
+values, fitted over its whole history and not point-in-time. None of the published figures is
+restated, because none of the three has been measured; the direction of each is the reader's to
+weigh, and the screen now prints all three at the end of every run
+(`weekly_screen.SCREEN_LIMITATIONS`). See [method.md](method.md), rule 2.
+
 ## The family, counted, and the false-discovery threshold beside the rule
 
 **Added 2026-09-11, issue #37, under [method.md rule 14](method.md).** Nothing on this page
