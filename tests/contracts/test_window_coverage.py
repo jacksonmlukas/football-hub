@@ -49,7 +49,8 @@ def test_the_continue_step_runs_after_the_loop_and_is_the_last_step():
 
 
 def test_the_dispatch_has_the_permission_it_needs_and_the_group_still_hands_over():
-    assert re.search(r"permissions:\n  contents: read\n  actions: write\n  issues: write", LIVE)
+    assert re.search(r"permissions:\n  contents: read\n  actions: write\n\n", LIVE), (
+        "the workflow-level block is the narrow one; `issues: write` is the job's (#461)")
     assert re.search(r"concurrency:\n  group: live-loop\n  cancel-in-progress: true", LIVE), (
         "the hand-over relies on the new run replacing this one; a group that queued instead "
         "would leave two loops, or the new one waiting out a loop that has already finished")

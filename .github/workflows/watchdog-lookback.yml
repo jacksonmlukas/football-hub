@@ -24,9 +24,9 @@ permissions:
   contents: read
   issues: write
 
-env:
-  # See `watchdog.yml`; the same fact about the calendar, held in the same words there.
-  SEASON_OPENS: "2026-09-09"
+# No `SEASON_OPENS` here: the season's first game is held once, in `watchdog.yml`'s `env`,
+# and `hub.watchdog_gap --season-opens-from` reads it from that file (#461). A second literal
+# is a second place to forget in August.
 
 jobs:
   # A game window in which **no watchdog check ran at all** (#391). The heartbeat job
@@ -81,7 +81,7 @@ jobs:
               --json body,comments --jq '.body, (.comments[].body)' > "$RUNNER_TEMP/known.txt"
           fi
           RESULT=$(uv run python -m hub.watchdog_gap --repo "${{ github.repository }}" \
-            --season-opens "$SEASON_OPENS" --known-file "$RUNNER_TEMP/known.txt" \
+            --season-opens-from .github/workflows/watchdog.yml --known-file "$RUNNER_TEMP/known.txt" \
             --report "$RUNNER_TEMP/gap.md")
           CODE=$?
           if [ "$CODE" -ne 0 ]; then

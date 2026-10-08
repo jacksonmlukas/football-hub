@@ -71,9 +71,10 @@ def _problems(wf: dict) -> list[str]:
     handover = _steps(wf)[names.index(HANDOVER)] if HANDOVER in names else {}
     if handover.get("if") and "failure" in str(handover["if"]):
         out.append("the hand-over is gated on the check's outcome")
-    perms = wf.get("permissions", {})
-    if perms.get("issues") != "write":
-        out.append("the job cannot file the incident (no `issues: write`)")
+    if wf["jobs"]["refresh"].get("permissions", {}).get("issues") != "write":
+        out.append("the job cannot file the incident (no job-level `issues: write`)")
+    if "issues" in wf.get("permissions", {}):
+        out.append("`issues` is granted workflow-wide; scope it to the job")
     return out
 
 
@@ -111,8 +112,14 @@ def test_planted_a_check_that_the_loop_failing_would_skip_fails_the_contract():
 
 def test_planted_a_job_that_cannot_file_fails_the_contract():
     wf = copy.deepcopy(_live())
-    wf["permissions"] = {"contents": "read", "actions": "write"}
-    assert any("issues: write" in p for p in _problems(wf))
+    del wf["jobs"]["refresh"]["permissions"]["issues"]
+    assert any("job-level `issues: write`" in p for p in _problems(wf))
+
+
+def test_planted_issues_write_granted_workflow_wide_fails_the_contract():
+    wf = copy.deepcopy(_live())
+    wf["permissions"]["issues"] = "write"
+    assert any("workflow-wide" in p for p in _problems(wf))
 
 
 def test_the_step_is_in_the_file_as_written_not_only_in_the_parsed_copy():
@@ -136,10 +143,28 @@ def test_the_look_back_is_its_own_daily_workflow_with_no_window_cron():
         "the look-back is back on the window crons, where it is dropped with the check")
 
 
-def test_both_workflows_hold_the_same_season_opening():
-    a = yaml.safe_load((WORKFLOWS / "watchdog.yml").read_text())["env"]["SEASON_OPENS"]
-    b = yaml.safe_load((WORKFLOWS / "watchdog-lookback.yml").read_text())["env"]["SEASON_OPENS"]
-    assert a == b
+def _season_problems(lookback_text: str, watchdog_text: str) -> list[str]:
+    out = []
+    if re.search(r"^\s*SEASON_OPENS:", lookback_text, flags=re.M):
+        out.append("the look-back holds its own SEASON_OPENS literal")
+    if ".github/workflows/watchdog.yml" not in lookback_text.split("--season-opens-from")[-1][:60]:
+        out.append("the look-back does not read the date from watchdog.yml")
+    if not re.search(r'^\s*SEASON_OPENS:\s*"\d{4}-\d\d-\d\d"', watchdog_text, flags=re.M):
+        out.append("watchdog.yml does not hold the date")
+    return out
+
+
+def test_the_season_opening_is_held_once():
+    lb = (WORKFLOWS / "watchdog-lookback.yml").read_text()
+    assert _season_problems(lb, (WORKFLOWS / "watchdog.yml").read_text()) == []
+
+
+def test_planted_a_second_season_opens_literal_fails_the_contract():
+    lb = (WORKFLOWS / "watchdog-lookback.yml").read_text()
+    planted = lb.replace("jobs:\n", 'env:\n  SEASON_OPENS: "2026-09-09"\n\njobs:\n', 1)
+    assert planted != lb
+    assert any("own SEASON_OPENS" in p for p in _season_problems(
+        planted, (WORKFLOWS / "watchdog.yml").read_text()))
 
 
 # --- the step executed ----------------------------------------------------------------------
