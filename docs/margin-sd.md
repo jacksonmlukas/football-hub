@@ -226,6 +226,19 @@ as #185 pre-registered — and it is lower because it is *further from the truth
 > comparison between the three, which is what the paragraph above reads off them, does not
 > depend on the assumption, since all three make it.
 
+> **Restated 2026-10-08 (#323); the figures above are kept.** The exponent was the season's
+> 18 weeks where the pool plays **24 picks** (a second pick in each of weeks 13-18,
+> `PoolConfig.double_pick_weeks`, which is what `hub.season.survivor` plans against), so the
+> bound sat beside a 24-pick product with an 18-pick power. `survival_beside` now defaults to
+> `hub.models.margin.pool_picks()`, and `survival_line` says "one rate every pick, picks
+> independent". Two things moved at once and are separated here. On today's data (the 2017-2026
+> window now holds 748 favourite games, not 732, because 2026 weeks have been played) the 18-pick
+> figures are **Gaussian 0.0097, lumpy 0.0070, realised 0.0195** (were 0.0099, 0.0071, 0.0206:
+> the data). At the pool's 24 picks they are **Gaussian 0.0021, lumpy 0.0013, realised 0.0052**
+> (the exponent). The realised-to-Gaussian ratio is 2.5 where it was 2.1, in the same safe
+> direction; the comparison between the three, which the paragraph above reads off them, is
+> unchanged in sign. Still an independence bound, not a measurement of any plan.
+
 ## Why, and this is the finding
 
 A game whose line sits on 3 or 7 does price differently under the lumpy distribution: a

@@ -90,7 +90,7 @@ PINNED_ARM_MODULES: dict[str, str] = {
     "hub.models.components": "b23c5d7d0c49",
     "hub.models.conformal": "79827e566bba",
     "hub.models.coverage": "3c2d88cc6908",
-    "hub.models.margin": "8d58c201cc4b",
+    "hub.models.margin": "8fd45168e983",
     "hub.models.market": "098baf487556",
     "hub.models.panel": "99d19fba99e0",
     "hub.models.predict": "ddf960a1dfe6",
