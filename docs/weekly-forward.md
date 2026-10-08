@@ -364,3 +364,90 @@ the harness stricter than the text above, or says more exactly what the text mea
   game dates), so week 5 is the first week a capture can still admit, and it counts only if the
   capture precedes that day. The heading *Weeks 1-5* above is the issue's; the rule for week 5 is
   the capture's timestamp, not its number.
+
+## Amended 2026-10-07: the arm pin covers the arm's import closure, not one file (#456; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read, so this is a design
+amendment made before any number does. The earlier amendments above pin the arm by the git blob
+of `hub/exhibits/weekly_projection.py` (first `f6de17b2...`, then `96114791...` after #430) and
+say a run on any other blob is REFUSED. That text stands as the record of what was pinned until
+today; what it pins is superseded below.
+
+**The defect.** The blob covered one file. The forward arm also runs `hub.models.panel` (the
+panel build and `weekly_consensus`), `hub.season.weekly_gate_data` and the rest of what those
+import. A change there, #315's opponent-adjusted DvP being the example, changes what the arm
+computes, and the reading would have gone ahead on the old pin. A pin that misses the code that
+produces the number it guards is the shape rule 1 names: documented, not implemented.
+
+**The pin now.** `weekly_forward.PINNED_ARM_MODULES` is the SHA-256 (first 12 hex characters) of
+the source of every module in the first-party import closure of the arm, walked from
+`weekly_forward.ARM_ROOTS` (`hub.season.weekly_gate_data`, `hub.exhibits.weekly_projection`) by
+`hub.ledger.import_closure`: the AST walk #439 wrote for the ledger's code declaration, now one
+function that the contract `test_every_gate_declares_the_code_it_runs` and this pin both use,
+module-level and function-local imports alike. It stops at the same exemptions
+(`hub.ledger.CLOSURE_EXEMPT`, each with its reason: the shared gate rule, the fetch loaders whose
+bytes `data_digest` pins, config hashed by `config_digest`, path and I/O plumbing, schema
+assertions, markers). Those are neither required nor descended into, so an edit to one does not
+refuse the reading, and the reason each is exempt is that a change there cannot change what the
+arm computes. `read_forward` takes the closure as it stands and REFUSES, loading no outcome,
+when any module differs from the pin, is new in the imports or is gone, naming each. The
+digest over the whole table, `weekly_forward.PINNED_ARM_DIGEST`, is printed on every reading.
+
+**Nothing in the arm changed.** The closure at the head of this amendment is the tree's state at
+`main` `d8e20f4`; this amendment edits no module in it, and the table below is that state. (The
+pin was first computed at `d6f8882`, where its digest was `07aaa20c636fb902`; merging `main`
+forward to `d8e20f4` moved exactly one module, `hub.models.coverage`, from `8ea06bda176b` to
+`e036e1981cef`, by the 2026 coverage row and the slate's measure-before-publish order
+(`b13a320`, `e6a5bc1`). The new pin refused its first tree-versus-pin comparison on it, which is
+the defect this amendment exists to close working as designed. The arm reaches that module
+through one function-local import, in `weekly_projection`'s report-prose helper that reads
+`published_summary` for the interval diagnostic; it does not enter `project`, the shrinkage fit
+or any quantity the forward measurement scores, and the identity test below passes on this tree.)
+The earlier pin
+was the blob `96114791e9ba5492d92e996c1ad5f302fca5169a` of one of these 29 modules, and that
+module (`hub.exhibits.weekly_projection`) is the one the behavioural identity test
+`tests/unit/test_weekly_projection_move.py` (#430) holds to the figures computed on the pre-move
+code; it still passes on this tree, so the closure the new pin covers reproduces them. The new
+pin is a wider net over the same arm, not a second arm, and no new pre-registration is owed.
+
+**The closure pinned, digest `7bc93c290a5cc331`** (29 modules; module, then
+its source digest):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `b5c2b10a2ec1` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `601db0b4f9f1` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `d5b25ec6130b` |
+| `hub.holdout` `a8d095db300c` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `c402b0c4856f` |
+| `hub.models.conformal` `f98558ab2051` |
+| `hub.models.coverage` `e036e1981cef` |
+| `hub.models.margin` `9da0f4839e89` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `2f9f2aad1946` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `211f84e4a564` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+**The obligation.** A later edit to any module in this table, a comment included, trips
+`test_the_pinned_arm_is_the_closure_the_arm_runs` and, at the reading, a REFUSED verdict. An edit
+that did not change what the arm computes is answered by showing so (the identity test), re-pinning
+`PINNED_ARM_MODULES` and amending this document, dated, with the new table, before any admitted
+outcome is read. An edit that did change it is a new arm and needs a new pre-registration.
+`test_the_pin_is_recorded_in_the_document` holds the constant and this table equal.

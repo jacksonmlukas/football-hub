@@ -47,6 +47,7 @@ to keep a leaf a leaf while still sharing one sentence.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -263,6 +264,86 @@ def code_digest(modules: Iterable[str]) -> str:
             raise ValueError(f"{name!r} is a package; name the modules whose code the arms run")
         h.update(name.encode() + b"\0" + Path(spec.origin).read_bytes() + b"\0")
     return h.hexdigest()[:8]
+
+
+# name (exact) or "prefix.*" -> why a change there cannot change what an arm computes, or where
+# another digest already covers it. The one list both the ledger's code declaration (#439, the
+# contract `test_every_gate_declares_the_code_it_runs`) and the forward reading's arm pin (#456)
+# walk the import closure with: a module here is neither required nor descended into.
+CLOSURE_EXEMPT: dict[str, str] = {
+    "hub.models.experiment": "the shared gate rule, run by every gate; naming it would end every "
+                             "gate's history on any edit there (reasoned in run_gate's docstring)",
+    "hub.fetch.*": "data loaders and caches: the bytes they return are what data_digest pins, "
+                   "and a loader change that alters bytes moves it",
+    "hub.config": "config_digest hashes the resolved config and every fitted constant in "
+                  "FITTED_MODULES",
+    "hub.atomic": "atomic file writes; no arm computation",
+    "hub.jsonio": "JSON read/write and timestamp helpers; no arm computation",
+    "hub.paths": "path constants; no arm computation",
+    "hub.store": "the on-disk table store behind the loaders; the bytes it returns are pinned",
+    "hub.cli": "CLI plumbing (`unavailable`); runs after the verdict, not in an arm",
+    "hub.contracts": "schema assertions on loaded data; they raise or pass, they do not compute",
+    "hub.declare": "decision/chosen markers; identity decorators",
+    "hub.ledger": "the comparison machinery itself, not an arm",
+    "hub.season.survivor": "reached for the NFL_WEEKS constant (the schedule length) only; the "
+                           "survivor pool's code is no gate's arm",
+}
+
+
+def closure_exempt(mod: str) -> bool:
+    return any(mod == k or (k.endswith(".*") and mod.startswith(k[:-1]))
+               for k in CLOSURE_EXEMPT)
+
+
+def first_party_imports(mod: str, prefix: str = "hub") -> set[str]:
+    """First-party plain modules `mod` imports, anywhere in its source (local imports too)."""
+    spec = importlib.util.find_spec(mod)
+    if spec is None or spec.origin is None:
+        raise ValueError(f"{mod!r} is not a module with a source file")
+    out: set[str] = set()
+    for n in ast.walk(ast.parse(Path(spec.origin).read_text())):
+        if isinstance(n, ast.Import):
+            names = [a.name for a in n.names]
+        elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+            names = [n.module, *(f"{n.module}.{a.name}" for a in n.names)]
+        else:
+            continue
+        for name in names:
+            if name != prefix and not name.startswith(prefix + "."):
+                continue
+            try:
+                s = importlib.util.find_spec(name)
+            except (ImportError, AttributeError):  # `from mod import attr`: not a module
+                continue
+            if s is not None and s.origin and s.submodule_search_locations is None:
+                out.add(name)
+    return out
+
+
+def import_closure(roots: Iterable[str], prefix: str = "hub") -> set[str]:
+    """Every non-exempt first-party module reachable from `roots` by import (#439, #456).
+
+    An exempt module (`CLOSURE_EXEMPT`) is neither returned nor descended into."""
+    seen: set[str] = set()
+    todo = list(roots)
+    while todo:
+        m = todo.pop()
+        if m in seen or closure_exempt(m):
+            continue
+        seen.add(m)
+        todo += first_party_imports(m, prefix)
+    return seen
+
+
+def module_digests(modules: Iterable[str]) -> dict[str, str]:
+    """`{module: 12-char sha256 of its source bytes}`, for a pin that can name what moved (#456)."""
+    out: dict[str, str] = {}
+    for name in sorted(set(modules)):
+        spec = importlib.util.find_spec(name)
+        if spec is None or spec.origin is None or not spec.origin.endswith(".py"):
+            raise ValueError(f"{name!r} is not a module with a source file")
+        out[name] = hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest()[:12]
+    return out
 
 
 def inputs_digest(inputs: list[dict]) -> str:
