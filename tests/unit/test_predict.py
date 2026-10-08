@@ -122,11 +122,11 @@ def test_there_is_only_one_implementation_of_the_weekly_moments():
 
 
 def test_season_still_re_exports_for_back_compat():
-    """Callers in calibrate, leverage and optimize import these from season today. Moving
-    the definition must not break them."""
+    """Callers import the functions from season today. Moving the definition must not break
+    them. The held-out constants are not re-exported (#320): a copy bound in season is one a
+    hold-out rebind cannot reach."""
     from hub.draft import season
-    assert season.TALENT_CV == predict.TALENT_CV
-    assert season.WEEKLY_K == predict.WEEKLY_K
+    assert not hasattr(season, "TALENT_CV") and not hasattr(season, "WEEKLY_K")
     assert season.talent_cv_for(np.array(["RB"]))[0] == predict.TALENT_CV_BY_POS["RB"]
 
 

@@ -625,3 +625,68 @@ number the arm computes.
 | `hub.names` `93e503040186` |
 | `hub.season.weekly_gate` `73cc434a55db` |
 | `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+
+## Amended 2026-10-08: the arm is re-pinned for the hold-out rebinding every reader (#320; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #320 makes a held-out
+constant held out everywhere it is read, and edits two of the 29 modules: `hub.draft.season`
+no longer re-exports the six held-out names (`TALENT_CV`, `TALENT_CV_BY_POS`, `WEEKLY_K`,
+`WEEKLY_K_POOLED`, `WEEKLY_SKEW`, `WEEKLY_SKEW_POOLED`), which were copies a `holdout.applied`
+rebind could not reach; and `hub.holdout` refuses a set that leaves a held-out key unaccounted
+for, and holds a lock across the record's read-modify-write. The pin is a hash of source bytes,
+so it moves, and the amendment obligation above applies: show the edit did not change what the
+arm computes, re-pin, date it.
+
+**Why nothing the arm computes changed.** `hub.draft.season`: parsing the file at the parent
+commit and in this change, removing docstrings and the six names from the one `from
+hub.models.predict import` line, the two syntax trees are equal (`ast.dump`); nothing in the
+closure imports those names from it (the only importers were `hub.draft.calibrate` and
+`hub.exhibits.leverage`, neither in the closure). `hub.holdout`: the arm reaches it only through
+`--holdout` (`weekly_gate_data`'s `applied(yr)` and `weekly_gate`'s `run_lines`); the four
+committed sets in `conf/holdout/` already account for all eleven keys, each with a value or a
+reason, and `load` returns an identical `ConstantSet` and `describe` line for each of 2022-25
+before and after. The behavioural identity test `tests/unit/test_weekly_projection_move.py`
+(#430) passes on this tree.
+
+**What did not move:** `config_digest` `96fee74f` and `fitted_digest` `772d3bba`, the same on
+`main` `1bbb8c7` and on this tree: no constant's value or declaration changed.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.season` | `601db0b4f9f1` | `55989706066a` |
+| `hub.holdout` | `a8d095db300c` | `e74f918fab67` |
+
+**The closure pinned, digest `2932bb4a2c589e97`** (29 modules; was `da1dfa2e9571eea7`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `55989706066a` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `e74f918fab67` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |

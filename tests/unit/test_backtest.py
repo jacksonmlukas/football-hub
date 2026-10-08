@@ -2325,7 +2325,7 @@ def test_a_season_that_fails_says_which_season_it_was(workers):
 # --- replaying a season under hold-out constants (#294) ---------------------
 
 def test_a_season_played_under_holdout_reads_its_own_set_and_hands_the_shipped_value_back(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, record_holdout_set):
     """`_season_rows` applies `conf/holdout/{season}.json` around the season and only there:
     the arm sees the set's value while the season plays, the next season sees its own, and
     the shipped constant is back before the rows leave. Without the flag nothing is
@@ -2334,8 +2334,8 @@ def test_a_season_played_under_holdout_reads_its_own_set_and_hands_the_shipped_v
     from hub.models import predict
 
     monkeypatch.setattr(holdout, "SETS", tmp_path)
-    holdout.record(2024, "predict.TALENT_CV", 0.91, command="x")
-    holdout.record(2025, "predict.TALENT_CV", 0.92, command="x")
+    record_holdout_set(2024, {"predict.TALENT_CV": 0.91})
+    record_holdout_set(2025, {"predict.TALENT_CV": 0.92})
     shipped = predict.TALENT_CV
     seen: dict[int, float] = {}
 
@@ -2355,7 +2355,8 @@ def test_a_season_played_under_holdout_reads_its_own_set_and_hands_the_shipped_v
     assert seen == {2024: shipped, 2025: shipped}
 
 
-def test_each_worker_plays_its_season_under_its_own_set_and_the_rows_say_so(tmp_path):
+def test_each_worker_plays_its_season_under_its_own_set_and_the_rows_say_so(
+        tmp_path, record_holdout_set):
     """With a worker per season, the set is applied inside the worker, and the proof is on
     the rows: `constants_digest` is read in the process that played the season, under the
     block, so each season's rows carry the digest of the constants it was actually played
@@ -2364,12 +2365,11 @@ def test_each_worker_plays_its_season_under_its_own_set_and_the_rows_say_so(tmp_
     shipped digest here."""
     import os
 
-    from hub import holdout
     from hub.config import fitted_constants, fitted_digest
 
     sets = tmp_path / "sets"
-    holdout.record(2024, "predict.TALENT_CV", 0.91, command="x", root=sets)
-    holdout.record(2025, "predict.TALENT_CV", 0.92, command="x", root=sets)
+    record_holdout_set(2024, {"predict.TALENT_CV": 0.91}, root=sets)
+    record_holdout_set(2025, {"predict.TALENT_CV": 0.92}, root=sets)
     boards, reals = _two_seasons()
     kw = {"n_drafts": 1, "seed": 0, "rounds": 3, "n_draft_sims": 2, "n_season_sims": 5}
     # Spawned workers import `hub.holdout` afresh, so the sets directory reaches them
@@ -2396,13 +2396,13 @@ def test_the_holdout_flag_is_on_the_run_and_off_by_default(capsys):
 
 
 def test_a_holdout_run_prints_each_seasons_set_and_says_the_stamp_is_the_shipped_digest(
-        monkeypatch, tmp_path, capsys):
+        monkeypatch, tmp_path, capsys, record_holdout_set):
     """Through `main`: the run line per season comes first, the paired rows are written, and
     the gate's own lines are followed by the sentence that the stamp's digest is shipped."""
     from hub import holdout
     from hub.fetch import nflverse as nv
     monkeypatch.setattr(holdout, "SETS", tmp_path / "sets")
-    holdout.record(2024, "predict.WEEKLY_K_POOLED", 2.1, command="x")
+    record_holdout_set(2024, {"predict.WEEKLY_K_POOLED": 2.1})
     inner = nv.Pin(source="ff_opportunity", as_of="2024-09-01", digest="1n51de01", rows=1,
                    pinned_at=None)
     _in_process_gate(monkeypatch, tmp_path, inner=inner, argv=["--holdout"])
@@ -2437,11 +2437,12 @@ def test_holdout_preamble_does_nothing_when_the_flag_is_off():
     assert got.exit_code is None and got.lines == ()
 
 
-def test_holdout_preamble_reads_and_prints_every_seasons_set(monkeypatch, tmp_path):
+def test_holdout_preamble_reads_and_prints_every_seasons_set(
+        monkeypatch, tmp_path, record_holdout_set):
     from hub import holdout
 
     monkeypatch.setattr(holdout, "SETS", tmp_path)
-    holdout.record(2024, "predict.WEEKLY_K_POOLED", 2.1, command="x")
+    record_holdout_set(2024, {"predict.WEEKLY_K_POOLED": 2.1})
     got = bt.holdout_preamble([2024], holdout=True)
     assert got.exit_code is None
     assert any("season 2024: constants from" in line for line in got.lines)

@@ -153,10 +153,13 @@ def test_the_script_records_the_constant_as_not_refitted_with_the_rookie_number_
               "xfp_pg": {"by_position": {"pooled": {"cv": 0.3125, "n": 5, "median": 0.0}}}}
     monkeypatch.setattr(impute_cv, "measure", lambda *a, **k: (result, ["  a line"]))
     assert impute_cv.main(["--exclude-season", "2022", "--record"]) == 0
-    got = holdout.load(2022)
-    assert got.values == {}
-    assert set(got.missing) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
-    why = got.missing["predict.IMPUTE_CV"]
+    # A script records its own keys; the set is complete only once all five have run, so the
+    # file is read raw here rather than through `load`, which would refuse it.
+    import json
+    consts = json.loads((tmp_path / "2022.json").read_text())["constants"]
+    assert all(v["value"] is None for v in consts.values())
+    assert set(consts) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
+    why = consts["predict.IMPUTE_CV"]["why_not"]
     assert "pooled 0.312" in why and "#298" in why
     assert "0.260" not in why and "open decision" not in why
     assert "0.315" in why, "the reason names the shipped value the hold-out is read against"

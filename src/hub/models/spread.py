@@ -69,8 +69,8 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.ledger import Ledger, recipe
+from hub.models import predict
 from hub.models.experiment import Actions, GateRun, Harness, expanding_seasons
-from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
 
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
 # Below 8 games the sd is a handful of numbers; below 3 ppg the ratio sd/sqrt(mu) is
@@ -133,7 +133,7 @@ STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr", "s
 
 def _positional_k(pos: pl.Expr) -> pl.Expr:
     return pos.cast(pl.Utf8).fill_null("").replace_strict(
-        WEEKLY_K, default=WEEKLY_K_POOLED, return_dtype=pl.Float64)
+        predict.WEEKLY_K, default=predict.WEEKLY_K_POOLED, return_dtype=pl.Float64)
 
 
 def _opt(df: pl.DataFrame, c: str) -> pl.Expr:

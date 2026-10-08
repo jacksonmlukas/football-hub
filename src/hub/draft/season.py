@@ -50,8 +50,10 @@ from hub.league import (  # noqa: F401
 
 # Player-level prediction lives in `hub.models.predict`: what a player does in a week, as
 # opposed to how a league works, which is this module. These constants are re-exported
-# because calibrate, leverage and the tests import them from here, and a refactor that
-# breaks its callers to be tidier is not an improvement.
+# because callers import them from here, and a refactor that breaks its callers to be tidier
+# is not an improvement. The held-out constants (`hub.holdout.HELD_OUT`) are NOT re-exported:
+# a name bound here is a copy no `holdout.applied` rebind reaches (#320). Read them as
+# `predict.NAME`.
 #
 # `moments` is deliberately NOT re-exported. It was, under the old name `weekly_moments`,
 # and that alias outlived the function it named: `moments` returns three moments, so the
@@ -59,12 +61,6 @@ from hub.league import (  # noqa: F401
 # prediction import it from `hub.models.predict`, which is where it lives.
 from hub.models.predict import (  # noqa: F401
     MIN_SKEW,
-    TALENT_CV,
-    TALENT_CV_BY_POS,
-    WEEKLY_K,
-    WEEKLY_K_POOLED,
-    WEEKLY_SKEW,
-    WEEKLY_SKEW_POOLED,
     CorrelationReport,
     CorrelationVoid,
     correlated_normal,
