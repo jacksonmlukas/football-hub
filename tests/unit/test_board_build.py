@@ -621,6 +621,8 @@ def test_the_two_failures_are_two_different_nights(offline, tmp_path, capsys):
     last_good = tmp_path / "draft_board.parquet"
     pl.DataFrame({"player": ["Yesterday"], "pos": ["RB"], "vor": [1.0], "adp": [3.0]}
                  ).write_parquet(last_good)
+    # Stamped, as `_persist` leaves it: the age is the capture's (#405).
+    board.cached.write_stamp(board.board_stamp_path(last_good), board.jsonio.stamp())
     offline.setattr(board, "espn_adp", lambda *a, **k: _live_adp())
     offline.setattr(board, "playoff_sos", _source_is_down)
 

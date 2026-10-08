@@ -295,7 +295,8 @@ def _load_board(now: float | None = None) -> pl.DataFrame:
     (issue #116).
     """
     board, age = last_good(now=now)
-    print(f"  board built {age:.1f}h ago (draft_board.parquet)", flush=True)
+    built = f"built {age:.1f}h ago" if age is not None else "build time not recorded"
+    print(f"  board {built} (draft_board.parquet)", flush=True)
     for line in report_mod.built_or_served(BuildReport.of_served(board), age):
         print(line, flush=True)
     return board

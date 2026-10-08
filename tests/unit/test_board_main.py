@@ -18,7 +18,20 @@ import json
 import polars as pl
 import pytest
 
+from hub import jsonio
 from hub.draft import board
+from hub.fetch import cached
+
+
+def _stamp(path, hours_ago=0.0, now=None):
+    """Record that the board at `path` was built `hours_ago` before `now` (default: now), the
+    way `_persist` does -- beside it, in `fetch.cached`'s stamp (#405)."""
+    import time
+    from datetime import UTC, datetime, timedelta
+    when = datetime.fromtimestamp(time.time() if now is None else now, UTC) \
+        - timedelta(hours=hours_ago)
+    cached.write_stamp(board.board_stamp_path(path), when.replace(microsecond=0).isoformat())
+    return path
 
 
 def _board(names, pos=None, **cols):
@@ -97,7 +110,7 @@ def _stub_board(tmp_path):
     """A minimal board on disk, standing in for the last good one."""
     p = tmp_path / "draft_board.parquet"
     pl.DataFrame({"player": ["A"], "pos": ["RB"], "vor": [1.0]}).write_parquet(p)
-    return p
+    return _stamp(p)
 
 
 def _rich_board(tmp_path):
@@ -106,7 +119,7 @@ def _rich_board(tmp_path):
     pl.DataFrame({"player": ["A"], "pos": ["RB"], "vor": [1.0], "adp": [3.0],
                   "td_luck": [0.5], "missed": [4], "wk15_17_sos": [1.1],
                   "bye_week": [10]}).write_parquet(p)
-    return p
+    return _stamp(p)
 
 
 def _boom(exc=None):
@@ -215,11 +228,80 @@ def test_no_board_at_all_says_what_to_run(tmp_path):
 
 
 def test_the_age_is_reported_in_hours(tmp_path):
+    p = _stamp(_stub_board(tmp_path), hours_ago=0.0, now=1_000_000.0)
+    _, age = board.last_good(path=p, now=1_000_000.0 + 7200)
+    assert age == 2.0
+
+
+# --- the age is the capture's, not the file's (#405) -------------------------------------
+#
+# Rule-18 control. The mtime and the capture are set to opposite ages, and the reported age
+# has to follow the capture. If the reader still stat'ed the file, the first test would read
+# 0.0 and the second 100.0.
+
+def test_a_fresh_file_with_an_old_capture_reads_old(tmp_path):
+    """A clone, copy or restore: the mtime is now, the board was built four days ago."""
+    import time
+    p = _stamp(_stub_board(tmp_path), hours_ago=96.0)
+    now = time.time()
+    assert abs(p.stat().st_mtime - now) < 60, "the control: the file really is fresh"
+    _, age = board.last_good(path=p, now=now)
+    assert age == pytest.approx(96.0, abs=0.1)
+
+
+def test_an_old_file_with_a_fresh_capture_reads_fresh(tmp_path):
+    """The converse: a board built an hour ago whose mtime says it is ancient."""
     import os
-    p = _stub_board(tmp_path)
+    import time
+    p = _stamp(_stub_board(tmp_path), hours_ago=1.0)
     os.utime(p, (1000.0, 1000.0))
-    _, age = board.last_good(path=p, now=1000.0 + 7200)
-    assert age == 7200 / 3600.0
+    _, age = board.last_good(path=p, now=time.time())
+    assert age == pytest.approx(1.0, abs=0.1)
+
+
+def test_a_board_with_no_stamp_has_no_age_not_its_mtime(tmp_path):
+    """Unknown reads as unknown. A confident mtime age here is the lie #405 removes."""
+    import time
+    p = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["A"], "pos": ["RB"]}).write_parquet(p)
+    _, age = board.last_good(path=p, now=time.time())
+    assert age is None
+
+
+@pytest.mark.parametrize("body", ["not json", "[]", '{"captured_at": 5}',
+                                  '{"captured_at": "yesterday"}'])
+def test_a_stamp_that_will_not_parse_is_no_capture_time(tmp_path, body):
+    p = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["A"], "pos": ["RB"]}).write_parquet(p)
+    board.board_stamp_path(p).write_text(body)
+    assert board.board_captured_at(p) is None
+
+
+def test_a_naive_stamp_is_read_as_utc(tmp_path):
+    from datetime import UTC, datetime
+    p = tmp_path / "draft_board.parquet"
+    cached.write_stamp(board.board_stamp_path(p), "2026-10-01T12:00:00")
+    assert board.board_captured_at(p) == datetime(2026, 10, 1, 12, tzinfo=UTC)
+
+
+def test_persisting_stamps_the_capture_beside_the_board(tmp_path):
+    import time
+    p = tmp_path / "b.parquet"
+    board._persist(_board(["A"], pos=["RB"]), out=tmp_path / "site", path=p)
+    assert board.board_stamp_path(p).name == "b.capture.json"
+    age = board.board_age_hours(p, time.time())
+    assert age is not None and 0.0 <= age < 0.1
+    assert cached.read_stamp(board.board_stamp_path(p))["captured_at"] <= jsonio.stamp()
+
+
+def test_serving_an_unstamped_board_says_the_build_time_is_not_recorded(
+        monkeypatch, tmp_path, capsys):
+    p = tmp_path / "draft_board.parquet"
+    pl.DataFrame({"player": ["A"], "pos": ["RB"], "vor": [1.0]}).write_parquet(p)
+    monkeypatch.setattr(board, "build", _boom())
+    (_got, report), age = board.build_or_last_good(path=p)
+    assert age is None and report.served
+    assert "build time not recorded" in capsys.readouterr().out
 
 
 def test_persisting_creates_both_parents(tmp_path):

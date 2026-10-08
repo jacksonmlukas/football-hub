@@ -72,7 +72,7 @@ ARM_ROOTS = ("hub.season.weekly_gate_data", "hub.exhibits.weekly_projection")
 PINNED_ARM_MODULES: dict[str, str] = {
     "hub.draft.adp_history": "286f2d9c667d",
     "hub.draft.availability": "34b707bf7e75",
-    "hub.draft.board": "6e61e56ecac0",
+    "hub.draft.board": "65ae0104fb6c",
     "hub.draft.cohort": "5d6e03fc2cd5",
     "hub.draft.durability": "59fbe0402d35",
     "hub.draft.optimize": "314a78a8b5ef",

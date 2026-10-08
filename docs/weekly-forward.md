@@ -691,40 +691,40 @@ before and after. The behavioural identity test `tests/unit/test_weekly_projecti
 | `hub.season.weekly_gate` `73cc434a55db` |
 | `hub.season.weekly_gate_data` `1823ccae01c3` |
 
+## Amended 2026-10-08: the arm is re-pinned for the board's capture stamp (#405; prior text kept)
 
-## Amended 2026-10-08: the arm is re-pinned for `survival_beside`'s default (#323; prior text kept)
+Still before any capture exists and before any 2026 outcome has been read. #405 makes the age
+the board reports (`last_good`, `board_age_hours`, the poller's "board built Nh ago", the
+adherence replay's copy note) the age of its *capture* -- a stamp `_persist` writes beside the
+parquet, `fetch.cached`'s record -- instead of the file's mtime. That edits one of the 29
+modules, `hub.draft.board`; the pin is a hash of source bytes, so it moves, and the amendment
+obligation above applies: show the edit did not change what the arm computes, re-pin, date it.
 
-Still before any capture exists and before any 2026 outcome has been read. #323 makes
-`hub.models.margin.survival_beside` raise to the pool's pick count (24: a second pick in each
-of weeks 13-18) and not to the 18 weeks of the season. That edits one of the 29 modules: it
-adds `from hub.config import PoolConfig` (`hub.config` is in `CLOSURE_EXEMPT`, so the closure's
-membership is unchanged: the same 29 names), a function `pool_picks`, the default inside
-`survival_beside`, and one string in `survival_line`. The pin is a hash of source bytes, so it
-moves, and the amendment obligation above applies: show the edit did not change what the arm
-computes, re-pin, date it.
-
-**Why nothing the arm computes changed.** `survival_beside`, `survival_line` and `pool_picks`
-are called from `hub.models.margin`'s `--shape` report and from tests, and from nowhere else in
-`src/`. The one thing the closure takes from `margin` is `home_win_prob` and `home_won`
-(`hub.models.coverage`, a function-local import), and neither moved. `project`, the shrinkage
-fit and everything the forward measurement scores are untouched. The behavioural identity test
-`tests/unit/test_weekly_projection_move.py` (#430) passes on this tree.
-
-**What did not move:** `config_digest` `96fee74f` and `fitted_digest` `772d3bba`, the same on
-`main` and on this tree: no constant's value or declaration changed (`PoolConfig`'s
-`double_pick_weeks` is read, not edited).
+**Why nothing the arm computes changed.** The arm reaches `hub.draft.board` through
+`board_as_of` (`weekly_gate_data`). Parsing the file at the parent commit and in this change and
+comparing every top-level statement by `ast.dump`, exactly four functions differ -- `_persist`,
+`board_age_hours`, `last_good` and `build_or_last_good` -- and none is called by `board_as_of`,
+`build` or anything else the forward measurement reaches (`_persist` writes the files `main`
+prints, `last_good` is the offline fallback and the poller's reader, `board_age_hours` formats an
+age). `build`, `board_as_of`, `recommend` and every other function and constant are
+syntax-tree-identical; the only additions are two helpers (`board_stamp_path`,
+`board_captured_at`) and the constant `BOARD_STAMP_SUFFIX`, plus `cached` on the existing
+`from hub.fetch import` line. `hub.fetch.*` is exempt from the closure (`CLOSURE_EXEMPT`), so the
+import adds no module: the closure is still 29, and the walk against the new pin reports no
+difference. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430)
+passes on this tree.
 
 | module | was | now |
 |---|---|---|
-| `hub.models.margin` | `8d58c201cc4b` | `8fd45168e983` |
+| `hub.draft.board` | `6e61e56ecac0` | `65ae0104fb6c` |
 
-**The closure pinned, digest `4ab8635b20c07754`** (29 modules; was `2932bb4a2c589e97`):
+**The closure pinned, digest `6f3a04e853ad4428`** (29 modules; was `2932bb4a2c589e97`):
 
 | module and digest |
 |---|
 | `hub.draft.adp_history` `286f2d9c667d` |
 | `hub.draft.availability` `34b707bf7e75` |
-| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.board` `65ae0104fb6c` |
 | `hub.draft.cohort` `5d6e03fc2cd5` |
 | `hub.draft.durability` `59fbe0402d35` |
 | `hub.draft.optimize` `314a78a8b5ef` |
@@ -742,7 +742,7 @@ fit and everything the forward measurement scores are untouched. The behavioural
 | `hub.models.components` `b23c5d7d0c49` |
 | `hub.models.conformal` `79827e566bba` |
 | `hub.models.coverage` `3c2d88cc6908` |
-| `hub.models.margin` `8fd45168e983` |
+| `hub.models.margin` `8d58c201cc4b` |
 | `hub.models.market` `098baf487556` |
 | `hub.models.panel` `99d19fba99e0` |
 | `hub.models.predict` `ddf960a1dfe6` |
