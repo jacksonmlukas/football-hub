@@ -268,6 +268,11 @@ def test_a_spelling_is_a_binding_not_a_name():
         assert [(d.name, d.kind) for d in got] == [("X", "fitted")], imp
     # and an attribute of something else that merely shares the name
     assert declare.declared_in("import other\nX = other.fitted(1.0)\n", "hub.x.y") == []
+    # an attribute of a call has no dotted head to be `hub.declare`
+    assert declare.declared_in("import hub.declare\nX = make().fitted(1.0)\n", "hub.x.y") == []
+    # one `import` statement may bring in `hub.declare` and something else
+    both = "import hub.declare, json\nX = hub.declare.chosen(1.0)\nY = json.loads('1')\n"
+    assert [(d.name, d.kind) for d in declare.declared_in(both, "hub.x.y")] == [("X", "chosen")]
 
 
 def test_a_name_imported_from_declare_and_bound_again_is_refused():
