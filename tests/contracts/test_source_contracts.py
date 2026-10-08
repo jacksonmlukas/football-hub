@@ -38,6 +38,7 @@ from hub.contracts import (
     BIGTEN_CAPTURES,
     CFBD_GAMES,
     CFBD_LINES,
+    DEPTH_CHARTS,
     ESPN_SCOREBOARD,
     FF_OPPORTUNITY,
     FF_RANKINGS,
@@ -134,6 +135,40 @@ def test_snap_counts_contract_holds_on_the_real_slice():
         pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32))
     assert shape_only(SNAP_COUNTS).validate(df).height == 8
     assert df["offense_pct"].min() == 0.0
+
+
+def test_depth_charts_contract_holds_on_the_real_slice():
+    """New Orleans' quarterback room on the two 2025 charts either side of a real change of
+    starter, one wide receiver, and the two shapes of unresolved entry the source carries --
+    a player with a name and no `gsis_id`, and a slot with neither (#336).
+
+    The two nulls are why `player_name` and `gsis_id` are required and not `non_null`; the
+    two charts are why the fixture can say what `odds._starter_at` needs of it: more than one
+    `dt`, and a rank-1 quarterback that differs between them.
+    """
+    df = frame("nflverse_depth_charts.json").with_columns(
+        pl.col("pos_slot").cast(pl.Int32), pl.col("pos_rank").cast(pl.Int32))
+    assert shape_only(DEPTH_CHARTS).validate(df).height == df.height
+    assert df["player_name"].null_count() >= 1 and df["gsis_id"].null_count() >= 1
+    qb1 = df.filter((pl.col("pos_abb") == "QB") & (pl.col("pos_rank") == 1)).sort("dt")
+    assert qb1["dt"].n_unique() == 2, "the capture no longer carries two charts"
+    assert qb1["gsis_id"].n_unique() == 2, "the capture no longer carries a change of starter"
+
+
+def test_the_depth_chart_contract_refuses_each_thing_the_study_reads():
+    """Planted on the real capture, one column at a time: the position the study filters
+    on, the depth it takes the starter from, the timestamp it joins on."""
+    df = frame("nflverse_depth_charts.json").with_columns(
+        pl.col("pos_slot").cast(pl.Int32), pl.col("pos_rank").cast(pl.Int32))
+    c = shape_only(DEPTH_CHARTS)
+    with pytest.raises(ContractViolation, match="pos_abb"):
+        c.validate(df.rename({"pos_abb": "position"}))
+    with pytest.raises(ContractViolation, match="pos_rank"):
+        c.validate(df.with_columns(pl.lit(99, dtype=pl.Int32).alias("pos_rank")))
+    with pytest.raises(ContractViolation, match="dt"):
+        c.validate(df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("dt")))
+    with pytest.raises(ContractViolation, match="pos_abb"):
+        c.validate(df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("pos_abb")))
 
 
 def test_a_whole_percent_capture_reaches_one_answer_down_one_path():

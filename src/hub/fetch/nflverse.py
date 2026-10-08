@@ -140,6 +140,14 @@ RANKINGS_PAGES: tuple[str, ...] = ("draft", "all")
 # and two hand-written tuples drifting is two nearly-identical copies of it.
 RANKINGS_COLS: tuple[str, ...] = tuple(FF_RANKINGS.required)
 
+# The columns a depth-chart load is asked for (#336): the contract's own required set, for the
+# reason `RANKINGS_COLS` gives -- it is half of the cache key, and every reader of the chart
+# (the QB study's same-quarterback floor today, the share layer's substitution later) must
+# name the same half or two entries of a 554,215-row table sit on disk for one chart. The
+# source ships twelve columns; the four it drops (`espn_id` and the three `pos_*_id`/`pos_name`
+# label columns) are identifiers and spellings of columns this set already carries.
+DEPTH_CHART_COLS: tuple[str, ...] = tuple(DEPTH_CHARTS.required)
+
 
 # The first season nflverse's schedule table holds. `schedules` is one file of every season, so
 # a reader that wants "all of it" -- the margin fit, the conformal window, the track record --

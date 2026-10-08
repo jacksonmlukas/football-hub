@@ -55,7 +55,7 @@ previous game day, beside the coefficient. **Since 2026-09-17 (#300) this coeffi
 module's ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered
 once two seasons exist (`docs/gate-power.md`).
 
-Nothing here fetches but one guarded call: `--study` asks `hub.fetch.odds._qb_starters` for
+Nothing here fetches but one guarded call: `--study` asks `hub.fetch.odds.load_qb_starters` for
 the depth chart #214's own floor conditions on, exactly as `odds.noise_floor_report` does,
 and degrades the same way that report does when the chart is unavailable -- the floor is
 still printed, over every live interval, and the line says the same-quarterback condition
@@ -1142,7 +1142,7 @@ def noise_floor_per_root_day(
     `odds.line_moves` cannot tell apart from a genuine unknown and this function used to
     drop the same way: silently, off the floor, with the run line still calling it
     same-quarterback. `polls` is a season's own slice of the archive (`archive`'s shape);
-    `starters` is the depth-chart frame `odds._qb_starters` returns for that season, or
+    `starters` is the depth-chart frame `odds.load_qb_starters` returns for that season, or
     `None` where the chart could not be read. Each season's live intervals are filtered on
     `same_qb` only when that season has a chart; a season with none contributes its live
     intervals unconditioned -- not dropped -- and is named in the returned `not_applied`
@@ -1591,7 +1591,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             chart: pl.DataFrame | None = None
             try:
-                chart = odds._qb_starters(s)
+                chart = odds.load_qb_starters(s)
             except Exception as exc:                         # pragma: no cover - network
                 qb_notes.append(f"{s} ({type(exc).__name__}: {exc})")
             study_parts.append((s, p, chart))

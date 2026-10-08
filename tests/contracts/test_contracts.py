@@ -148,6 +148,17 @@ def test_contract_catches_out_of_range():
         Contract("t", required={"xfp": pl.Float64}, ranges={"xfp": (-10, 80)}).validate(df)
 
 
+def test_contract_catches_a_timestamp_not_in_the_declared_format():
+    """#463: a `dt` a reader would fail to parse is refused where it enters, not after it is
+    cached. A null is `non_null`'s business, and a well-formed value passes."""
+    c = Contract("t", required={"dt": pl.Utf8}, timestamps={"dt": "%Y-%m-%dT%H:%M:%SZ"})
+    ok = pl.DataFrame({"dt": ["2025-08-03T10:09:07Z", None]})
+    assert c.validate(ok).height == 2
+    for bad in ("2025-08-03 10:09:07", "2025-08-03T10:09:07+00:00", "soon"):
+        with pytest.raises(ContractViolation, match="dt has 1 values not in the format"):
+            c.validate(pl.DataFrame({"dt": ["2025-08-03T10:09:07Z", bad]}))
+
+
 # --- the second verb (issue #132) -----------------------------------------
 
 _REPAIRED = Contract(

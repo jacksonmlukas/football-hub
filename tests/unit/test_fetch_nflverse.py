@@ -1125,6 +1125,7 @@ def _depth_chart_frame(rows: int = 4, **over) -> pl.DataFrame:
         "player_name": [f"Player {i}" for i in range(rows)],
         "gsis_id": [f"00-00{i:05d}" for i in range(rows)],
         "pos_grp": ["3WR 1TE"] * rows,
+        "pos_abb": ["QB"] * rows,
         "pos_slot": pl.Series([1] * rows, dtype=pl.Int32),
         "pos_rank": pl.Series([1] * rows, dtype=pl.Int32),
     } | dict(over))
