@@ -210,10 +210,85 @@ def test_the_walk_finds_the_declarations_and_only_declarations():
 
 
 def test_an_exclusion_without_its_argument_is_refused_not_recorded():
+    imp = "from hub.declare import not_an_input\n"
     with pytest.raises(ValueError, match=r"hub\.x\.y\.C .*without an argument"):
-        declare.declared_in("C = not_an_input(3, 'too short')\n", "hub.x.y")
+        declare.declared_in(imp + "C = not_an_input(3, 'too short')\n", "hub.x.y")
     with pytest.raises(ValueError, match=r"hub\.x\.y\.C"):
-        declare.declared_in("C = not_an_input(3)\n", "hub.x.y")
+        declare.declared_in(imp + "C = not_an_input(3)\n", "hub.x.y")
+
+
+# --- the walk reads bindings, and reads all of module level (#321) -------------------
+
+
+@pytest.mark.parametrize("src", [
+    "if True:\n    X = chosen(0.5)\n",
+    "try:\n    X = chosen(0.5)\nexcept ImportError:\n    pass\n",
+    "import contextlib\nwith contextlib.suppress(OSError):\n    X = chosen(0.5)\n",
+    "for _i in range(1):\n    X = chosen(0.5)\n",
+    "match 1:\n    case 1:\n        X = chosen(0.5)\n",
+])
+def test_a_declaration_under_a_compound_statement_is_a_declaration(src):
+    """Planted: before #321 each of these was walked past, so the number was covered by
+    nothing and the digest said nothing of it."""
+    got = declare.declared_in("from hub.declare import chosen\n" + src, "hub.x.y")
+    assert [(d.name, d.kind) for d in got] == [("X", "chosen")]
+
+
+def test_a_declaration_inside_a_function_or_class_is_still_not_one():
+    src = ("from hub.declare import chosen\n"
+           "def f():\n    X = chosen(1)\n"
+           "class C:\n    Y = chosen(2)\n")
+    assert declare.declared_in(src, "hub.x.y") == []
+
+
+def test_a_name_declared_in_two_branches_is_refused_not_half_hashed():
+    src = ("from hub.declare import chosen\n"
+           "if True:\n    X = chosen(1.0)\nelse:\n    X = chosen(2.0)\n")
+    with pytest.raises(ValueError, match=r"hub\.x\.y\.X is declared twice"):
+        declare.declared_in(src, "hub.x.y")
+
+
+def test_a_spelling_is_a_binding_not_a_name():
+    """A module that wrote its own `fitted` would have hashed a bogus declaration into the
+    model version; one that imported the real one is a declaration. Both directions on the
+    same call."""
+    own = "def fitted(v):\n    return v * 2\nX = fitted(1.0)\n"
+    assert declare.declared_in(own, "hub.x.y") == []
+    assert declare.declared_in("fitted = lambda v: v\nX = fitted(1.0)\n", "hub.x.y") == []
+    assert declare.declared_in("X = fitted(1.0)\n", "hub.x.y") == []   # no import at all
+    real = "from hub.declare import fitted\nX = fitted(1.0)\n"
+    assert [d.name for d in declare.declared_in(real, "hub.x.y")] == ["X"]
+    # the other ways of importing the real one
+    for imp, call in (("from hub.declare import fitted as f", "f"),
+                      ("from hub import declare", "declare.fitted"),
+                      ("from hub import declare as d", "d.fitted"),
+                      ("import hub.declare", "hub.declare.fitted"),
+                      ("import hub.declare as d", "d.fitted")):
+        got = declare.declared_in(f"{imp}\nX = {call}(1.0)\n", "hub.x.y")
+        assert [(d.name, d.kind) for d in got] == [("X", "fitted")], imp
+    # and an attribute of something else that merely shares the name
+    assert declare.declared_in("import other\nX = other.fitted(1.0)\n", "hub.x.y") == []
+
+
+def test_a_name_imported_from_declare_and_bound_again_is_refused():
+    src = "from hub.declare import fitted\ndef fitted(v):\n    return v\nX = fitted(1.0)\n"
+    with pytest.raises(ValueError, match=r"hub\.x\.y imports \['fitted'\]"):
+        declare.declared_in(src, "hub.x.y")
+
+
+def test_a_declaration_in_a_package_init_is_attributed_to_its_package(monkeypatch, tmp_path):
+    """`hub/draft/__init__.py` is `hub.draft`. Every init was attributed to the root `hub`,
+    so two packages declaring the same name would have shared one key."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("from hub.declare import fitted\nX = fitted(1.0)\n")
+    (tmp_path / "__init__.py").write_text("from hub.declare import fitted\nY = fitted(2.0)\n")
+    monkeypatch.setattr(declare, "SRC", tmp_path)
+    declare.declarations.cache_clear()
+    try:
+        got = {d.name: (d.module, d.key) for d in declare.declarations()}
+    finally:
+        declare.declarations.cache_clear()
+    assert got == {"X": ("hub.pkg", "pkg.X"), "Y": ("hub", "hub.Y")}
 
 
 def test_two_declaring_modules_with_one_stem_are_refused(monkeypatch, tmp_path):
@@ -1003,8 +1078,25 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `FLEX_SHARES` (#184, covered because a setting nothing fits still changes a prediction)
     than to a harness's own threshold. Nothing else moved: every other declared constant
     reproduces its prior value.
+
+    **Moved again 2026-10-08 (#321): `c4606f91` -> `96fee74f`**, `fitted_digest` `5024dd03`
+    -> `772d3bba`, fifty-two covered declarations to fifty-three. Exactly one name entered:
+    `weekly_projection.MIN_UNITS` (8.0), which was `not_an_input` on the argument that the
+    Weekly projection is shown and never ranked on and is `chosen` now. The argument is about
+    the page and the rule (`hub.declare`'s docstring) is about the prediction: the constant is
+    read in the shipped estimator branch, `np.where(acc >= MIN_UNITS, own, pooled)`, and
+    decides which players get their own yards-per-target and which get the pooled rate. **A
+    coverage correction and not a model change**: the value is unchanged and nothing any run
+    computes differs on either side of this commit. Nothing left. The widened walk (a
+    declaration under an `if`/`try`/`with`, a name matched by binding, an `__init__` attributed
+    to its package) found no other declaration in the tree, and the five numbers the widened
+    contract scan found undeclared -- `optimize._TD_LUCK_NOTE`, `conformal.DEFAULT_ALPHA`,
+    `coverage._SIGMA_SCALE`, `journal._SAME`, `pool._NULL_TAIL` -- are declared
+    `not_an_input` with their reasons, which moves no digest. Every other declared constant
+    reproduces its prior value (the walk alone, before `MIN_UNITS` was re-spelled, read
+    `c4606f91`/`5024dd03` on all fifty-two).
     """
-    assert config_digest(HubConfig()) == "c4606f91"
+    assert config_digest(HubConfig()) == "96fee74f"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

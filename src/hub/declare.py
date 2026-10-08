@@ -21,6 +21,13 @@ prediction, measured or not (`FLEX_SHARES`, #184) -- and differ only in what the
 about the number. `not_an_input` is the one way out, and it carries its argument, because
 an exclusion is a decision on the record and not a module quietly falling off a list.
 
+What counts as a declaration is a *binding* at *module level* (#321). `fitted(...)` is one
+only where `fitted` is what `from hub.declare import fitted` bound (or `declare.fitted` /
+`hub.declare.fitted` through the module), so a module with a `fitted` of its own is not read
+as declaring; and module level is everything that runs at import, including the arms of an
+`if`, `try`, `with`, loop or `match` (`module_level`), not only column zero. A package's
+`__init__` is attributed to the package. A name declared twice in one module is refused.
+
 The digest is derived by walking the declarations: `declarations()` reads every module
 under `hub` once per process and finds the module-level names assigned through one of the
 three, and `covered()` reads their live values. The three functions are the identity at
@@ -36,7 +43,7 @@ module holding a constant can take a spelling from it without a cycle.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
@@ -109,13 +116,109 @@ class Declaration:
         return self.kind != EXCLUDED
 
 
-def _spelling(call: ast.expr) -> str | None:
-    """Which of the three a call is, whether spelled bare or as `declare.fitted`."""
+def module_level(body: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
+    """Every statement of a module that runs at import, in source order.
+
+    `ast.parse(...).body` is only the statements written at column zero. A constant bound
+    under an `if`, a `try`, a `with`, a loop or a `match` is just as much a module attribute
+    -- `if sys.platform == ...: X = 0.5` is how a number gets two values -- and the walk that
+    read only column zero was blind to all of them (#321). This descends the compound
+    statements and stops at a `def` or a `class`, whose bodies run later, in a scope of
+    their own."""
+    for node in body:
+        yield node
+        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With,
+                             ast.AsyncWith, ast.Try, ast.TryStar)):
+            yield from module_level(node.body)
+            for handler in getattr(node, "handlers", ()):
+                yield from module_level(handler.body)
+            yield from module_level(getattr(node, "orelse", ()))
+            yield from module_level(getattr(node, "finalbody", ()))
+        elif isinstance(node, ast.Match):
+            for case in node.cases:
+                yield from module_level(case.body)
+
+
+def _bound_names(node: ast.stmt) -> list[str]:
+    """The module-level names one statement binds, other than through the import of a
+    `hub.declare` spelling (which `_aliases` reads)."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [(a.asname or a.name).split(".")[0] for a in node.names]
+    targets: list[ast.expr] = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        targets = [node.target]
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        targets = [i.optional_vars for i in node.items if i.optional_vars is not None]
+    return [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+
+
+def _aliases(tree: ast.Module, module: str) -> tuple[dict[str, str], set[str]]:
+    """What this module's source calls the three spellings.
+
+    `({local name: spelling}, {dotted prefixes that mean hub.declare})`. A spelling is a
+    *binding* and not a name: `fitted(...)` is a declaration only where `fitted` is what
+    `from hub.declare import fitted` bound, and `declare.fitted(...)` only where `declare` is
+    `hub.declare`. A module that defined its own `fitted` -- or a local helper called
+    `chosen` -- and was matched on the name alone would hash a bogus declaration into the
+    model version (#321). A name the module imports from `hub.declare` *and* binds again
+    some other way is refused, because the walk cannot tell which a call means."""
+    names: dict[str, str] = {}
+    prefixes: set[str] = set()
+    other: set[str] = set()
+    for node in module_level(tree.body):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "hub.declare":
+            for a in node.names:
+                if a.name in SPELLINGS:
+                    names[a.asname or a.name] = a.name
+                else:
+                    other.add(a.asname or a.name)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == PACKAGE:
+            for a in node.names:
+                if a.name == "declare":
+                    prefixes.add(a.asname or a.name)
+                else:
+                    other.add(a.asname or a.name)
+        elif isinstance(node, ast.Import) and any(a.name == "hub.declare" for a in node.names):
+            for a in node.names:
+                if a.name == "hub.declare":
+                    prefixes.add(a.asname or "hub.declare")
+                else:
+                    other.add((a.asname or a.name).split(".")[0])
+        else:
+            other.update(_bound_names(node))
+    clash = sorted((set(names) | {p for p in prefixes if "." not in p}) & other)
+    if clash:
+        raise ValueError(
+            f"{module} imports {clash} from hub.declare and binds the same name another way, so "
+            f"a call to it cannot be read as a declaration or as not one. Rename one.")
+    return names, prefixes
+
+
+def _dotted(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and (head := _dotted(node.value)) is not None:
+        return f"{head}.{node.attr}"
+    return None
+
+
+def _spelling(call: ast.expr, names: dict[str, str], prefixes: set[str]) -> str | None:
+    """Which of the three a call is, read as a binding: a bare name only if that name is the
+    `hub.declare` import, an attribute only if its head is `hub.declare`."""
     if not isinstance(call, ast.Call):
         return None
     f = call.func
-    name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
-    return name if name in SPELLINGS else None
+    if isinstance(f, ast.Name):
+        return names.get(f.id)
+    if isinstance(f, ast.Attribute) and f.attr in SPELLINGS:
+        return f.attr if _dotted(f.value) in prefixes else None
+    return None
 
 
 def _reason(call: ast.Call) -> str | None:
@@ -125,19 +228,25 @@ def _reason(call: ast.Call) -> str | None:
 
 
 def declared_in(source: str, module: str) -> list[Declaration]:
-    """The declarations one module's source makes: module-level assignments of one name
-    through one of the three spellings. A call anywhere else -- inside a function, in a
-    tuple unpacking -- is not a declaration, and an exclusion without its argument is
-    refused here rather than recorded as silence."""
+    """The declarations one module's source makes: assignments of one name through one of
+    the three spellings, wherever at module level they sit -- under an `if`, a `try` or a
+    `with` as well as at column zero -- and through the `hub.declare` import and no other
+    binding of the name. A call inside a function, in a tuple unpacking, or to a local that
+    merely shares a spelling's name is not a declaration; an exclusion without its argument
+    is refused here rather than recorded as silence; and a name declared twice in one module
+    is refused, because two branches that each declare it would hash only the one the
+    process happened to bind last."""
+    tree = ast.parse(source)
+    names, prefixes = _aliases(tree, module)
     out: list[Declaration] = []
-    for node in ast.parse(source).body:
+    for node in module_level(tree.body):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target, value = node.targets[0], node.value
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             target, value = node.target, node.value
         else:
             continue
-        kind = _spelling(value)
+        kind = _spelling(value, names, prefixes)
         if kind is None or not isinstance(target, ast.Name):
             continue
         assert isinstance(value, ast.Call)
@@ -147,6 +256,10 @@ def declared_in(source: str, module: str) -> list[Declaration]:
                 f"{module}.{target.id} (line {node.lineno}) is declared not an input without "
                 f"an argument of at least {MIN_REASON_WORDS} words. An exclusion is a decision "
                 f"on the record; a bare marker is the silence #187, #199 and #201 each were.")
+        if any(d.name == target.id for d in out):
+            raise ValueError(
+                f"{module}.{target.id} is declared twice (line {node.lineno}). One constant, "
+                f"one declaration: say what it is once, where it is written.")
         out.append(Declaration(module, target.id, kind, why, node.lineno))
     return out
 
@@ -164,7 +277,10 @@ def declarations() -> tuple[Declaration, ...]:
     found: list[Declaration] = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).with_suffix("")
-        module = ".".join((PACKAGE, *rel.parts)) if rel.name != "__init__" else PACKAGE
+        # A package's `__init__` is the package: `hub/draft/__init__.py` is `hub.draft`, and
+        # only `hub/__init__.py` is the root. All of them were attributed to the root (#321).
+        parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
+        module = ".".join((PACKAGE, *parts))
         found.extend(declared_in(path.read_text(), module))
     stems: dict[str, str] = {}
     for d in found:

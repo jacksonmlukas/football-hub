@@ -79,6 +79,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub import store
+from hub.declare import not_an_input
 from hub.season.pool import Weekly, pick_name, pick_teams, plural
 
 # Two tables, not two schemas in one. The store builds a view per directory, and a
@@ -101,7 +102,9 @@ FALLBACK_KINDS = ("pick",)
 
 # Two survival figures compared as floats. Anything this close is the same figure arrived at
 # by a different route, and anything further apart is two different claims.
-_SAME = 1e-9
+_SAME = not_an_input(
+    1e-9, "a float-equality tolerance on two survival figures in the pick journal; it "
+    "decides whether two records agree, and no prediction reads it")
 
 # What one entry carries. Nulls are meaningful in four of these and are never filled.
 SCHEMA: dict[str, Any] = {
