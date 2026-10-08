@@ -553,3 +553,75 @@ five stands. Nothing else changed in the merge, and the closure is still the sam
 **The pin now, digest `cf9b4b9eea056369`** (was `fc8042b7baaf9f88` on #442 alone and
 `c891aaf58f135479` on #313 alone): the #442 table with `hub.models.components` `b23c5d7d0c49`
 and `hub.models.panel` `99d19fba99e0` taken from #313's.
+
+
+## Amended 2026-10-08: the arm is re-pinned for declaration spellings (#321; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #321 widened
+`hub.declare`'s walk and gave four numbers in the closure a declaration they lacked, which is
+an edit to four of the 29 modules. The pin is a hash of source bytes, so it moves, and the
+amendment obligation above applies: show the edit did not change what the arm computes, re-pin,
+date it.
+
+**What changed, and why nothing the arm computes did.** Each edit wraps an existing value in one
+of `hub.declare`'s markers, which return their first argument unchanged at run time:
+`weekly_projection.MIN_UNITS` `not_an_input(8.0, ...)` -> `chosen(8.0)`;
+`optimize._TD_LUCK_NOTE` `0.5` -> `not_an_input(0.5, ...)`;
+`conformal.DEFAULT_ALPHA` `ModelConfig().conformal_alpha` -> `not_an_input(<same>, ...)`;
+`coverage._SIGMA_SCALE` `math.sqrt(2.0)` -> `not_an_input(<same>, ...)`; plus the
+`hub.declare` import each needed and, in `weekly_projection`, a comment. `hub.declare` is
+itself exempt from the closure (`CLOSURE_EXEMPT`), so the set is unchanged: 29 modules, the
+same names.
+
+**The evidence.** Parsing each of the four modules at the parent commit and in this change,
+removing every module, class and function docstring, replacing each call of `chosen`,
+`not_an_input` or `fitted` by its first argument and dropping the `from hub.declare import`
+line, the two syntax trees are equal (`ast.dump`) for all four: no statement the arm executes
+differs. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430) passes
+on this tree, so the figures computed on the pre-move code are still reproduced.
+
+**What did move:** `config_digest` `c4606f91` -> `96fee74f` and `fitted_digest` `5024dd03` ->
+`772d3bba`, because `MIN_UNITS` entered the covered declarations (a coverage correction, same
+value; recorded in `tests/unit/test_config.py`). That is the model version's label and not a
+number the arm computes.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.optimize` | `b5c2b10a2ec1` | `314a78a8b5ef` |
+| `hub.exhibits.weekly_projection` | `d5b25ec6130b` | `372f7180071e` |
+| `hub.models.conformal` | `f98558ab2051` | `79827e566bba` |
+| `hub.models.coverage` | `fcfc597b98e8` | `3c2d88cc6908` |
+
+**The closure pinned, digest `da1dfa2e9571eea7`** (29 modules; was `cf9b4b9eea056369`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `601db0b4f9f1` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `a8d095db300c` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |

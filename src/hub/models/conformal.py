@@ -39,9 +39,13 @@ import numpy as np
 import polars as pl
 
 from hub.config import ModelConfig
+from hub.declare import not_an_input
 
 # conf/ owns this: `model.conformal_alpha` in the dataclass, overridable from conf/config.yaml.
-DEFAULT_ALPHA = ModelConfig().conformal_alpha
+DEFAULT_ALPHA = not_an_input(
+    ModelConfig().conformal_alpha,
+    "the config field's default read through, not a second number: config_digest already "
+    "hashes model.conformal_alpha, so declaring it here would hash it twice")
 DEFAULT_MIN_CALIBRATION = 40
 
 # #309: a group is calibrated on its own rows only from this many. Split conformal's realised
