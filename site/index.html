@@ -19,12 +19,21 @@
     --bg: #fbfbfa; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
     --card: #fff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
     --good: #15803d; --bad: #b91c1c; --accent: #1d4ed8;
+    /* The confidence grammar (#347): one token set, four states. See "Confidence grammar". */
+    --st-frozen-rule: #374151;
+    --st-live-tint: color-mix(in srgb, var(--accent) 9%, transparent);
+    --st-stale-ink: #6f7480; --st-stale-rule: #9ca3af;
+    --st-unc-ink: #6d28d9; --st-unc-hatch: rgba(109, 40, 217, 0.22);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1115; --fg: #e8e8e8; --muted: #9ca3af; --line: #262a33;
       --card: #161920; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
       --good: #4ade80; --bad: #f87171; --accent: #60a5fa;
+      --st-frozen-rule: #d1d5db;
+      --st-live-tint: color-mix(in srgb, var(--accent) 14%, transparent);
+      --st-stale-ink: #8b92a0; --st-stale-rule: #5b6270;
+      --st-unc-ink: #c4b5fd; --st-unc-hatch: rgba(196, 181, 253, 0.28);
     }
   }
   * { box-sizing: border-box; }
@@ -60,16 +69,37 @@
   code { font-size: 0.85em; background: var(--line); padding: 0.05rem 0.3rem;
          border-radius: 3px; }
 
-  /* The frozen/live boundary. Shading the live columns is the whole point of 4.3: a
-     reader must never have to wonder which numbers moved while the games were on. */
-  .grp-live { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  /* Confidence grammar (#347). Every number is frozen, live, stale or unconfirmed, and the
+     page says which by how it draws the number rather than by a footnote under it:
+       frozen       plain ink, solid left rule -- committed, scored, will not move. The default.
+       live         tinted field, pulsing dot  -- moving right now.
+       stale        reduced ink, dotted rule, an age stamp that is required -- last-good value
+                    past its window; the value is dimmed, never blanked.
+       unconfirmed  dashed hatch                -- assumed, not verified.
+     `.grp-live` is the slate's older name for `.state-live` and shares its rule: one rule
+     rather than two that can drift. */
+  .state-frozen { border-left: 3px solid var(--st-frozen-rule); padding-left: 0.6rem; }
+  .state-live, .grp-live { background: var(--st-live-tint); }
   .grp-frozen { opacity: 0.95; }
+  .state-stale { color: var(--st-stale-ink); border-left: 3px dotted var(--st-stale-rule);
+                 padding-left: 0.6rem; }
+  .state-stale > :not(.warn) { opacity: 0.72; }
+  .warn.state-stale { color: var(--warn-fg); }
+  .stamp { font-weight: 600; white-space: nowrap; }
+  .state-unconfirmed { color: var(--fg); font-size: 0.82rem; margin: 0.6rem 0 0;
+                       padding: 0.5rem 0.65rem; border-radius: 6px;
+                       border: 1px dashed var(--st-unc-ink);
+                       border-left: 3px dashed var(--st-unc-ink);
+                       background: repeating-linear-gradient(135deg, var(--st-unc-hatch) 0 2px,
+                                                             transparent 2px 7px); }
   .legend { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0; line-height: 1.5; }
   .tag { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
          padding: 0.05rem 0.4rem; border-radius: 4px; text-transform: uppercase; }
   .tag.frozen { background: var(--line); color: var(--fg); }
   .tag.live { background: var(--accent); color: #fff; }
   .tag.live::before { content: "● "; animation: pulse 2s ease-in-out infinite; }
+  .tag.stale { background: var(--st-stale-rule); color: var(--bg); }
+  .tag.unconfirmed { border: 1px dashed var(--st-unc-ink); color: var(--st-unc-ink); }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
   @media (prefers-reduced-motion: reduce) { .tag.live::before { animation: none } }
 </style>
@@ -127,12 +157,46 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // /GUARD
 
-function panel(id, { age, warn, html }) {
-  const el = document.getElementById(id);
-  el.querySelector(".age").textContent = age ?? "";
-  el.querySelector(".body").innerHTML =
-    (warn ? `<p class="warn">${esc(warn)}</p>` : "") + (html ?? "");
+// The four states, named once. `frozen` is what a panel is unless something says otherwise.
+const STATE = { frozen: "state-frozen", live: "state-live", stale: "state-stale",
+                unconfirmed: "state-unconfirmed" };
+
+// A stale panel's warning, in the stale state, with the artifact's age beside it. The age is
+// required: "Stale" with no age cannot be told from a panel that went stale a minute ago, so
+// an artifact that does not say when it was written says that instead of saying nothing.
+// `stale` is `{reason, at}` -- the manifest's reason and the artifact's own `generated_at`.
+// GUARD stale-warning-carries-the-state-and-the-age [contracts/test_dashboard_escapes.py::test_a_stale_artifact_renders_in_the_stale_state_with_its_age]: every stale warning renders in the stale state with the artifact's age beside it.
+function staleNote(stale) {
+  const age = stale.at ? ago(stale.at) : "age unknown";
+  return `<p class="warn ${STATE.stale}">Stale: ${esc(stale.reason ?? "unknown")} &middot;
+          <span class="stamp">artifact ${esc(age)}</span></p>`;
 }
+// /GUARD
+
+// What a panel is made of, kept apart from the DOM so a test can lift it into node. A stale
+// panel keeps every value it had -- the state dims it -- and a panel with no data renders
+// its reason in the default frozen state, since there is nothing in it to be unsure of.
+function panelParts({ age, warn, html, stale }) {
+  return {
+    age: age ?? "",
+    cls: stale ? STATE.stale : STATE.frozen,
+    body: (stale ? staleNote(stale) : warn ? `<p class="warn">${esc(warn)}</p>` : "")
+          + (html ?? ""),
+  };
+}
+
+function panel(id, opts) {
+  const parts = panelParts(opts);
+  const el = document.getElementById(id);
+  el.querySelector(".age").textContent = parts.age;
+  const body = el.querySelector(".body");
+  body.className = `body ${parts.cls}`;
+  body.innerHTML = parts.body;
+}
+
+// The manifest entry's stale state, or null when the artifact is current. One reading of
+// "is this stale" for every panel, so none of them can spell it differently.
+const staleOf = art => art?.stale ? { reason: art.reason, at: art.generated_at } : null;
 
 // Escapes by default, so a column cannot forget. Getters return *text*, never markup --
 // which is why the em dash below is the character rather than `&mdash;`. Relying on each
@@ -348,7 +412,7 @@ function unconfirmedNote(surv) {
   // whether the rules moved between them -- and until it was rendered, nothing read it.
   const rules = surv?.pool_digest ? ` Rules <code>${esc(surv.pool_digest)}</code>.` : "";
   if (!un.length) return rules ? `<p class="muted">${rules.trim()}</p>` : "";
-  return `<p class="warn">These figures assume pool rules nobody has confirmed:
+  return `<p class="${STATE.unconfirmed}">These figures assume pool rules nobody has confirmed:
           <b>${esc(un.join(", "))}</b>. The dollar amounts move if any of them is settled
           differently.${rules}</p>`;
 }
@@ -590,8 +654,8 @@ async function slateBody(preds, art, archived) {
 
   return {
     age: `${preds.n} games · ${matched} live`,
-    warn: art?.stale ? `Stale: ${art.reason ?? "unknown"}`
-        : archived ? "An earlier published week, kept exactly as it was committed."
+    stale: staleOf(art),
+    warn: archived ? "An earlier published week, kept exactly as it was committed."
         : (!live ? "Live scores unavailable — model numbers below are still correct."
                  : (matched === 0 ? "No live game matches this slate; scores column is idle."
                                   : null)),
@@ -656,7 +720,7 @@ async function render() {
       // producer reported no stamp -- on the artifact whose freshness matters most on draft
       // night. `built` rather than `synced`: a board is built, not fetched.
       age: `${board.length} players · built ${ago(boardArt?.generated_at)}`,
-      warn: bArt?.stale ? `Stale: ${bArt.reason ?? "unknown"}` : null,
+      stale: staleOf(bArt),
       html: table([
         { label: "player", get: r => r.player ?? "" },
         { label: "pos", get: r => r.pos ?? "" },
@@ -682,7 +746,7 @@ async function render() {
     // Withheld players are named first: the recommendation is only trustworthy if the reader
     // can see who was taken out of it and why.
     const heldNote = held.length
-      ? `<p class="warn">Withheld as unavailable: <b>${esc(held.join(", "))}</b>. ESPN's injury
+      ? `<p class="${STATE.unconfirmed}">Withheld as unavailable: <b>${esc(held.join(", "))}</b>. ESPN's injury
            field does not carry suspensions; its games projection does, and these are short of
            a full slate. They are excluded from the lineup below.</p>`
       : "";
@@ -701,7 +765,7 @@ async function render() {
       // last answered, which on lineup day is the number that matters. It used to be the
       // time the page was built, which is always "just now" (issue #122).
       age: `${ros.n} rostered · synced ${ago(ros.generated_at)}`,
-      warn: rArt?.stale ? `Stale: ${rArt.reason ?? "unknown"}` : null,
+      stale: staleOf(rArt),
       html: heldNote + note + table([
         { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },
         { label: "pos", get: r => r.pos ?? "" },
@@ -745,7 +809,7 @@ async function render() {
     // stands in their place is the elimination itself.
     panel("p-survivor", {
       age: "eliminated",
-      warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}` : null,
+      stale: staleOf(sArt),
       html: eliminatedBody(surv),
     });
   } else if (sRows.length) {
@@ -763,8 +827,8 @@ async function render() {
       age: `${sWeeks} wk${sWeeks === 1 ? "" : "s"} from wk ${from}`
          + (sRows.length !== sWeeks ? ` · ${sRows.length} picks` : "")
          + ` · survives ${pct(surv.survival ?? 0)}`,
-      warn: sArt?.stale ? `Stale: ${sArt.reason ?? "unknown"}`
-          : (missing.length
+      stale: staleOf(sArt),
+      warn: (missing.length
              ? `Weeks ${missing.join(", ")} have no posted spread yet and still need a pick.`
              : null),
       html: survivorBody(surv) + unconfirmedNote(surv) + unreadStateNote(surv),
