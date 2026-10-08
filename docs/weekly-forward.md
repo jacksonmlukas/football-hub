@@ -452,6 +452,65 @@ that did not change what the arm computes is answered by showing so (the identit
 outcome is read. An edit that did change it is a new arm and needs a new pre-registration.
 `test_the_pin_is_recorded_in_the_document` holds the constant and this table equal.
 
+
+## Amended 2026-10-07: the pin is re-pinned after #442's behaviour-neutral edits (prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. The #456 table above
+is kept as the record of what was pinned until today; the pin below supersedes it.
+
+**What changed in the closure, and why nothing the arm computes did.** Three of the 29 modules
+were edited by #442 (ledger follow-ups) and none of them in anything the forward measurement
+reaches. (1) `hub.models.margin` gained `NFL_WEEKS = 18` (moved there from
+`hub.season.survivor`, so that `survival_beside`'s default no longer needs a function-local import
+of the survivor pool's module, which the walk would otherwise have had to pin) and lost that
+import; its `Harness` declarations now say `arm_roots=("hub.models.margin",)` where they listed
+nine modules. (2) `hub.models.coverage` and (3) `hub.season.weekly_gate` changed the same
+declaration only (`arm_roots=(...)` in place of a hand-kept `arm_modules` tuple). The set of
+modules in the closure is unchanged: 29, the same names. The identity test
+`tests/unit/test_weekly_projection_move.py` (#430) passes on this tree, so the figures computed
+on the pre-move code are still reproduced; `survival_beside` and the harness declarations are not
+called by `project`, the shrinkage fit or anything the forward measurement scores.
+
+| module | was | now |
+|---|---|---|
+| `hub.models.coverage` | `e036e1981cef` | `fcfc597b98e8` |
+| `hub.models.margin` | `9da0f4839e89` | `8d58c201cc4b` |
+| `hub.season.weekly_gate` | `211f84e4a564` | `73cc434a55db` |
+
+**The closure pinned, digest `fc8042b7baaf9f88`** (29 modules; was `7bc93c290a5cc331`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `b5c2b10a2ec1` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `601db0b4f9f1` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `d5b25ec6130b` |
+| `hub.holdout` `a8d095db300c` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `c402b0c4856f` |
+| `hub.models.conformal` `f98558ab2051` |
+| `hub.models.coverage` `fcfc597b98e8` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `2f9f2aad1946` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
 ## Amended 2026-10-07: the arm is re-pinned for two docstrings (#313; prior text kept)
 
 Still before any capture exists and before any 2026 outcome has been read. #313 names three
@@ -482,3 +541,15 @@ read by the arm.
 | `hub.models.panel` `99d19fba99e0` | `2f9f2aad1946` |
 
 The other 27 rows of the table above stand. (Previous digest `7bc93c290a5cc331`.)
+
+## Amended 2026-10-08: the two re-pins above, combined (#442 with #313; prior text kept)
+
+Both re-pins above were taken from the #456 table (digest `7bc93c290a5cc331`) and landed
+together, so neither section's digest is the pin now. They touch disjoint modules: #442 moved
+`hub.models.coverage`, `hub.models.margin` and `hub.season.weekly_gate`; #313 moved
+`hub.models.components` and `hub.models.panel`. Each table row above that is not one of those
+five stands. Nothing else changed in the merge, and the closure is still the same 29 modules.
+
+**The pin now, digest `cf9b4b9eea056369`** (was `fc8042b7baaf9f88` on #442 alone and
+`c891aaf58f135479` on #313 alone): the #442 table with `hub.models.components` `b23c5d7d0c49`
+and `hub.models.panel` `99d19fba99e0` taken from #313's.

@@ -356,13 +356,7 @@ SHAPE_ACTIONS = Actions(
 SHAPE_HARNESS = Harness(name="margin_shape", arm_a="skew-free", arm_b="deployed skew",
                         within=("season",), ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
                         ceiling_column="ceiling_gain",
-                        # Inline, not a shared constant: this module is in `FITTED_MODULES`, so
-                        # a module-level upper-case name would move the config digest.
-                        arm_modules=("hub.models.base", "hub.models.components",
-                                     "hub.models.conformal", "hub.models.coverage",
-                                     "hub.models.margin", "hub.models.market",
-                                     "hub.models.predict", "hub.models.scoring_rules",
-                                     "hub.models.volume"))
+                        arm_roots=("hub.models.margin",))
 
 
 def shape_verdict(wf: pl.DataFrame) -> tuple[str, str]:
@@ -443,15 +437,22 @@ def calibration_by_spread(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
     })
 
 
+# How long the season a plan covers is (#442). Owned here, not in `hub.season.survivor` where it
+# began: `survival_beside` defaults `picks` to it, a harness's code closure walks the import and
+# `survivor` is not (and must not be) part of an arm's closure, so the constant lives in a module
+# the arms already declare and `survivor` re-exports it. Assigned plain: only `chosen`/`fitted`/
+# `not_an_input` calls are declarations, so this does not touch `config_digest`.
+NFL_WEEKS = 18
+
+
 def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> dict[str, float]:
     """Season-long survival for a plan of favourites, under each model and as realised.
 
     The product `survivor` prints is a chain of these probabilities, one a week, so the
     honest side-by-side is the favourites row raised to the season's length: what a plan of
     `picks` such favourites survives at under the Gaussian, under the lumpy price, and at
-    the realised rate. `picks` defaults to `hub.season.survivor.NFL_WEEKS`, read from the
-    module that owns the season's length rather than restated; imported inside because the
-    product's module is downstream of this one.
+    the realised rate. `picks` defaults to `NFL_WEEKS`, above, which `hub.season.survivor`
+    re-exports rather than restating.
 
     **It is a bound, not a measurement** (#286). Raising one bucket's rate to the
     eighteenth power asserts that every week is priced at that rate and that the weeks are
@@ -462,7 +463,6 @@ def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> d
     figure is printed, so it is labelled wherever it is read.
     """
     if picks is None:
-        from hub.season.survivor import NFL_WEEKS
         picks = NFL_WEEKS
     fav = calibration.filter(pl.col("bucket") == "favourites")
     if fav.is_empty():
@@ -531,11 +531,7 @@ WIDTH_ACTIONS = Actions(adopt="ADOPT", remove="REMOVE", show="KEEP")
 WIDTH_HARNESS = Harness(name="margin_width", arm_a="challenger", arm_b="incumbent",
                         within=("season",), ceiling_arm=CEILING_ARM, actions=WIDTH_ACTIONS,
                         ceiling_column="ceiling_gain",
-                        arm_modules=("hub.models.base", "hub.models.components",
-                                     "hub.models.conformal", "hub.models.coverage",
-                                     "hub.models.margin", "hub.models.market",
-                                     "hub.models.predict", "hub.models.scoring_rules",
-                                     "hub.models.volume"))
+                        arm_roots=("hub.models.margin",))
 
 
 def verdict(wf: pl.DataFrame) -> tuple[str, str]:

@@ -280,7 +280,7 @@ ACTIONS = Actions(
 HARNESS = Harness(name="injury_type", arm_a="type-adjusted", arm_b="retention", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS,
                   unit="MAE points per designated player-week", places=4,
-                  arm_modules=("hub.models.injury", "hub.names"))
+                  arm_roots=("hub.models.injury",))
 
 # --- is retention the availability model, or is zeroing a designated player enough? (#360) ---
 #
@@ -304,7 +304,7 @@ RETENTION_HARNESS = Harness(
     name="injury_retention", arm_a="retention", arm_b="out_zero", within=WITHIN,
     ceiling_arm=RETENTION_CEILING_ARM, actions=RETENTION_ACTIONS,
     unit="MAE points per designated player-week", places=4,
-    arm_modules=("hub.models.injury", "hub.names"))
+    arm_roots=("hub.models.injury",))
 
 # Shrinkage grid for the per-type multiplier, chosen on TRAINING rows only. Shrinking toward
 # 1.0 rather than imposing a cell minimum is what lets a thin type (Groin, n=450 across four
