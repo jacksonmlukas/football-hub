@@ -97,6 +97,12 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # Job-level, replacing the workflow's block, so it is restated in full: only this job's
+    # watchdog check files and closes an incident (#457, #461).
+    permissions:
+      contents: read
+      actions: write
+      issues: write
     # The cap belongs to the loop, which stops on its own; this is the backstop for a cycle
     # wedged on a socket, and is deliberately a little wider than the loop's own two hours.
     timeout-minutes: 130
@@ -162,6 +168,31 @@ jobs:
             site/data \
             gh workflow run pages.yml --repo "${{ github.repository }}" \
               -f league="${{ steps.board.outputs.league }}"
+
+      # **The watchdog's check, inside the refresher** (#457). Two game windows (2026-10-02
+      # and 2026-10-06) ran with a refresher and no check, after #391, because `watchdog.yml`
+      # is a cron on the same scheduler as this one and GitHub drops scheduled runs under
+      # load. A check that is a step of this job cannot be dropped without the loop it
+      # watches: any window with a refresher has a check, and `hub.watchdog_gap` counts this
+      # run as one (a `live` run that ended success or cancelled).
+      #
+      # It measures what the loop just did -- is the published `live.json` fresh -- and files
+      # or closes the same `<!-- watchdog-heartbeat -->` incident the cron job does.
+      #
+      # **A failed check does not fail the refresh, and does not stop the hand-over.**
+      # `continue-on-error` keeps the job green and the next step running; the script exits 1
+      # only when it found a problem and could not file it, which shows as a red step. `if:
+      # always()` so a loop that failed or was cancelled still gets its check, and this sits
+      # BEFORE the hand-over because the dispatch there starts the run that cancels this one.
+      # `tests/contracts/test_watchdog_check_in_live.py` holds all of this.
+      - name: Watchdog check
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEARTBEAT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/live.json
+        run: .github/scripts/watchdog-check.sh
 
       # **At its cap, hand the window on while ESPN still reports a game in progress** (#391).
       #
