@@ -297,9 +297,9 @@ quadrature: `hypot(TALENT_CV_BY_POS, IMPUTE_CV_BY_POS)`. Since 2026-09-16 (#298)
 is measured on the players actually imputed — rookies, `IMPUTE_CV` 0.315 pooled, RB 0.359,
 WR 0.288, QB and TE at the pooled value — so an imputed QB carries 0.373, RB 0.523, WR 0.423,
 TE 0.363 against the observed 0.20 / 0.38 / 0.31 / 0.18 above. Before #298 the widening used
-a veteran-blanked 0.260 that under-stated it. (2026-10-07, #315: the imputation's monotone
-step became pool-adjacent-violators; the pooled `IMPUTE_CV` remeasured at 0.314 against 0.315
-and is not refitted, and the imputed level rises by about 0.2 points a game.)
+a veteran-blanked 0.260 that under-stated it. (2026-10-07, #315: a pool-adjacent-violators
+imputation was trialled and **withdrawn to #462**; `_impute_xfp` is unchanged and nothing in
+this paragraph moved. A first version of this note said it had landed.)
 [impute-cv.md](impute-cv.md) has the
 measurement; nothing in this document's fit changed.
 

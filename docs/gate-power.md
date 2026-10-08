@@ -2366,6 +2366,12 @@ every downstream weekly figure that reads it. `docs/weekly-screen.md`, `docs/met
 > next draft-gate run reads "on other arm source" in the ledger; that is this change, and no
 > gate was run for it. The frozen-board arm-B pin in `test_backtest.py` was re-pinned with the
 > cause. Items 2 and 4 are untouched and held (#455).
+>
+> **Dated 2026-10-07, later the same day: item 3 was withdrawn to #462 and did not land.** Only
+> item 1 shipped; `hub.draft.board` is unchanged and the sentences above about item 3 describe a
+> trial, kept as written. The frozen-board arm-B pin and the `draft` / `draft_sensitivity`
+> golden entries were re-measured with item 1 alone and move identically (the board is not on
+> that path), so they are item 1's.
 
 ## What this measurement cannot do
 

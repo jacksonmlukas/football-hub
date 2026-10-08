@@ -451,3 +451,25 @@ that did not change what the arm computes is answered by showing so (the identit
 `PINNED_ARM_MODULES` and amending this document, dated, with the new table, before any admitted
 outcome is read. An edit that did change it is a new arm and needs a new pre-registration.
 `test_the_pin_is_recorded_in_the_document` holds the constant and this table equal.
+
+## Amended 2026-10-07: `hub.draft.season` re-pinned for #315 item 1 (prior text kept)
+
+Before any capture is read and before any 2026 outcome has been read. The closure table above
+stands as the record of what was pinned until today; one row of it is superseded.
+
+**What changed.** Item 1 of #315: `hub.draft.season._absence_factor` now returns the played-week
+mask and the play fraction, and a played week is drawn at mean `mu/f` and sd `sd/sqrt(f)` where
+the whole draw was divided by `f`. It changes `hub.draft.season` and no other module in the
+closure; `hub.draft.board` is byte-identical to `main`'s and keeps `6e61e56ecac0`. (Item 3 of
+#315, a PAVA imputation in `board.py`, was withdrawn to #462 and is not part of this re-pin.)
+
+**Why the arm's figures are unchanged.** The weekly gate never reaches `_absence_factor`: with
+`simulate_weeks` and `_absence_factor` replaced by functions that raise, `cohort(board, season,
+drafts=20, seed=0)` drafted the 2022-2025 rosters of `assemble_universe` without either being
+called. `weekly_gate_data` reads the board for names and ranks and drafts through
+`hub.draft.cohort`, whose market strategy does not simulate a season. Nothing the forward
+measurement scores is computed by the changed function; `tests/unit/test_weekly_projection_move.py`
+(#430's identity test) passes on this tree.
+
+**The row now pinned.** `hub.draft.season` `56b60168eb98` (was `601db0b4f9f1`). The other 28
+rows are as in the table above. Closure digest **`54d9a530aa5822d0`** (was `7bc93c290a5cc331`).

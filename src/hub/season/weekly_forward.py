@@ -81,7 +81,7 @@ PINNED_ARM_MODULES: dict[str, str] = {
     "hub.draft.prior_signal": "4b7421479470",
     "hub.draft.regression": "3ba22b3a649e",
     "hub.draft.report": "df1f8e20569e",
-    "hub.draft.season": "601db0b4f9f1",
+    "hub.draft.season": "56b60168eb98",
     "hub.draft.state": "ad958507df6a",
     "hub.exhibits.weekly_projection": "d5b25ec6130b",
     "hub.holdout": "a8d095db300c",

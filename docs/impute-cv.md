@@ -87,9 +87,9 @@ interval. RB and WR carry the difference; QB and TE are eight and six players an
 on their own, which is why they ship at the pooled value. The curve also sits *high* for rookies
 — a median residual of −0.07 to −0.11 against the veterans' −0.03 — which is the direction
 the disposition predicted: a rookie's rank carries no production information, so the curve
-fitted on veterans is optimistic about him. (Restated 2026-10-07, #315: this sentence said
-"low" until now; the residual is `realised / imputed − 1`, so a negative median is a curve
-above the outcome. See "What moved".)
+fitted on veterans is optimistic about him. (Restated 2026-10-07, #315 and #462. Prior text:
+"The curve also sits low for rookies". The residual is `realised / imputed − 1`, so a negative
+median is a curve above the outcome. See "What moved".)
 
 **`≥ 8 games` conditions on the outcome.** A rookie who lost the job or was hurt by
 October has fewer than eight games and is dropped, and those are disproportionately the
@@ -102,7 +102,13 @@ rather than tuned.
 
 ## What moved
 
-**2026-10-07 (#315, item 3): the curve.** `_impute_xfp` smoothed with a rolling median and
+> **Withdrawn 2026-10-07: item 3 of #315 did not land and `_impute_xfp` is unchanged.** The
+> maintainer moved it to #462, so nothing below shipped: the shipped curve is still the rolling
+> median followed by a running minimum, and `site/data/draft_board.json` is unaffected. The
+> text and measurements are kept as the record of the trial; read "now" and "is now" as "in the
+> trial". The one thing that stands is the sign correction in "The result" ("sits high").
+
+**2026-10-07 (#315, item 3, trial, not shipped — see #462): the curve.** `_impute_xfp` smoothed with a rolling median and
 then forced the curve non-increasing with a running minimum. That clamp lowers every point
 that follows a rise and never raises one, so it sat at or below the smoothed data wherever
 the data rose. It is now pool-adjacent-violators (`board._pava_decreasing`): the violating
