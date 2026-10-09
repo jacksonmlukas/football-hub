@@ -526,70 +526,17 @@
     ]
   },
   "draft": {
-    "lines": [
-      "\n  n=1  optimizer - market = -0.54 points per team game",
-      "  95% CI [-0.54, -0.54]   P(optimizer better) 0.0%",
-      "\n  per-season:",
-      "    2025  gain -0.54  se nan  m 1  loss (sign-only)",
-      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
-      "  the 1 replications the interval rests on: 2025 -0.54"
-    ],
-    "seasons": [
-      {
-        "gain": -0.540355,
-        "m": 1,
-        "n": 1,
-        "se": "NaN",
-        "season": 2025
-      }
-    ],
-    "summary": {
-      "clusters": 1.0,
-      "hi": -0.540355,
-      "lo": -0.540355,
-      "mean": -0.540355,
-      "n": 1.0,
-      "p_better": 0.0,
-      "se": 0.0
-    },
-    "summary_nan_keys": [
-      "mde",
-      "power",
-      "t_hi",
-      "t_lo"
-    ],
     "verdict": [
       "NOT-RUNNABLE",
       "NOT RUNNABLE: this gate has not measured a ceiling. Per ADR-0019's #363 (S6) amendment, a gate that measured no ceiling is NOT-RUNNABLE in both directions -- not only when its MDE happens to exceed one, since REMOVE was never shown safe on an unmeasured design, only never caught. Run with the ceiling this gate declares, or read `docs/gate-power.md` for which ceilings are measured and #376 for what ends this for the rest."
-    ]
-  },
-  "draft_sensitivity": {
-    "lines": [
-      "\n  n=1  optimizer - market = -0.54 points per team game",
-      "  95% CI [-0.54, -0.54]   P(optimizer better) 0.0%",
-      "  ceiling (perfect foresight -- the season known in advance) +3.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
-      "\n  per-season:",
-      "    2025  gain -0.54  se nan  m 1  loss (sign-only)",
-      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
-      "  the 1 replications the interval rests on: 2025 -0.54"
-    ],
-    "seasons": [
-      {
-        "gain": -0.540355,
-        "m": 1,
-        "n": 1,
-        "se": "NaN",
-        "season": 2025
-      }
     ],
     "summary": {
-      "ceiling": 3.0,
-      "clusters": 1.0,
-      "hi": -0.540355,
-      "lo": -0.540355,
-      "mean": -0.540355,
       "n": 1.0,
-      "p_better": 0.0,
+      "clusters": 1.0,
+      "mean": 13.718502,
+      "lo": 13.718502,
+      "hi": 13.718502,
+      "p_better": 1.0,
       "se": 0.0
     },
     "summary_nan_keys": [
@@ -598,9 +545,63 @@
       "t_hi",
       "t_lo"
     ],
+    "seasons": [
+      {
+        "season": 2025,
+        "gain": 13.718502,
+        "n": 1,
+        "se": "NaN",
+        "m": 1
+      }
+    ],
+    "lines": [
+      "\n  n=1  optimizer - market = +13.72 points per team game",
+      "  95% CI [+13.72, +13.72]   P(optimizer better) 100.0%",
+      "\n  per-season:",
+      "    2025  gain +13.72  se nan  m 1  win (sign-only)",
+      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  the 1 replications the interval rests on: 2025 +13.72"
+    ]
+  },
+  "draft_sensitivity": {
     "verdict": [
       "SHOW",
-      "NO CHANGE: the market leads and equity stays a tiebreaker. 1 resolved of 1, 0 abstained (won 0, tied 0, lost 1 of 1 seasons) and too few clusters for a t interval -- absence of evidence, not evidence of equivalence."
+      "NO CHANGE: the market leads and equity stays a tiebreaker. 1 resolved of 1, 0 abstained (won 1, tied 0, lost 0 of 1 seasons) and too few clusters for a t interval -- absence of evidence, not evidence of equivalence."
+    ],
+    "summary": {
+      "n": 1.0,
+      "clusters": 1.0,
+      "mean": 13.718502,
+      "lo": 13.718502,
+      "hi": 13.718502,
+      "p_better": 1.0,
+      "se": 0.0,
+      "ceiling": 3.0
+    },
+    "summary_nan_keys": [
+      "mde",
+      "power",
+      "t_hi",
+      "t_lo"
+    ],
+    "seasons": [
+      {
+        "season": 2025,
+        "gain": 13.718502,
+        "n": 1,
+        "se": "NaN",
+        "m": 1
+      }
+    ],
+    "lines": [
+      "\n  n=1  optimizer - market = +13.72 points per team game",
+      "  95% CI [+13.72, +13.72]   P(optimizer better) 100.0%",
+      "  ceiling (perfect foresight -- the season known in advance) +3.00 points per team game, measured on this gate's own harness -- not comparable with another gate's",
+      "\n  per-season:",
+      "    2025  gain +13.72  se nan  m 1  win (sign-only)",
+      "\n  1 clusters -- few enough that the percentile bootstrap under-covers, so both intervals are shown",
+      "  the 1 replications the interval rests on: 2025 +13.72",
+      "\n  CEILING BELOW THE EFFECT: +3.00 < +13.72. One of the two is measuring something the other is not; do not read the interval above as bounded."
     ]
   },
   "lineup": {
