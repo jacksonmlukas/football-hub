@@ -974,6 +974,178 @@
       "timestamp": "2026-10-07T19:49:05+00:00",
       "verdict": "SHOW",
       "width": 0.09076695602668383
+    },
+    {
+      "abstained": 0,
+      "clusters": 22.0,
+      "code_digest": "dd61ab28",
+      "config_digest": "96fee74f",
+      "data_digest": "a7b56ffe",
+      "gate": "favourite_longshot",
+      "hi": 0.0010677800378177322,
+      "inputs_digest": "f6849873c584d266",
+      "lo": -0.0013599849710318975,
+      "recipe": "edges=0+3+6+9+14,min_games=240,min_past=5,prior_sd=1.5,trailing=10",
+      "resolved": 22,
+      "seasons": [
+        {
+          "disposition": "loss",
+          "gain": -0.0014486288469762743,
+          "m": 1,
+          "se": NaN,
+          "season": 2004
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0013724842892766098,
+          "m": 1,
+          "se": NaN,
+          "season": 2005
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.00941920182788003,
+          "m": 1,
+          "se": NaN,
+          "season": 2006
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.005495965363138788,
+          "m": 1,
+          "se": NaN,
+          "season": 2007
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.001122411325479633,
+          "m": 1,
+          "se": NaN,
+          "season": 2008
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.0006723085317915656,
+          "m": 1,
+          "se": NaN,
+          "season": 2009
+        },
+        {
+          "disposition": "loss",
+          "gain": -6.80296316477591e-05,
+          "m": 1,
+          "se": NaN,
+          "season": 2010
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0012026718349217314,
+          "m": 1,
+          "se": NaN,
+          "season": 2011
+        },
+        {
+          "disposition": "win",
+          "gain": 0.002522344049347147,
+          "m": 1,
+          "se": NaN,
+          "season": 2012
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0010033161255823542,
+          "m": 1,
+          "se": NaN,
+          "season": 2013
+        },
+        {
+          "disposition": "win",
+          "gain": 0.002631504968307552,
+          "m": 1,
+          "se": NaN,
+          "season": 2014
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.002366978002638964,
+          "m": 1,
+          "se": NaN,
+          "season": 2015
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0023911459040123484,
+          "m": 1,
+          "se": NaN,
+          "season": 2016
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0011645573858338754,
+          "m": 1,
+          "se": NaN,
+          "season": 2017
+        },
+        {
+          "disposition": "win",
+          "gain": 0.00034874290420860987,
+          "m": 1,
+          "se": NaN,
+          "season": 2018
+        },
+        {
+          "disposition": "win",
+          "gain": 0.00015764645098537144,
+          "m": 1,
+          "se": NaN,
+          "season": 2019
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0033142737598600425,
+          "m": 1,
+          "se": NaN,
+          "season": 2020
+        },
+        {
+          "disposition": "win",
+          "gain": 0.00025073471875891595,
+          "m": 1,
+          "se": NaN,
+          "season": 2021
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0028652067280864335,
+          "m": 1,
+          "se": NaN,
+          "season": 2022
+        },
+        {
+          "disposition": "loss",
+          "gain": -0.0036295092656871697,
+          "m": 1,
+          "se": NaN,
+          "season": 2023
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0019656031031624055,
+          "m": 1,
+          "se": NaN,
+          "season": 2024
+        },
+        {
+          "disposition": "win",
+          "gain": 0.0015469003183250507,
+          "m": 1,
+          "se": NaN,
+          "season": 2025
+        }
+      ],
+      "timestamp": "2026-10-09T11:40:41+00:00",
+      "verdict": "SHOW",
+      "width": 0.0024277650088496295
     }
   ]
 }

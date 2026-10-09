@@ -455,9 +455,14 @@ Nothing above was tuned after seeing it; the design in the preceding section is 
 
 ## Result: the gate ran once, 2026-10-09 (#465)
 
-`uv run python -m hub.models.favourite_longshot --run`, one run, one ledger entry
-(`favourite_longshot`, code digest `248c040f`, data digest `a7b56ffe`), at the tree committed as
-`2419be0`. 22 held-out seasons, 2004-2025; 2026 is in progress and below `MIN_SCORED_GAMES`.
+`uv run python -m hub.models.favourite_longshot --run`, one ledger entry
+(`favourite_longshot`, code digest `dd61ab28`, data digest `a7b56ffe`), run from the clean tree at
+`c77d356`. 22 held-out seasons, 2004-2025; 2026 is in progress and below `MIN_SCORED_GAMES`.
+The gate was run twice in all: the first run (at `2419be0`, code digest `248c040f`) returned the
+same table and the same verdict to every printed digit, and was discarded, its ledger entry
+never committed, because two gate contracts the entry point had missed (a `recipe` on
+`Harness.run`; the season split in `expanding_seasons`) changed the module's source after it.
+No arm, rule or number was touched between the two.
 
 **The verdict line, verbatim:**
 
