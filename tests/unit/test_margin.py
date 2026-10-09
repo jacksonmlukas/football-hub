@@ -579,7 +579,27 @@ def test_survival_is_the_favourites_price_to_the_power_of_the_season():
     assert got["gaussian"] == pytest.approx(0.8 ** 3)
     assert got["lumpy"] == pytest.approx(0.75 ** 3)
     assert got["actual"] == pytest.approx(0.9 ** 3)
-    assert margin.survival_beside(cal)["picks"] == 18
+    assert margin.survival_beside(cal)["picks"] == 24
+
+
+def test_the_default_pick_count_is_what_the_pool_plays_not_the_weeks_in_the_season():
+    """#323. `survival_beside` raised to 18 where `survivor` plans 24 picks (a second pick in
+    each of weeks 13-18). The default is now the pool's own count, read from `PoolConfig`, and
+    it is the number `survivor.solve` plans against -- so the bound and the product it sits
+    beside share an exponent."""
+    from hub.config import PoolConfig
+
+    cfg = PoolConfig()
+    planned = sum(2 if w in cfg.double_pick_weeks else 1 for w in range(1, margin.NFL_WEEKS + 1))
+    assert margin.pool_picks() == planned == 24
+    assert margin.pool_picks(PoolConfig(double_pick_weeks=())) == margin.NFL_WEEKS
+    assert margin.pool_picks(PoolConfig(double_pick_weeks=(1, 2))) == margin.NFL_WEEKS + 2
+    # Weeks outside the season do not add picks.
+    assert margin.pool_picks(PoolConfig(double_pick_weeks=(30,))) == margin.NFL_WEEKS
+    cal = pl.DataFrame({"bucket": ["favourites"], "n": [10], "gaussian": [0.8],
+                        "lumpy": [0.75], "actual": [0.9]})
+    got = margin.survival_beside(cal)
+    assert got["picks"] == 24.0 and got["gaussian"] == pytest.approx(0.8 ** 24)
 
 
 def test_the_recorded_excess_is_largest_at_three_and_prices_a_favourite_below_the_spine():
@@ -618,7 +638,7 @@ def test_the_shape_path_reports_the_ceiling_first_and_keeps_the_gaussian(monkeyp
     assert (text.index("Ceiling") < text.index("Mass on the key numbers")
             < text.index("KEEP"))
     assert "NOT RUNNABLE" not in text
-    assert "Survival over 18" in text
+    assert "Survival over 24" in text
 
 
 # --- empty inputs answer with NaN, not an exception (#185 coverage) ---------

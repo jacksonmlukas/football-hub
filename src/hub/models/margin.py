@@ -48,6 +48,7 @@ import polars as pl
 
 from hub import atomic
 from hub.cli import unavailable
+from hub.config import PoolConfig
 from hub.declare import not_an_input
 from hub.models.experiment import (
     Actions,
@@ -445,17 +446,30 @@ def calibration_by_spread(resid: pl.DataFrame, *, sd: float = MARGIN_SD,
 NFL_WEEKS = 18
 
 
+def pool_picks(cfg: PoolConfig | None = None, *, weeks: int = NFL_WEEKS) -> int:
+    """How many picks the pool plays over `weeks`: one a week, two in a double-pick week (#323).
+
+    `survivor` plans against exactly this -- `picks_in = 2 if w in doubles else 1` -- and
+    `PoolConfig.double_pick_weeks` is the rule's one statement, so the independence bound is
+    raised to the number of picks the pool's entry actually has to survive and not to the
+    number of weeks. On the shipped rules that is 24, not 18.
+    """
+    doubles = (PoolConfig() if cfg is None else cfg).double_pick_weeks
+    return sum(2 if w in doubles else 1 for w in range(1, weeks + 1))
+
+
 def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> dict[str, float]:
     """Season-long survival for a plan of favourites, under each model and as realised.
 
-    The product `survivor` prints is a chain of these probabilities, one a week, so the
-    honest side-by-side is the favourites row raised to the season's length: what a plan of
+    The product `survivor` prints is a chain of these probabilities, one a pick, so the
+    honest side-by-side is the favourites row raised to the pool's pick count: what a plan of
     `picks` such favourites survives at under the Gaussian, under the lumpy price, and at
-    the realised rate. `picks` defaults to `NFL_WEEKS`, above, which `hub.season.survivor`
-    re-exports rather than restating.
+    the realised rate. `picks` defaults to `pool_picks()`, above -- the weeks of `NFL_WEEKS`
+    with a second pick in each double-pick week (24 on the shipped rules). Until #323 it
+    defaulted to `NFL_WEEKS` itself, so an 18-pick power sat beside a 24-pick product.
 
     **It is a bound, not a measurement** (#286). Raising one bucket's rate to the
-    eighteenth power asserts that every week is priced at that rate and that the weeks are
+    `picks`-th power asserts that every pick is priced at that rate and that the picks are
     independent; a real plan's favourites are priced differently week to week and share a
     season. No interval is carried because none would be honest -- the sampling error on
     the rate is the smaller of its two errors, and the other is the assumption. What is
@@ -463,7 +477,7 @@ def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> d
     figure is printed, so it is labelled wherever it is read.
     """
     if picks is None:
-        picks = NFL_WEEKS
+        picks = pool_picks()
     fav = calibration.filter(pl.col("bucket") == "favourites")
     if fav.is_empty():
         return {"picks": float(picks), "n": 0.0, "gaussian": float("nan"),
@@ -475,7 +489,7 @@ def survival_beside(calibration: pl.DataFrame, *, picks: int | None = None) -> d
 def survival_line(surv: dict[str, float]) -> str:
     """`survival_beside` as the one line it is printed on, labelled as the bound it is."""
     return (f"Survival over {int(surv['picks'])} such favourites, as the independence bound "
-            f"-- one rate every week, weeks independent, off {int(surv['n'])} games -- and "
+            f"-- one rate every pick, picks independent, off {int(surv['n'])} games -- and "
             f"not a measurement: gaussian {surv['gaussian']:.4f}  lumpy {surv['lumpy']:.4f}  "
             f"realised {surv['actual']:.4f}")
 

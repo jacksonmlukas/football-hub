@@ -1,6 +1,7 @@
 """The three frozen modules read nflverse through a different door and print the same numbers.
 
-#326 freezes `spread`, `injury` and `margin`: no number may move. #398 routes their reads through
+#326 froze `spread`, `injury` and `margin` (it is closed; the digests below are the record of
+what they printed): no number was to move. #398 routes their reads through
 `hub.fetch.nflverse.load`, which validates, caches and pins what it returns -- a change to *how*
 the bytes arrive that is allowed to change no number a reader sees. "I checked it by eye" is not
 a control for that, so this file is one, and it was written **before** the routing: the
@@ -33,7 +34,7 @@ from hub.models import injury, margin, spread
 EXPECTED = {
     "spread": "de9caff2d777c279",
     "injury": "d484e114505eec3c",
-    "margin": "8558d7dc99e33da8",
+    "margin": "c564020e468dece7",
 }
 # **Re-measured 2026-10-07 for #360 -- `injury` only, and why.** `injury` was "dccb614ad4ab1bd8"
 # over everything above the type comparison's report. #360 puts the retention-against-`out_zero`
@@ -62,6 +63,12 @@ EXPECTED = {
 # routed code, and the two agree ("de9caff2d777c279", "dccb614ad4ab1bd8"): every number the
 # measurement printed and the frame `--out` wrote are what they were. `margin` is untouched.
 
+# **Re-measured 2026-10-08 for #323 -- `margin` only, and why.** `margin` was "8558d7dc99e33da8".
+# #323 raises the survival bound to the pool's 24 picks, not the season's 18 weeks, and rewords
+# its label ("one rate every pick, picks independent"), so the one `Survival over ...` line moves
+# on purpose. Checked, not argued: with `pool_picks` held at 18 and that phrase put back in the
+# output only, the fixture reproduces "8558d7dc99e33da8" -- every other byte, the ceiling, the
+# histogram, the calibration table, the verdict and the frame `--out` wrote, is unchanged.
 
 def _stats_frame(rows, extra: dict[str, list] | None = None) -> pl.DataFrame:
     cols = ["season", "week", "player_id", "position", "fantasy_points_ppr"]
@@ -216,7 +223,7 @@ def test_a_frozen_module_prints_the_numbers_it_printed_before_it_was_routed(modu
     got = _observed(main, argv, tmp_path / "out.parquet", cut)
     assert got == EXPECTED[module], (
         f"{module} printed a different thing from the same fixture ({got}). Under #326 no "
-        f"number may move; a routing change that moves one is a modelling change.")
+        f"number was to move; a routing change that moves one is a modelling change.")
 
 
 def test_the_unattributed_rows_the_loader_drops_were_already_invisible_to_injury():

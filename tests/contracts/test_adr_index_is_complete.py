@@ -20,8 +20,8 @@ the others surviving for want of anything connecting them -- and the same shape 
 in `test_avoided_terms.py`, whose own preamble outlived its subject twice.
 
 The coincidence is the part worth writing down. `docs/method.md` separately reports that
-*"Fourteen things have been measured properly"*, a count of measurements and a genuinely
-different fourteen that is still correct. For eleven days in August the two numbers were equal,
+*"Fourteen things have been measured properly"* (it reads fifteen since 2026-09-11), a count of
+measurements and a genuinely different fourteen that was correct on the day. For eleven days in August the two numbers were equal,
 sitting in one file agreeing with each other while both descriptions of `docs/adr/` went wrong.
 A reader checking one against the other would have been reassured. So this file checks counts
 against the **directory**, never against another document.
@@ -287,8 +287,8 @@ def test_a_blank_line_still_separates_two_claims() -> None:
 def test_the_measurement_fourteen_in_method_is_not_read_as_a_count_of_adrs() -> None:
     """The false positive this scan was built to avoid, re-checked at block granularity.
 
-    `docs/method.md` reports fourteen measurements and twenty-five decision records in the
-    same file. Widening the unit from a line to a paragraph must not make the first of those
+    `docs/method.md` reported fourteen measurements (fifteen now) and twenty-five decision
+    records in the same file. Widening the unit from a line to a paragraph must not make the first of those
     a claim about the second.
     """
     claims = _counts_about_the_adrs(METHOD)
