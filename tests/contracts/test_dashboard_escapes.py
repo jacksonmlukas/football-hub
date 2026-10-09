@@ -23,6 +23,7 @@ The last section turns the same excision habit `tests/contracts/test_guards_are_
 applies to `src/` on the page itself: each protection is declared where it lives, deleted, and
 required to turn these tests red (#61).
 """
+import datetime as dt
 import json
 import os
 import re
@@ -1739,9 +1740,13 @@ def _headline(node: str, ros: dict) -> str:
         _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
         _lift(r"const fmt = [^\n]*"),
         _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
         _lift(r"function whoIs\(name, byName\) \{[\s\S]*?\n\}"),
         _lift(r"function pairSwaps\(sit, start, byName\) \{[\s\S]*?\n\}"),
-        _lift(r"function lineupHeadline\(ros\) \{[\s\S]*?\n\}"),
+        _lift(r"const PREVIOUS_MAX_GAP_DAYS = [^\n]*"),
+        _lift(r"function lineupChanges\(ros, stale, byName\) \{[\s\S]*?\n\}"),
+        _lift(r"function lineupHeadline\(ros, stale\) \{[\s\S]*?\n\}"),
     ])
     return _run(node, f"{lifted}\nconsole.log(lineupHeadline({json.dumps(ros)}));")
 
@@ -1868,6 +1873,157 @@ def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_r
         ("no-team-column", text.replace(
             '        { label: "team", get: r => r.nfl_team ?? "" },\n', ""),
          "test_the_roster_table_shows_nfl_team_on_every_row"),
+    ]:
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0, name
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- "what changed since the last regen", and its own stale state (#355) -----------------------
+#
+# `lineupChanges` is lifted into node for the rendering cases; `_render` runs the real page for
+# where the line sits and what a stale or Kept roster does to it. Planted: a prior that differs
+# from the current call (the swap shows), one that equals it (it says so), none at all, one too
+# old to be the last regen, a roster artifact that is stale, and a hostile name. The mutants:
+# a page that diffs against whatever prior it is given, and one that renders the line as current
+# whatever the artifact's state.
+
+PRIOR = {"generated_at": "2026-10-03T17:40:07+00:00",       # the Saturday regen
+         "start": ["Fast WR", "Strong RB", "Young TE"], "sit": ["Slow WR", "Weak RB", "Old TE"],
+         "withheld": ["Hurt Back"]}
+STALE_ROS = {"reason": "ESPN unreachable", "at": SWAP_ROSTER["generated_at"]}
+
+
+def _wrapped(name: str, pos: str, team: str) -> str:
+    return f'<span class="who">{_who(name, pos, team)}</span>'
+
+
+def _changes(node: str, ros: dict, stale: dict | None = None) -> str:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
+        _lift(r"function whoIs\(name, byName\) \{[\s\S]*?\n\}"),
+        _lift(r"const PREVIOUS_MAX_GAP_DAYS = [^\n]*"),
+        _lift(r"function lineupChanges\(ros, stale, byName\) \{[\s\S]*?\n\}"),
+    ])
+    body = (f"{lifted}\nconst ros = {json.dumps(ros)};\n"
+            "const byName = new Map(ros.rows.map(r => [r.player, r]));\n"
+            f"console.log(lineupChanges(ros, {json.dumps(stale)}, byName));")
+    return _run(node, body)
+
+
+def test_a_changed_swap_since_the_last_regen_is_shown(node):
+    """Planted: Saturday's call had Old TE starting and Young TE sat; Wednesday's reverses the
+    two. The line names who moved in and who moved out, each with position and team."""
+    prior = dict(PRIOR, start=["Fast WR", "Strong RB", "Old TE"], sit=["Slow WR", "Weak RB", "Young TE"])
+    out = _changes(node, dict(SWAP_ROSTER, previous=prior))
+    assert out.startswith(f'<p class="lineup-changes {STATE_CLASSES["frozen"]}">Since Saturday: '), out
+    assert f"{_wrapped('Young TE', 'TE', 'DET')} in" in out
+    assert f"{_wrapped('Old TE', 'TE', 'DAL')} out" in out
+    assert "No change" not in out
+
+
+def test_an_unchanged_call_says_so(node):
+    out = _changes(node, dict(SWAP_ROSTER, previous=PRIOR))
+    assert out == f'<p class="lineup-changes {STATE_CLASSES["frozen"]}">No change since Saturday.</p>'
+
+
+def test_a_withheld_player_who_came_back_is_part_of_what_changed(node):
+    out = _changes(node, dict(SWAP_ROSTER, previous=dict(PRIOR, withheld=[]), withheld=["Hurt Back"]))
+    assert f"{_wrapped('Hurt Back', 'RB', 'MIA')} now withheld" in out
+
+
+def test_no_earlier_decision_says_so_rather_than_rendering_an_empty_diff(node):
+    for ros in (SWAP_ROSTER, dict(SWAP_ROSTER, previous=None), dict(SWAP_ROSTER, previous={"start": 1})):
+        out = _changes(node, ros)
+        assert out == (f'<p class="lineup-changes {STATE_CLASSES["frozen"]}">'
+                       "No earlier decision to compare.</p>"), out
+
+
+def test_a_prior_decision_too_old_to_be_the_last_regen_is_not_diffed_against(node):
+    """Planted: a prior from ten days before this sync -- a regen was missed in between, so it
+    is not "the last regen". The names would differ if diffed; the line is the #347 stale note
+    carrying the prior's own stamp and names nobody."""
+    old = dict(PRIOR, generated_at="2026-09-27T17:40:07+00:00",
+               start=["Brooks"], sit=["Tuten"], withheld=[])
+    out = _changes(node, dict(SWAP_ROSTER, previous=old))
+    assert out.startswith(f'<p class="warn {STATE_CLASSES["stale"]}">Stale: '), out
+    assert "artifact " in out and " ago" in out, "the prior's age is on the line"
+    assert "Brooks" not in out and "Tuten" not in out and "Since" not in out
+    # A prior stamped after this sync is no earlier decision either.
+    future = dict(PRIOR, generated_at="2026-10-09T17:40:07+00:00")
+    assert f'class="warn {STATE_CLASSES["stale"]}"' in _changes(node, dict(SWAP_ROSTER, previous=future))
+
+
+def test_a_stale_roster_renders_the_line_in_the_stale_state_with_the_run_it_describes(node):
+    """Planted: the manifest marks the roster stale. The diff is still the last good one, but it
+    reads as stale with the stamp of the run it describes, never as a current claim. Control:
+    the same call, not stale, is in the frozen state and carries no such stamp."""
+    ros = dict(SWAP_ROSTER, previous=PRIOR)
+    fresh = _changes(node, ros)
+    assert STATE_CLASSES["stale"] not in fresh and "describes the run" not in fresh, "the control"
+    for r in (ros, dict(SWAP_ROSTER)):
+        out = _changes(node, r, STALE_ROS)
+        assert f'class="lineup-changes {STATE_CLASSES["stale"]}"' in out, out
+        assert '<span class="stamp">describes the run synced ' in out and " ago" in out, out
+
+
+def test_a_hostile_name_in_what_changed_is_escaped(node):
+    prior = dict(PRIOR, start=[HOSTILE], sit=[HOSTILE + "2"], withheld=[HOSTILE + "3"])
+    ros = dict(SWAP_ROSTER, previous=prior, withheld=[],
+               rows=[*SWAP_ROSTER["rows"], _row(HOSTILE, HOSTILE, HOSTILE)])
+    out = _changes(node, ros)
+    assert "<script>" not in out and out.count("&lt;script&gt;") >= 3, out
+
+
+def test_the_line_sits_directly_under_the_call_and_a_missing_prior_never_costs_the_call(node):
+    out = _headline(node, dict(SWAP_ROSTER, previous=PRIOR))
+    assert out.startswith('<div class="lineup-gain">+11.5')
+    assert out.index("lineup-gain") < out.index("lineup-changes") < out.index("set lineup 80.0")
+    bare = _headline(node, SWAP_ROSTER)
+    assert bare.startswith('<div class="lineup-gain">+11.5') and "No earlier decision" in bare
+    assert "<li>" in bare, "the swaps still render without a prior"
+
+
+def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(node):
+    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    ros["previous"] = {"generated_at": "2000-01-01T00:00:00+00:00",
+                       "start": [], "sit": [], "withheld": []}
+    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    assert "the earlier lineup call is not from the last regen" in body, "a 2000 prior is too old"
+    ros["previous"]["generated_at"] = (
+        dt.datetime.fromisoformat(ros["generated_at"]) - dt.timedelta(days=3)).isoformat()
+    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    assert "lineup-changes" in body and body.index("lineup-gain") < body.index("lineup-changes")
+    man = _with_artifact("roster", stale=True, reason="ESPN unreachable")
+    got = _render(node, {"roster": ros, "manifest": man})["panels"]["p-lineup"]["body"]
+    assert f'class="lineup-changes {STATE_CLASSES["stale"]}"' in got, got
+    assert "describes the run synced" in got
+    fresh = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    assert f'class="lineup-changes {STATE_CLASSES["frozen"]}"' in fresh, "the control: current"
+
+
+@parent_only
+def test_a_page_that_diffs_against_a_stale_prior_or_renders_a_stale_line_as_current_turns_it_red(node, tmp_path):
+    text = PAGE.read_text()
+    for name, mutant, expected in [
+        ("diffs-against-the-stale-prior", text.replace(
+            "if (!(gapDays > 0 && gapDays <= PREVIOUS_MAX_GAP_DAYS)) {", "if (false) {"),
+         "test_a_prior_decision_too_old_to_be_the_last_regen_is_not_diffed_against"),
+        ("stale-line-reads-as-current", text.replace(
+            "const cls = stale ? STATE.stale : STATE.frozen;", "const cls = STATE.frozen;"),
+         "test_a_stale_roster_renders_the_line_in_the_stale_state_with_the_run_it_describes"),
+        ("empty-diff-for-no-prior", text.replace(
+            "if (!usable) return wrap(cls, `No earlier decision to compare.${stamp}`);",
+            "if (!usable) return wrap(cls, `No change since last time.${stamp}`);"),
+         "test_no_earlier_decision_says_so_rather_than_rendering_an_empty_diff"),
+        ("bare-names-in-the-line", text.replace(
+            "const named = ns => ns.map(n => whoIs(n, byName)).join(\", \");",
+            "const named = ns => ns.join(\", \");"),
+         "test_a_changed_swap_since_the_last_regen_is_shown"),
     ]:
         assert mutant != text, f"{name}: the mutation did not land"
         assert _parses(node, _script(mutant)).returncode == 0, name
