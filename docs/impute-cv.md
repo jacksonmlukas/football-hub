@@ -89,7 +89,10 @@ on their own, which is why they ship at the pooled value. The curve also sits *h
 the disposition predicted: a rookie's rank carries no production information, so the curve
 fitted on veterans is optimistic about him. (Restated 2026-10-07, #315 and #462. Prior text:
 "The curve also sits low for rookies". The residual is `realised / imputed − 1`, so a negative
-median is a curve above the outcome. See "What moved".)
+median is a curve above the outcome. See "What moved".) **Restated 2026-10-09 (#327; the sentences
+above kept):** the explanation that follows the dash is not supported like with like -- the
+median residual of a rookie imputed from his own season's curve is +0.02, and the -0.07 was
+the curve of the previous season sitting 11-12% high; see "The like-for-like measurement".
 
 **`≥ 8 games` conditions on the outcome.** A rookie who lost the job or was hurt by
 October has fewer than eight games and is dropped, and those are disproportionately the
@@ -263,6 +266,113 @@ measurement imputes and realises on the same season. Fixed here, before the run:
    reclassified), a shuffled stats order (same answer), a delayed debut (tallied) and an absorbed
    stage (refused). There is no verdict here to be underpowered (rule 16): the number is reported
    with its season-clustered interval at k = 5.
+
+> **Amended 2026-10-09, before any number was read (prior text above kept).** Two things the
+> run found in the pre-registration itself. (a) *Item 7*: the 2021 board cannot build the
+> durability stage -- it reads the 2020 preseason consensus and the archive begins 2020-10-16
+> (`ContractViolation: ... a season before 2021 cannot be replayed`) -- so "refuse a board that
+> did not build every stage" taken literally refuses 2021 and the five-season basis with it.
+> `ARCHIVE_UNBUILDABLE = {2021: ("durability",)}` excuses that one stage on that one board, by
+> name; the same absence on 2022-25 and any other stage on 2021 is refused (tested). The imputation
+> reads rank and xFP and never the durability columns. (b) *Item 6*: a board name resolves to an
+> id over the fantasy positions only, so a linebacker who shares a quarterback's name is not a
+> collision.
+
+## The like-for-like measurement (#327, run 2026-10-09; the constant is not changed)
+
+`scripts/fit_impute_cv.py`, the five boards 2021-2025, `--min-games 8`, nothing held out; every
+board's `BuildReport` read (2021 excused durability by name, 2022-25 built all four stages). Rows
+in each cell are the **same 92 rookies**. Reproduction control: the drift-carrying cell is the
+shipped measurement and reproduces it to the digit -- clustered sd **0.315**, over rookies
+**0.324**, n = 92 (RB 36 / WR 42 / QB 8 / TE 6) -- so the population fixes moved no row in or
+out of the 92. They did change two tallies: 2025 has 23 imputed rookies, not 24, because Travis
+Hunter's nflverse position is CB and he has no fantasy-position line (he is in `no_line`; the
+count of rookies who played eight games is unchanged at 22); and 2021 now shows one imputed player whose first
+line comes a season late (a delayed debut). Ambiguous names: none on any board.
+
+**The 2x2** -- pooled, relative error `realised / imputed - 1` against the season's own xFP per
+game; the season-clustered mean of the five per-season values first, over all 92 rookies in
+brackets:
+
+| | drift-carrying (last season's curve) | like-for-like (own season's curve) |
+|---|---|---|
+| sd (the shipped statistic) | **0.315** [0.324] | **0.359** [0.370] |
+| RMS relative error | 0.320 [0.333] | **0.356** [0.370] |
+| median residual | -0.069 | **+0.020** |
+| mean residual (bias) | -0.084 | +0.038 |
+
+Intervals (t on 4 df, k = 5): like-for-like sd 95% [0.245, 0.473], +1.1 t from 0.315; like-for-like
+RMS [0.243, 0.470], +1.0 t; drift-carrying RMS [0.222, 0.418]. **None of the four separates from
+0.315.** Per season (2021 to 2025), like-for-like sd 0.197 · 0.397 · 0.401 · 0.425 · 0.376 and RMS
+0.195 · 0.396 · 0.404 · 0.414 · 0.370.
+
+By position, like-for-like (drift-carrying in brackets), over rookies:
+
+| | n | sd | RMS | median | bias | season-clustered RMS |
+|---|---|---|---|---|---|---|
+| QB | 8 | 0.178 [0.164] | 0.167 [0.172] | -0.02 | -0.01 | 0.153 [-0.112, 0.417], k = 3 |
+| RB | 36 | 0.446 [0.359] | 0.440 [0.376] | +0.02 | +0.03 | 0.397 [0.190, 0.605] |
+| WR | 42 | 0.316 [0.288] | 0.312 [0.303] | -0.03 | +0.01 | 0.306 [0.251, 0.362] |
+| TE | 6 | 0.306 [0.319] | 0.471 [0.409] | +0.33 | +0.38 | 0.480 [-1.341, 2.302], k = 2 |
+| pooled | 92 | 0.370 [0.324] | 0.370 [0.333] | +0.02 | +0.04 | 0.356 [0.243, 0.470] |
+
+RB's interval [0.190, 0.605] contains WR's [0.251, 0.362] and the pool's [0.243, 0.470]; no
+position interval excludes the pooled mean, which is what #322's "positions at the pool unless
+their season-clustered intervals separate" reads. QB and TE
+are too thin to say anything (k = 3 and k = 2 seasons with two rookies).
+
+**The drift component.** At the same rank, this season's curve over last season's
+(`imputed_lfl / imputed - 1`), pooled: **mean -0.115, median -0.120, sd 0.100, RMS 0.152** (QB
+-0.07, RB -0.14, WR -0.11, TE -0.07). The year passing lowers the curve by about 11-12% at every
+rank, and varies across rookies by 10% around that. As an RMS added to the like-for-like error
+(`sqrt(RMS_drift-carrying^2 - RMS_like-for-like^2)`) it is **0.000**: the drift-carrying RMS
+(0.320) is *below* the like-for-like (0.356), so there is nothing left to subtract.
+
+**The tripwire (#322) trips: like-for-like sd 0.359 is above 0.315.** "A bug until shown otherwise"
+(rule 9), and it is shown otherwise, by arithmetic and not by argument. The relative error divides
+by the imputed value, and `1 + r_drift = (1 + r_like) * q` row by row, `q = imputed_lfl /
+imputed` (an identity, asserted in the run's own check). The curve of last season sits 11.5%
+*above* this season's, `mean q = 0.885`, so every drift-carrying relative error is the like-for-like
+one shrunk by about 0.885 -- sd included. A pure level shift would leave the drift-carrying sd at
+`0.885 * 0.370 = 0.328`; it is 0.324 over rookies. **The sign argument behind the tripwire, that
+removing drift can only lower the number, holds for an additive drift and fails for this
+multiplicative one**: the drift is a curve sitting high, and a curve sitting high makes every
+relative error smaller, not larger. The pre-registration did not state that argument's premise; it
+is stated here, after the run, and a reading of #322 that treats 0.359 as a bug would be wrong
+for this reason and for no other.
+
+**Restatement (rule 13), 2026-10-09; the text above kept.** "The curve also sits *high* for
+rookies ... the direction the disposition predicted: a rookie's rank carries no production
+information, so the curve fitted on veterans is optimistic about him" (The result, above, and
+#315/#462) attributes the median residual of -0.07 to the rookies. Like with like it is **+0.020**:
+imputed from his own season's veterans a rookie lands on the curve, slightly above it (bias
++0.038), not below it. The -0.07 was the year passing (the drift's median is -0.120), not a
+rookie effect. **What this does not touch:** the rookie error itself is not small -- 0.37 over
+rookies, 0.36 clustered, larger than the veteran 0.260 on any basis -- and no published number,
+fitted constant or digest moved (the shipped 0.315 is unchanged; `config_digest` is unchanged).
+
+**For #322, not decided here.** Its adoption cell, like-for-like RMS clustered, is **0.356**
+[0.243, 0.470], median residual **+0.020** beside it, against the shipped 0.315: higher, not lower,
+which is the opposite of the direction the ticket expected and follows from the identity above.
+The over-rookies RMS is 0.370. One thing the maintainer may want to weigh before that write
+(the kind question is answered and this does not reopen it): the board a draft sees imputes a rookie
+from last season's curve, so the projection the constant is applied to carries the 11.5% level
+shift, and a relative dispersion measured like with like is applied to a base that is not the one
+it was measured on. Whether that matters is a question about the consumer and not about this
+measurement; it is noted on #327 for #322.
+
+**Controls (rule 18).** Unit tests plant each condition and confirm the check fires: a curve
+shifted 0.8x moves the drift component and leaves a rookie who earns exactly his own-season
+curve at residual zero; the like-for-like value is unchanged when last season's curve is moved or
+poisoned; a two-id name collision is excluded and tallied and a linebacker's name is not a
+collision; a delayed debut is tallied; stats and realised rows in reverse order give the same
+rows; each absorbed stage is refused and the 2021 durability excuse is exactly that; and a
+level shift reproduces `q * sd`. Mutating the like-for-like fill to read last season's value, and
+removing the ambiguity exclusion, each fail a test.
+
+**The hold-out sets did not move.** `--exclude-season N --point-in-time` (print only) for
+2022-2025 reproduces the table in the 2026-10-08 amendment to the digit, because the 92 rows are
+the same rows and the refit reads the drift-carrying basis, as it did.
 
 ## Reproduce
 

@@ -27,28 +27,49 @@ def _board(rows):
 
 
 def _stats(rows):
-    """(player_display_name, season) weekly lines, one per row."""
+    """(player_display_name, season[, player_id[, season_type[, position]]]) weekly lines, one per
+    row. The id defaults to one per name, the type to the regular season, the position to WR."""
+    def col(i, default):
+        return [r[i] if len(r) > i else default(r) for r in rows]
+
     return pl.DataFrame({"player_display_name": [r[0] for r in rows],
                          "season": [int(r[1]) for r in rows],
+                         "player_id": col(2, lambda r: f"id:{r[0]}"),
+                         "season_type": col(3, lambda r: "REG"),
+                         "position": col(4, lambda r: "WR"),
                          "week": [1] * len(rows), "fantasy_points_ppr": [1.0] * len(rows)})
 
 
 def _realised(rows):
-    """(full_name, position, fp, xfp, games) as `board.expected_points` returns them."""
+    """(full_name, position, fp, xfp, games[, player_id]) as `board.expected_points` returns
+    them; the id defaults to the one `_stats` gives that name."""
     return pl.DataFrame({"full_name": [r[0] for r in rows], "position": [r[1] for r in rows],
+                         "player_id": [r[5] if len(r) > 5 else f"id:{r[0]}" for r in rows],
                          "fp": [float(r[2]) for r in rows], "xfp": [float(r[3]) for r in rows],
                          "games": [int(r[4]) for r in rows]})
 
 
 def test_a_rookie_is_a_player_whose_first_season_line_is_the_board_season():
-    """The proxy for nflverse `rookie_year`, stated: the first season a player has any weekly
-    line. A player whose first line predates the board season is a veteran however he is
-    ranked, and one with no line at all has no season to measure."""
+    """The proxy for nflverse `rookie_year`, stated: the first regular-season a player has any
+    weekly line, keyed on the player id. A player whose first line predates the board season is
+    a veteran however he is ranked, and one with no line at all has no season to measure. A
+    postseason line is not a season played (#327)."""
     stats = _stats([("Vet A", 2022), ("Vet A", 2023), ("Rookie B", 2024), ("Rookie B", 2025),
-                    ("Later C", 2025)])
+                    ("Later C", 2025), ("Playoff D", 2023, "id:Playoff D", "POST"),
+                    ("Playoff D", 2024)])
     first = impute_cv.first_seasons(stats)
-    got = dict(zip(first["player"], first["first_season"], strict=True))
-    assert got == {"vet a": 2022, "rookie b": 2024, "later c": 2025}
+    got = dict(zip(first["player_id"], first["first_season"], strict=True))
+    assert got == {"id:Vet A": 2022, "id:Rookie B": 2024, "id:Later C": 2025,
+                   "id:Playoff D": 2024}
+
+
+def test_first_seasons_cannot_depend_on_row_order():
+    """`group_by` + `min` per id: shuffling the stats gives the same answer (#327; the old
+    `unique(keep="first")` on the realised side was the order-dependent half)."""
+    rows = [("A", 2023), ("A", 2021), ("B", 2022), ("B", 2024), ("C", 2025)]
+    a = impute_cv.first_seasons(_stats(rows)).sort("player_id")
+    b = impute_cv.first_seasons(_stats(rows[::-1])).sort("player_id")
+    assert a.equals(b)
 
 
 def test_the_population_is_rookies_inside_the_top_200_who_were_imputed_and_played():
@@ -77,7 +98,50 @@ def test_the_population_is_rookies_inside_the_top_200_who_were_imputed_and_playe
     # Rookie F has no weekly line in any season, so the proxy cannot classify him: he is
     # neither a rookie nor a veteran here, and he is counted so the omission is visible.
     assert counts == {"top200": 5, "rookies": 3, "imputed": 2, "with_line": 2, "played": 1,
-                      "collisions": 1, "no_line": 1}
+                      "collisions": 1, "no_line": 1, "ambiguous": 0, "delayed": 0}
+
+
+def test_a_name_two_players_share_is_tallied_as_ambiguous_not_read_as_the_earlier_of_them():
+    """The designed collision of R18: a veteran and a rookie who normalise to the same name.
+    Keyed on the name, the earliest season across both made the rookie a veteran and nothing
+    showed it. Keyed on the id, a name that resolves to two ids is excluded and counted."""
+    board = _board([("Pat Smith", "WR", 30, 12.0, True), ("Sam Rookie", "WR", 40, 10.0, True)])
+    stats = _stats([("Pat Smith", 2019, "id:old"), ("Pat Smith", 2024, "id:new"),
+                    ("Sam Rookie", 2024)])
+    realised = _realised([("Pat Smith", "WR", 120.0, 112.0, 10, "id:new"),
+                          ("Sam Rookie", "WR", 100.0, 90.0, 10)])
+    rows, counts = impute_cv.rookie_rows(board, stats, realised, season=2024, min_games=8)
+    assert rows["player"].to_list() == ["sam rookie"]
+    assert counts["ambiguous"] == 1 and counts["rookies"] == 1
+    # A linebacker who shares a quarterback's name is not a candidate for the board's name.
+    lb = _stats([("Pat Smith", 2019, "id:lb", "REG", "LB"), ("Pat Smith", 2024, "id:new"),
+                 ("Sam Rookie", 2024)])
+    rows2, counts2 = impute_cv.rookie_rows(board, lb, realised, season=2024, min_games=8)
+    assert sorted(rows2["player"].to_list()) == ["pat smith", "sam rookie"]
+    assert counts2["ambiguous"] == 0
+
+
+def test_a_delayed_debut_is_tallied_on_the_board_it_was_drafted_for():
+    """Imputed, inside the top 200, and no line until the next season: not a rookie of this
+    board (he is one of the next), and counted so the omission is visible (#327)."""
+    board = _board([("Injured Rookie", "RB", 30, 12.0, True), ("Sam Rookie", "WR", 40, 10.0, True)])
+    stats = _stats([("Injured Rookie", 2025), ("Sam Rookie", 2024)])
+    realised = _realised([("Injured Rookie", "RB", 100.0, 90.0, 10), ("Sam Rookie", "WR", 100.0,
+                                                                      90.0, 10)])
+    rows, counts = impute_cv.rookie_rows(board, stats, realised, season=2024, min_games=8)
+    assert rows["player"].to_list() == ["sam rookie"]
+    assert counts["delayed"] == 1 and counts["no_line"] == 0
+
+
+def test_the_realised_row_for_an_id_does_not_depend_on_row_order():
+    """Two realised rows for one id (two positions): the one with the most games, whatever the
+    order they arrive in (the old `unique(keep="first")` took whichever came first)."""
+    board = _board([("Sam Rookie", "WR", 40, 10.0, True)])
+    stats = _stats([("Sam Rookie", 2024)])
+    two = [("Sam Rookie", "WR", 100.0, 90.0, 12), ("Sam Rookie", "RB", 10.0, 9.0, 9)]
+    a, _ = impute_cv.rookie_rows(board, stats, _realised(two), season=2024, min_games=8)
+    b, _ = impute_cv.rookie_rows(board, stats, _realised(two[::-1]), season=2024, min_games=8)
+    assert a.equals(b) and a["games"][0] == 12
 
 
 def test_the_residual_cv_is_the_spread_of_realised_over_imputed_by_position_and_pooled():
@@ -246,23 +310,32 @@ def test_the_flags_that_make_a_record_honest_are_required_together():
         impute_cv.main(["--point-in-time"])
 
 
+
 def test_the_measurement_reports_n_the_clusters_and_the_shipped_value_beside_each_rookie_cv():
     """The whole run on two synthetic boards through the three seams: every line a script
     prints carries n, the season count as the clusters, both realised quantities, and the
     shipped number beside the rookie one -- and a held-out season is named on the run line."""
     boards = {
         2024: _board([("R1", "WR", 10, 10.0, True), ("R2", "WR", 20, 10.0, True),
-                      ("R3", "RB", 30, 8.0, True), ("V1", "RB", 5, 20.0, False)]),
+                      ("R3", "RB", 30, 8.0, True), ("V1", "RB", 5, 20.0, False),
+                      ("VW1", "WR", 5, 18.0, False), ("VW2", "WR", 50, 6.0, False)]),
         2025: _board([("R4", "WR", 10, 10.0, True), ("R5", "RB", 20, 8.0, True),
-                      ("R6", "RB", 40, 8.0, True)]),
+                      ("R6", "RB", 40, 8.0, True), ("V2", "RB", 3, 20.0, False),
+                      ("VW3", "WR", 6, 18.0, False), ("VW4", "WR", 60, 6.0, False)]),
     }
-    stats = _stats([("R1", 2024), ("R2", 2024), ("R3", 2024), ("V1", 2020), ("V1", 2024),
-                    ("R4", 2025), ("R5", 2025), ("R6", 2025)])
+    stats = _stats([("R1", 2024), ("R2", 2024), ("R3", 2024, "id:R3", "REG", "RB"),
+                    ("V1", 2020), ("V1", 2024), ("VW1", 2020), ("VW1", 2024),
+                    ("VW2", 2020), ("VW2", 2024),
+                    ("R4", 2025), ("R5", 2025), ("R6", 2025),
+                    ("V2", 2020), ("V2", 2025), ("VW3", 2020), ("VW3", 2025),
+                    ("VW4", 2020), ("VW4", 2025)])
     realised = {
         2024: _realised([("R1", "WR", 120.0, 110.0, 10), ("R2", "WR", 80.0, 90.0, 10),
-                         ("R3", "RB", 96.0, 80.0, 8), ("V1", "RB", 300.0, 280.0, 15)]),
+                         ("R3", "RB", 96.0, 80.0, 8), ("V1", "RB", 300.0, 280.0, 15),
+                         ("VW1", "WR", 150.0, 140.0, 10), ("VW2", "WR", 50.0, 45.0, 10)]),
         2025: _realised([("R4", "WR", 100.0, 100.0, 10), ("R5", "RB", 40.0, 48.0, 8),
-                         ("R6", "RB", 120.0, 96.0, 12)]),
+                         ("R6", "RB", 120.0, 96.0, 12), ("V2", "RB", 300.0, 280.0, 15),
+                         ("VW3", "WR", 150.0, 140.0, 10), ("VW4", "WR", 50.0, 45.0, 10)]),
     }
     result, lines = impute_cv.measure(
         [2024, 2025], build_board=lambda yr: boards[yr], load_stats=lambda: stats,
@@ -277,9 +350,170 @@ def test_the_measurement_reports_n_the_clusters_and_the_shipped_value_beside_eac
     assert result["ppg"]["se"] is not None and 0 < result["ppg"]["se"] < 0.2
     from hub.models.predict import IMPUTE_CV
     assert f"{IMPUTE_CV:.3f}" in text     # the shipped value, printed beside the rookie one
+    # The #327 report: the 2x2, the median beside the RMS, the drift component and the tripwire.
+    assert "LIKE WITH LIKE" in text and "the 2x2" in text
+    assert "RMS relative error" in text and "median residual" in text
+    assert "the drift component" in text and "tripwire (#322)" in text
+    pooled = {b: result[b]["by_position"]["pooled"] for b in ("drift_basis", "like_for_like")}
+    assert all(c["n"] == 6 and c["rms"] is not None and c["cv"] is not None
+               for c in pooled.values())
 
     held, lines_held = impute_cv.measure(
         [2024, 2025], exclude=2025, build_board=lambda yr: boards[yr],
         load_stats=lambda: stats, load_realised=lambda yr: realised[yr])
     assert held["n"] == 3 and held["clusters"] == 1
     assert "season 2025 held out; fitted on [2024]" in "\n".join(lines_held)
+
+
+def _curve_board(prior_scale: float = 1.0):
+    """A board whose observed WRs sit on a straight line in rank, nine of them, and one imputed
+    WR rookie between two of them. `prior_scale` moves last season's curve and only that."""
+    rows = [(f"V{k}", "WR", 10 * k, prior_scale * (20.0 - 0.1 * (10 * k - 10)), False)
+            for k in range(1, 10)]
+    return _board([*rows, ("Rookie", "WR", 45, prior_scale * 15.5, True)])
+
+
+def _curve_inputs():
+    """The same nine veterans a year on, at 0.8 of last year's value; the rookie realises
+    exactly what this season's curve says for his rank."""
+    stats = _stats([(f"V{k}", y) for k in range(1, 10) for y in (2020, 2024)]
+                   + [("Rookie", 2024)])
+    vets = [(f"V{k}", "WR", 0.0, 10 * 0.8 * (20.0 - 0.1 * (10 * k - 10)), 10) for k in range(1, 10)]
+    rookie = [("Rookie", "WR", 0.0, 10 * 0.8 * (20.0 - 0.1 * 35), 10)]
+    return stats, _realised([*vets, *rookie])
+
+
+def test_the_like_for_like_value_is_the_boards_own_season_and_does_not_read_last_years_curve():
+    """The planted drift (rule 18): every veteran produced 0.8 of last year's value, the rookie
+    exactly what his rank earns *this* season. Imputed from last year's curve he reads 15.5 and
+    a residual of -15%; imputed from this year's he reads 13.2 and a residual of zero. And the
+    like-for-like value does not move when last year's curve is moved: it never read it."""
+    stats, realised = _curve_inputs()
+    rows, _ = impute_cv.rookie_rows(_curve_board(), stats, realised, season=2024, min_games=8)
+    assert rows["imputed"][0] == pytest.approx(15.5)
+    assert rows["imputed_lfl"][0] == pytest.approx(0.8 * (20.0 - 0.1 * 35))
+    assert rows["xfp_pg"][0] / rows["imputed_lfl"][0] - 1 == pytest.approx(0.0, abs=1e-9)
+    assert rows["xfp_pg"][0] / rows["imputed"][0] - 1 == pytest.approx(13.2 / 15.5 - 1)
+    moved, _ = impute_cv.rookie_rows(_curve_board(1.5), stats, realised, season=2024,
+                                     min_games=8)
+    assert moved["imputed"][0] == pytest.approx(1.5 * 15.5)
+    assert moved["imputed_lfl"][0] == pytest.approx(rows["imputed_lfl"][0])
+
+
+def test_a_veteran_with_no_line_this_season_is_not_on_the_like_for_like_curve():
+    """A veteran who did not play the season has no own-season xFP: he is left off the curve
+    rather than carried on last year's value, which would put the drift back."""
+    stats, realised = _curve_inputs()
+    keep = realised.filter(pl.col("full_name") != "V5")       # V5 (rank 50) has no line in 2024
+    rows, _ = impute_cv.rookie_rows(_curve_board(), stats, keep, season=2024, min_games=8)
+    # Still the straight line, now interpolated across the gap V5 left, so the same value.
+    assert rows["imputed_lfl"][0] == pytest.approx(0.8 * (20.0 - 0.1 * 35))
+    off = _curve_board().with_columns(
+        pl.when(pl.col("player") == "V4").then(99.0).otherwise(pl.col("xfp_per_game"))
+        .alias("xfp_per_game"))
+    poisoned, _ = impute_cv.rookie_rows(off, stats, realised, season=2024, min_games=8)
+    assert poisoned["imputed_lfl"][0] == pytest.approx(rows["imputed_lfl"][0]), (
+        "last year's value for a veteran must not reach the like-for-like curve")
+
+
+def test_rms_carries_the_bias_the_sd_centres_away_and_the_mean_is_reported():
+    rows = pl.DataFrame({"pos": ["WR"] * 4, "imputed": [10.0] * 4,
+                         "ppg": [11.0, 12.0, 13.0, 14.0]})
+    got = impute_cv.residual_cv(rows, "ppg")["WR"]
+    r = np.array([0.1, 0.2, 0.3, 0.4])
+    assert got["mean"] == pytest.approx(0.25) and got["median"] == pytest.approx(0.25)
+    assert got["cv"] == pytest.approx(r.std(ddof=1))
+    assert got["rms"] == pytest.approx(np.sqrt(np.mean(r ** 2)))
+    assert got["rms"] > got["cv"], "a biased curve: the RMS is the larger"
+    single = impute_cv.residual_cv(rows.head(1), "ppg")["WR"]
+    assert single["cv"] is None and single["rms"] is None and single["n"] == 1
+
+
+def test_the_clustered_rms_is_the_mean_of_the_per_season_rms_over_the_same_seasons_as_the_sd():
+    rows = pl.DataFrame({
+        "season": [2023, 2023, 2024, 2024, 2025, 2025, 2021],
+        "pos": ["WR"] * 7, "imputed": [10.0] * 7,
+        "xfp_pg": [11.0, 13.0, 8.0, 12.0, 10.0, 9.0, 30.0]})
+    sd = impute_cv.season_clustered(rows, "xfp_pg", shipped=0.2, stat="sd")
+    rms = impute_cv.season_clustered(rows, "xfp_pg", shipped=0.2, stat="rms")
+    assert sd is not None and rms is not None
+    assert set(sd["per_season"]) == set(rms["per_season"]) == {2023, 2024, 2025}
+    assert rms["per_season"][2023]["cv"] == pytest.approx(np.sqrt(np.mean([0.01, 0.09])))
+    assert rms["mean"] == pytest.approx(np.mean([v["cv"] for v in rms["per_season"].values()]))
+
+
+def test_the_drift_component_is_the_curve_moving_at_the_same_rank_and_cancels_the_outcome():
+    rows = pl.DataFrame({"pos": ["WR", "WR", "RB"], "imputed": [10.0, 20.0, 8.0],
+                         "imputed_lfl": [8.0, 16.0, 8.0], "xfp_pg": [1.0, 99.0, 5.0]})
+    got = impute_cv.drift_component(rows)
+    assert got["WR"]["mean"] == pytest.approx(-0.2) and got["WR"]["sd"] == pytest.approx(0.0)
+    assert got["RB"]["mean"] == 0.0 and got["RB"]["sd"] is None
+    assert got["pooled"]["median"] == pytest.approx(-0.2)
+    assert impute_cv.remainder(0.30, 0.40) == 0.0
+    assert impute_cv.remainder(0.50, 0.30) == pytest.approx(0.40)
+
+
+def test_a_level_shift_alone_lowers_the_drift_carrying_sd_so_the_tripwire_is_read_with_it():
+    """The identity behind #322's tripwire: when last year's curve sits 20% above this year's at
+    every rank, the drift-carrying relative errors are the like-for-like ones scaled by 0.8, so
+    the drift-carrying sd is *smaller* by 20%. The sign argument "removing drift can only lower
+    the number" fails for a multiplicative drift."""
+    like = np.array([-0.3, -0.1, 0.0, 0.2, 0.4, 0.1])
+    imputed = np.full(like.size, 12.5)
+    rows = pl.DataFrame({"imputed": imputed, "imputed_lfl": imputed * 0.8,
+                         "xfp_pg": imputed * 0.8 * (1 + like)})
+    got = impute_cv.level_shift_check(rows)
+    assert got["mean_q"] == pytest.approx(0.8)
+    assert got["sd_like_for_like"] == pytest.approx(like.std(ddof=1))
+    assert got["sd_drift_carrying"] == pytest.approx(0.8 * like.std(ddof=1))
+    assert got["sd_if_level_shift_only"] == pytest.approx(got["sd_drift_carrying"])
+    assert got["sd_drift_carrying"] < got["sd_like_for_like"]
+
+
+def _report(**ran):
+    from hub.draft.board import BuildReport
+    return BuildReport(**ran)
+
+
+_BUILT = {"sos": True, "td_luck": True, "durability": True, "bye": True}
+
+
+def test_a_board_that_did_not_build_every_stage_it_could_is_refused():
+    """Planted (rule 18): absorb each stage a historical build can run, one at a time, and the
+    measurement refuses; build them all and it does not. The stages that cannot apply to an
+    as-of board (the live-only checks, the market) are not required."""
+    impute_cv.require_built(2023, _report(**_BUILT))
+    for stage in _BUILT:
+        with pytest.raises(impute_cv.BoardNotBuilt, match=stage):
+            impute_cv.require_built(2023, _report(**{**_BUILT, stage: False}))
+
+
+def test_the_2021_board_is_excused_durability_by_name_and_nothing_else():
+    """The archive begins 2020-10-16, so the 2021 board cannot build durability. That one fact
+    is excused, for that one season; the same absence on 2022 is refused, and so is any other
+    stage on 2021."""
+    impute_cv.require_built(2021, _report(**{**_BUILT, "durability": False}))
+    with pytest.raises(impute_cv.BoardNotBuilt, match="durability"):
+        impute_cv.require_built(2022, _report(**{**_BUILT, "durability": False}))
+    with pytest.raises(impute_cv.BoardNotBuilt, match="sos"):
+        impute_cv.require_built(2021, _report(**{**_BUILT, "durability": False, "sos": False}))
+    assert impute_cv.ARCHIVE_UNBUILDABLE == {2021: ("durability",)}
+
+
+def test_the_default_board_loader_reads_the_report_and_refuses_the_board(monkeypatch):
+    """`measure` used to take `board_as_of(yr)[0]` and drop the report. Through the real loader
+    path (the seam not overridden), a board whose report shows an absorbed stage stops the run
+    with the stage named, before any number is taken."""
+    from hub.draft import board as board_mod
+
+    frame = _board([("Rookie", "WR", 10, 10.0, True)])
+    monkeypatch.setattr(board_mod, "board_as_of",
+                        lambda yr: (frame, _report(**{**_BUILT, "bye": False})))
+    with pytest.raises(impute_cv.BoardNotBuilt, match="bye"):
+        impute_cv.measure([2023], load_stats=lambda: _stats([("Rookie", 2023)]),
+                          load_realised=lambda yr: _realised([("Rookie", "WR", 1.0, 1.0, 10)]))
+    monkeypatch.setattr(board_mod, "board_as_of", lambda yr: (frame, _report(**_BUILT)))
+    result, _ = impute_cv.measure([2023], load_stats=lambda: _stats([("Rookie", 2023)]),
+                                  load_realised=lambda yr: _realised(
+                                      [("Rookie", "WR", 100.0, 100.0, 10)]))
+    assert result["n"] == 1
