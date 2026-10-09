@@ -222,3 +222,70 @@ def test_a_function_that_reads_a_held_out_constant_sees_the_set_inside_the_block
         assert inside[1] == 8.0                  # mixed positions: the pooled k, rebound
         assert inside[2] != before[2] and inside[2][0] == pytest.approx(9.0 * np.sqrt(19.0))
     assert read() == before
+
+
+def test_a_held_out_impute_cv_reaches_talent_cv_for_inside_the_block_and_not_outside(
+        tmp_path, record_holdout_set):
+    """Rule-18 control for #320's option B: `talent_cv_for` adds `IMPUTE_CV_BY_POS.get(pos,
+    IMPUTE_CV)` to the talent spread of an imputed player, so a hold-out that binds those two
+    must change what it returns -- inside the block, to the planted per-position values and
+    to the planted pooled value for a position the table does not key, and back to shipped
+    after. A hold-out that left them declined would return the shipped answer in all three."""
+    import numpy as np
+
+    pos = np.array(["QB", "RB", "WR", "TE", "K"])
+    imputed = np.ones(5, dtype=bool)
+    shipped = predict.talent_cv_for(pos, imputed)
+    planted = {"QB": 0.91, "RB": 0.92, "WR": 0.93, "TE": 0.94}
+    record_holdout_set(2024, {"predict.IMPUTE_CV": 0.95,
+                              "predict.IMPUTE_CV_BY_POS": planted}, root=tmp_path)
+    with holdout.applied(2024, root=tmp_path):
+        inside = predict.talent_cv_for(pos, imputed)
+        observed = predict.talent_cv_for(pos, np.zeros(5, dtype=bool))
+    base = np.array([predict.TALENT_CV_BY_POS.get(str(p), predict.TALENT_CV) for p in pos])
+    expect_extra = np.array([planted["QB"], planted["RB"], planted["WR"], planted["TE"], 0.95])
+    assert not np.allclose(inside, shipped)
+    assert inside == pytest.approx(np.hypot(base, expect_extra))
+    assert observed == pytest.approx(base), "an observed player carries no imputation error"
+    assert predict.talent_cv_for(pos, imputed) == pytest.approx(shipped)
+
+
+def test_nothing_in_the_forward_arms_closure_reads_the_imputation_error():
+    """Why binding `IMPUTE_CV` under hold-out (#320) leaves the weekly forward arm computing
+    what it did (#456's pin). `talent_cv_for` reads `IMPUTE_CV_BY_POS` only when handed
+    `imputed`, so the arm can see the binding only through a call that passes it. Walk the
+    arm's pinned closure and find every call of `talent_cv_for` in it: none passes a second
+    argument. Positive control: the walk does find the one call that does (the
+    championship-equity exhibit, outside the closure), so a vacuous walk would fail here."""
+    import ast
+
+    from hub.closure import import_closure, module_source
+    from hub.season.weekly_forward import ARM_ROOTS
+
+    def imputed_calls(modules):
+        found = []
+        for mod in modules:
+            for node in ast.walk(ast.parse(module_source(mod).read_text())):
+                if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "talent_cv_for"
+                        and (len(node.args) > 1 or any(k.arg == "imputed" for k in node.keywords))):
+                    found.append(mod)
+        return found
+
+    assert imputed_calls(sorted(import_closure(ARM_ROOTS))) == []
+    assert "hub.exhibits.championship_equity" not in import_closure(ARM_ROOTS)
+    assert imputed_calls(["hub.exhibits.championship_equity"]) == [
+        "hub.exhibits.championship_equity"], "the control: this walk sees such a call"
+
+
+@pytest.mark.parametrize("key", ["predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"])
+def test_a_set_missing_either_impute_key_is_refused_naming_exactly_that_key(
+        tmp_path, record_holdout_set, key):
+    """Rule-18 control: deleting one of the two keys alone fails `load` and names that key and
+    not its prefix-sharing neighbour (the message ends the name with a colon)."""
+    record_holdout_set(2024, {}, root=tmp_path)
+    raw = json.loads((tmp_path / "2024.json").read_text())
+    del raw["constants"][key]
+    (tmp_path / "2024.json").write_text(json.dumps(raw))
+    with pytest.raises(ValueError) as e:
+        holdout.load(2024, root=tmp_path)
+    assert f"does not account for {key}: " in str(e.value)
