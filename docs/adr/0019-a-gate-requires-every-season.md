@@ -791,3 +791,8 @@ three actions pre-registered in `docs/weekly-injury.md` before the run. The rule
 |---|---|---|
 | injury type (`hub.models.injury.HARNESS`) | `gsis_id` | the player; supersedes the declared no-op |
 | injury retention (`hub.models.injury.RETENTION_HARNESS`) | `gsis_id` | the player |
+
+> **Superseded figures, 2026-10-09.** The −11.02 / MDE 7.84 quoted in the 2026-10-06 amendment
+> are restated in [gate-power.md](../gate-power.md): first for #315 item 1 (−12.58, MDE 8.64),
+> then for #467, whose 2025 season had priced absence at zero (−13.49, MDE 9.90, 2025 −18.00).
+> The verdict is REMOVE, 4 resolved of 4, unchanged. The text above is kept as written.

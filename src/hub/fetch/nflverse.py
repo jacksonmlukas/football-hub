@@ -298,6 +298,10 @@ class Network:
 
 
 SOURCES: dict[str, Source] = {s.name: s for s in (
+    # `season_floor` (#467), rows per completed season, measured 2026-10-09 from the cached
+    # entries (counts only): pbp 48,771-49,922 over 2021-2025 (floor 30,000 leaves 38% under
+    # the minimum); player_stats 17,341-19,400 over 2019-2025 (floor 5,000 leaves 71% under it).
+    # Seasons before 2019 were not measured; a floor is a truncation detector, not a count.
     Source("pbp", PBP, "pbp", season_floor=30_000),
     Source("ff_opportunity", FF_OPPORTUNITY, "ff_opportunity",
            arguments=(("stat_type", "weekly"),), clean=_clean_ff_opportunity),
