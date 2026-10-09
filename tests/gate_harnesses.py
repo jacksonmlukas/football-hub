@@ -51,7 +51,7 @@ def harnesses_under(root: pathlib.Path, package: str) -> dict[str, Harness]:
 
 
 def all_harnesses() -> dict[str, Harness]:
-    """Every `Harness` in this repo's own `src/hub` tree -- eleven, over nine modules, today (#343 added three; #360 a second for injury)."""
+    """Every `Harness` in this repo's own `src/hub` tree -- twelve, over ten modules, today (#343 added three; #360 a second for injury; #465 one)."""
     src = pathlib.Path(__file__).resolve().parents[1] / "src" / "hub"
     return harnesses_under(src, "hub")
 

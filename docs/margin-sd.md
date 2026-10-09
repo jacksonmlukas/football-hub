@@ -283,3 +283,231 @@ uv run python -m hub.models.margin --shape
 Ceiling, histogram, walk-forward, calibration table, survival and verdict, in that order. The
 eleven mutations that prove the tests are listed in the message of the commit that landed
 this section.
+
+---
+
+# Pre-registered 2026-10-09: does a spread-dependent location correction pass the gate? (#465)
+
+**Written and committed before any number in this section exists.** Rule 1: nothing below was
+computed on outcomes before this commit. Issue #465 is a measurement and nothing else: **no
+consumer is wired and no shipped behaviour changes.** The survivor and pool correction (#367's
+option B) stays held behind #379 and #204; the correction inside `MarketBaseline` (option C) is
+not taken, because `hub.models.market` and `hub.models.margin` are in the weekly arm's pin
+(#456). The harness is a new module, `hub/models/favourite_longshot.py`, which only *reads* the
+pinned modules.
+
+## The question
+
+The price `normal_cdf(spread / MARGIN_SD)` is computed in four places. The section above this one
+measured where it misses: favourites of 7+ are priced at 0.774 and win 0.806, pick'ems trail the
+number, 6-to-9 and 9-to-14 beat it. ADR-0014 lets a provisional rule act where no gate can run,
+and that has to be shown by ADR-0019's computed MDE against the ceiling. So the order is: run the
+gate if it can run; if it cannot, say so with the numbers, and only then is the correction
+ADR-0014-eligible. **The post-hoc screen is not criterion 1 of ADR-0014 and this issue does not
+decide whether it is** (one bucket of several, cut after looking, rule 13/16); a NOT-RUNNABLE
+reading below satisfies criterion 2 and nothing else.
+
+## The arms
+
+Both price the home win from the home-relative closing spread `s` (`spread_line`, positive when
+the home team is favoured), and are scored on `home_won` (`margin.home_won`: unplayed games and
+ties are dropped, one answer for the repo).
+
+* **Incumbent, `normal_cdf(s / MARGIN_SD)`**, `MARGIN_SD = 12.741`, the live constant exactly as
+  `MarketBaseline`, `survivor`, `quarterback` and `starter_change` compute it. It is held fixed
+  in every season, so it is *not* refitted per season. This favours the incumbent slightly (the
+  constant was fitted through 2025) and that is the conservative direction; `margin.walk_forward`
+  does the same.
+* **Shifted, `normal_cdf((s + sign(s) * delta_b(|s|)) / sd)`.** `delta_b` is a favourite-relative
+  location shift, in points, constant within five buckets of `|s|` with edges **0, 3, 6, 9, 14**
+  (the last bucket is 14 and over; a bucket is closed below, open above; `s = 0` takes no shift).
+  The sign convention: `delta_b > 0` means the favourite beats the number by more than the price
+  says. The five shifts and the sd are fitted **jointly**, by penalised maximum likelihood on
+  `home_won`, so the sd absorbs what is scale and the shifts absorb what is location (#367's
+  second concern: bucket residuals against one fixed sd cannot separate the two). The penalty is
+  `sum(delta_b^2) / (2 * 1.5^2)`: a ridge toward zero with prior sd **1.5 points**, fixed here,
+  about the size of the largest published bucket residual. The edges are the ones the published
+  calibration table already uses, which means the screen that motivated this look has seen them.
+  They are the *only* edges tried, and the walk-forward below is what keeps that from being a
+  free parameter: each season is scored by a fit that never saw it.
+* **Walk-forward, rule 2.** For held-out season `t` both the shifts and the sd are fitted on the
+  **trailing ten seasons strictly before `t`** (`margin.TRAILING`, the window the width fit uses).
+  The first held-out season is the first with **five** earlier seasons, so 2004 at the earliest
+  (data begin 1999).
+* **Held-out seasons are completed seasons:** a season enters the scored set only with **at least
+  240 scored games** (1999-2001 played 248; a full season is 267-285; the in-progress 2026 season
+  does not qualify until its late weeks). A partial season would be a cluster with a different `n`
+  and a noisier mean, and it would join the every-season half of the bar on a handful of games.
+
+## The unit, the metric, the gate
+
+* **Unit: the season** (`SEASON_CLUSTER`). One row per held-out season, as `margin`'s gates do;
+  `within = ("season",)` is therefore the same declared no-op (#335), and a season is a win or a
+  loss on its sign.
+* **Metric: walk-forward log loss on game outcomes**, nats per game. The paired difference for
+  season `t` is `LL(incumbent) - LL(shifted)`, positive when the correction is better.
+* **The rule is `hub.models.experiment.gate` unchanged** (ADR-0019 and its amendments, #381 (C)):
+  ADOPT needs a win in every resolved season and a t interval over the seasons excluding zero from
+  above; REMOVE the mirror; NOT-RUNNABLE ahead of both when the MDE exceeds the ceiling.
+* **One run, one ledger entry** (`Harness.run`, `arm_roots=("hub.models.favourite_longshot",)`).
+
+## The ceiling arm
+
+*A perfect P(win | spread):* the favourite's realised win rate in one-point buckets of `|s|`
+(`margin.ceiling`'s oracle), fitted on **all held-out games pooled** and scored on each held-out
+season, as `LL(incumbent) - LL(oracle)`. It is in sample by construction and so flattered, which
+is what a ceiling is for. Pooled over the held-out period rather than refitted per season on
+about 270 games, because a per-season oracle with fifteen-odd buckets inflates itself by roughly
+`buckets / (2 n)` nats a game and would make NOT-RUNNABLE unreachable by construction. For
+orientation only, the published figure on the trailing ten seasons is 0.0056 a game
+(`margin-sd.md`, above).
+
+## The action for each verdict
+
+| verdict | what it means here | what is done |
+|---|---|---|
+| **ADOPT** | the correction beat the incumbent in every resolved season and its interval excludes zero | the correction becomes **eligible for a consumer**: the survivor and pool price in `grid_from_schedule` only, **held behind #379 and #204**. This issue wires nothing. ADR-0014 is not available (a gate ran) and not needed. |
+| **REMOVE** | worse in every resolved season, interval below zero | disclose in `margin-sd.md` and on #367; **no consumer**, ever, on this evidence; option B is closed. |
+| **SHOW** | anything short of either | keep as a measurement; **no consumer**. ADR-0014 is not available: the gate could run and did not resolve the correction, which is a result and not an absence of one. |
+| **NOT-RUNNABLE** | MDE above the ceiling | record MDE and ceiling; **the correction becomes ADR-0014-eligible on criterion 2 only**. No adverse result is on record for this arm (it has never been gated), so ADR-0014's 2026-09-07 amendment does not bar it. Criterion 1 is not settled here. Nothing is wired by this issue. |
+| **VOID** | the schedules do not load or fewer than five held-out seasons score | the run is repeated when the inputs are repaired; nothing is concluded. |
+
+## Power and MDE before the run (rule 16) — to be committed before the run
+
+The MDE of this design is `(t(0.975, k-1) + z(0.80)) * se`, `k` the number of held-out seasons
+(about 22) and `se` the season-to-season dispersion of the paired gain. It is computed **before
+the real walk-forward is run**, by simulation on the real spreads with outcomes drawn from a model:
+
+* **Null truth:** outcomes drawn from the incumbent price, `Bernoulli(normal_cdf(s / 12.741))`.
+  Reads off the null size of the whole rule (ADOPT, REMOVE, SHOW, NOT-RUNNABLE rates) and the
+  null `se` of the season gain, hence the MDE.
+* **Planted truth:** the same spreads, outcomes drawn from the shifted price with
+  `delta = (-1.5, 0.0, +0.8, +0.9, 0.0)` for the five buckets: the published favourite-relative
+  residuals rounded (pick'ems -1.56, 6-9 +0.78, 9-14 +0.91), and zero for the two buckets the
+  section above did not report. Reads off the power of the rule to ADOPT a correction of the size
+  the screen claims, and the expected gain.
+* 200 trials each, seeds `SeedSequence([465, trial])`, the ceiling computed inside each trial by
+  the same function as in the real run. The comparison that matters is the null MDE against the
+  **published** ceiling of 0.0056, since the real ceiling needs the real outcomes: if MDE exceeds
+  it the expected reading is NOT-RUNNABLE, and that is said now so the real run cannot be read as
+  a surprise.
+
+## Controls (rule 18), all on fixtures, none on the real run
+
+1. **A planted real shift ADOPTs.** Outcomes drawn from a shifted truth large enough to be real
+   (far above the screen's size), 22 seasons: the gate returns ADOPT.
+2. **A null shift does not.** Outcomes drawn from the incumbent: SHOW (or REMOVE if the correction
+   is worse in every season, which the pre-registered action table already names), never ADOPT.
+3. **A ceiling below the MDE is NOT-RUNNABLE.** The same null frame with a declared ceiling set
+   below its MDE: NOT-RUNNABLE, no verdict.
+4. **The walk-forward does not leak:** a fixture whose season `t` outcomes are flipped changes
+   nothing fitted for season `t`, only the seasons after it.
+
+## What moves
+
+Nothing that prices a game. `MARGIN_SD`, `hub.models.margin` and `hub.models.market` are not
+edited, so the weekly arm's pinned closure is untouched (#430's identity test is run to show it).
+The new module is not in `FITTED_MODULES` and nothing reads it.
+
+## Power and MDE before the run: computed 2026-10-09, before the real walk-forward was run (#465)
+
+The design above, run as written: real `spread_line` for every game (2004-2025 scored, k = 22
+held-out seasons), outcomes **simulated** (no real outcome was read by this step), 200 trials
+each, seeds `SeedSequence([465, trial])`, `HARNESS.decide` with a 500-draw bootstrap (the real run
+uses 4,000). The simulation is a scratch script outside the repo that calls only the module's
+public functions (`walk_forward`, `HARNESS`); it is not committed, and the numbers are.
+
+| truth | ADOPT | REMOVE | SHOW | NOT-RUNNABLE | mean gain | season-mean se | MDE (mean, range) | ceiling (simulated) | seasons won |
+|---|---|---|---|---|---|---|---|---|---|
+| null (the incumbent price) | 0/200 | 0/200 | 118 | 82 | -0.00070 | 0.00049 | 0.00139 (0.00057-0.00326) | +0.00153 | 8.4 of 22 |
+| planted (screen-sized shift) | 0/200 | 0/200 | 148 | 52 | +0.00059 | 0.00077 | 0.00219 (0.00104-0.00374) | +0.00281 | 12.9 of 22 |
+
+The planted shift is `delta = (-1.5, 0, +0.8, +0.9, 0)`, the screen's published residuals.
+
+**What it says, before the run.**
+
+1. **The design's MDE is about 0.0014 to 0.0022 nats a game**, against the published trailing-ten
+   ceiling of 0.0056. If the real pooled-oracle ceiling is anywhere near that figure the gate
+   *can run*, and a SHOW would be a real reading, not an exemption. If it lands near the
+   simulated ceilings above (0.0015-0.0028, which under a null is pure in-sample overfit) the
+   MDE is at or above it and NOT-RUNNABLE is the expected verdict, in 41% (null) to 26%
+   (planted) of simulated frames. Which of the two the real ceiling gives is not known before the
+   run and is not guessed here.
+2. **ADOPT is not reachable at the screen's own effect size, and is named an exemption there
+   (rule 16).** The expected gain from a correction of the size the screen reports is +0.0006 a
+   game, a quarter of the MDE and well inside the season-to-season noise; ADOPT fired in 0 of 200
+   planted trials (upper 95% bound 1.5%). Probing the unit-test fixtures (synthetic, 27 seasons of 270 games), a shift of
+   `(-6, -2, 4, 5, 0)` gains 0.025-0.03 a game and still reads SHOW, because one early season,
+   fitted on five seasons of history, goes the other way; ADOPT first appears at
+   `(-8, -3, 5, 6, 0)`, a gain near 0.05 a game and a win in all 22 seasons, about eighty times
+   the screen's. So at the effect the screen claims the
+   branches this gate can actually reach are **SHOW** and **NOT-RUNNABLE**, and ADOPT and REMOVE
+   are bars only for effects far above it. A SHOW here is not evidence of equivalence.
+3. **Null size is 0 of 200 for ADOPT and for REMOVE**, below the 0.05 the rule is held to.
+4. **Joint fitting works, and it is weakly identified.** On a binary outcome the shifts and the
+   sd are close to collinear: on a 40,000-game fixture the penalised likelihood at the planted
+   parameters and at the fitted ones differ by about a nat while the parameters differ by
+   several points. The fitted *price* matches the planted price to 0.02 (a unit test holds that),
+   and the ridge picks the smaller-norm point on the flat valley. Reported shifts are therefore
+   descriptive and are not read as estimates of the market's bias; the gate scores prices.
+
+Nothing above was tuned after seeing it; the design in the preceding section is unchanged.
+
+## Result: the gate ran once, 2026-10-09 (#465)
+
+`uv run python -m hub.models.favourite_longshot --run`, one ledger entry
+(`favourite_longshot`, code digest `dd61ab28`, data digest `a7b56ffe`), run from the clean tree at
+`c77d356`. 22 held-out seasons, 2004-2025; 2026 is in progress and below `MIN_SCORED_GAMES`.
+The gate was run twice in all: the first run (at `2419be0`, code digest `248c040f`) returned the
+same table and the same verdict to every printed digit, and was discarded, its ledger entry
+never committed, because two gate contracts the entry point had missed (a `recipe` on
+`Harness.run`; the season split in `expanding_seasons`) changed the module's source after it.
+No arm, rule or number was touched between the two.
+
+**The verdict line, verbatim:**
+
+> SHOW: keep as a measurement, no consumer. 22 resolved of 22, 0 abstained (won 14, tied 0, lost 8 of 22 seasons) and the interval contains zero -- absence of evidence, not evidence of equivalence.
+
+| | |
+|---|---|
+| mean gain, shifted over `normal_cdf(s / MARGIN_SD)` | **-0.00007** nats a game |
+| 95% interval (bootstrap) | [-0.00136, +0.00107] |
+| MDE at 80% power | **+0.00184** |
+| ceiling (a perfect P(win \| spread), pooled over every held-out game) | **+0.00298** |
+| seasons | won 14, lost 8, 22 resolved, 0 abstained |
+| P(location-shifted price better) | 47.7% |
+
+**It could run, and it did not resolve a gain.** The MDE (0.00184) is below the ceiling
+(0.00298), so NOT-RUNNABLE did not fire and this is a verdict, not an exemption. The interval
+excludes any gain above about 0.0011 nats a game, which is about 36% of the ceiling. The rule-16
+expectation stood: SHOW was the reachable reading at the screen's effect size, and ADOPT was not
+reachable there.
+
+**What it means for #367.**
+
+* **ADR-0014 is not available for this correction.** Criterion 2 ("no gate can run at available
+  n") is false: the gate ran. ADR-0014's table is unchanged and still has one eligible entry.
+* **No consumer is wired, and this is not a licence to wire one.** SHOW keeps it as a
+  measurement. Option B (a survivor and pool correction in `grid_from_schedule`) has no
+  out-of-sample support from this gate: the shifted price is not better than the incumbent
+  (-0.00007), and it is worse in 8 of 22 seasons. Option B stays held behind #379 and #204, and
+  re-opening it is the maintainer's call, on this result.
+* **The screen's size is not a reason to doubt the screen's arithmetic**, only to read it as in
+  sample. The bucket residuals in the section above are real in the 2017-2026 sample; fitted on
+  the ten seasons before each year they do not price the next year better. The last fit
+  (2016-2025), descriptive only, has shifts of -0.94, -0.42, +0.65, +0.72, -0.38 by bucket
+  (0, 3, 6, 9, 14) with an sd of 11.26, the same sign pattern as the screen.
+
+**Descriptive, outside the gate, post hoc, not to be acted on.** The table the run prints has a
+`scale_only` column: the incumbent against the same fit with every shift pinned at zero and only
+the sd refitted. Its mean gain is about +0.0006 a game (14 of 22 seasons positive), against
+-0.00007 for the shifts. So whatever the sd-and-shift fit gains over the incumbent is in the sd
+(the fitted sd is 10.2-13.4, below the 12.741 constant, which was fitted to margins and not to
+win probabilities) and none is in the location. That is a post hoc comparison of two arms the
+gate did not rank, and the width of `MARGIN_SD` is gated by `margin.verdict` under its own bar;
+it is recorded because it bears on #367's "location, not shape" diagnosis, which this
+out-of-sample reading does not support.
+
+**Forward pin (#456).** `hub.models.margin`, `hub.models.market` and `hub.season.weekly_forward`
+are unedited; the new module is not in the weekly arm's closure, and the pinned digest is still
+`376fd23b022aa541`.
