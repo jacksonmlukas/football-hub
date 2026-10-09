@@ -57,6 +57,7 @@
   .zone-when { color: var(--muted); font-size: 0.8rem; }
   .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
   .grid > .wide { grid-column: 1 / -1; }
+  section[hidden] { display: none; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
             padding: 1rem 1.1rem; min-width: 0; }
   h3 { font-size: 0.95rem; margin: 0 0 0.15rem; display: flex; align-items: center;
@@ -545,6 +546,23 @@ function findArt(man, name) {
   return (man?.artifacts ?? []).find(a => a.name === name) ?? null;
 }
 
+// Whether the draft board has a place on the page (#348). It is a preseason artifact: once a
+// slate has been published after it was built, the board is a stale answer to a question
+// nobody is asking, and it retires. Derived, never deleted -- `draft_board.json` stays on disk,
+// in the manifest and published; this reads two stamps the manifest already carries, so next
+// July's rebuild brings the panel back with nobody remembering to re-add it.
+//   - no `preds_*` entry at all (the July case): the board shows;
+//   - any `preds_*` entry stamped strictly after the board's: it retires;
+//   - a board entry missing, or stamped with nothing parseable: there is no board to show, so
+//     nothing renders for it rather than a guess. A `preds_*` stamp that does not parse cannot
+//     be called newer, so it does not retire the board either.
+function boardShows(man) {
+  const built = Date.parse(findArt(man, "draft_board")?.generated_at);
+  if (!Number.isFinite(built)) return false;
+  return !(man?.artifacts ?? []).some(a =>
+    String(a?.name ?? "").startsWith("preds_") && Date.parse(a.generated_at) > built);
+}
+
 // The manifest's entry for this week's predictions -- name, stale flag and reason in one
 // lookup, because they are one fact.
 //
@@ -752,14 +770,23 @@ async function render() {
     man ? `${man.season} · week ${wk} · published ${ago(man.generated_at)}`
         : "no manifest — run `make slate`";
 
-  // --- draft board
-  const boardArt = await load("draft_board");
+  // --- draft board (retires itself when a newer slate exists, #348)
+  const boardEl = document.getElementById("p-board");
+  const shows = boardShows(man);
+  boardEl.hidden = !shows;
+  if (!shows) {
+    boardEl.querySelector(".age").textContent = "";
+    boardEl.querySelector(".body").innerHTML = "";
+  }
+  const boardArt = shows ? await load("draft_board") : null;
   // The envelope since #107. A clone on an older commit still has the bare list this used to
   // be, and reading both is one `??` -- cheaper than a page that renders nothing for anyone
   // who has not pulled.
   const board = Array.isArray(boardArt) ? boardArt : (boardArt?.rows ?? null);
   const bArt = findArt(man, "draft_board");
-  if (Array.isArray(board) && board.length) {
+  if (!shows) {
+    // Retired, not broken: the section is hidden above and has nothing to say.
+  } else if (Array.isArray(board) && board.length) {
     const rows = board.filter(r => r.vor != null).slice(0, 12);
     panel("p-board", {
       // Dated, at last. This panel could never be stale and could never be aged, because the

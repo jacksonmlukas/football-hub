@@ -230,6 +230,83 @@ def test_the_page_never_spells_an_artifact_name_itself():
                        f"off `manifest.artifacts` instead.")
 
 
+# --- the draft board retires itself when a newer slate exists (#348) ---------
+
+BOARD_AT = "2026-09-04T17:22:50+00:00"
+JULY = {"season": 2027, "week": 1, "artifacts": [
+    {"name": "draft_board", "generated_at": "2027-07-10T12:00:00+00:00"}]}
+WEEK_2 = {"season": 2026, "week": 2, "artifacts": [
+    {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"},
+    {"name": "draft_board", "generated_at": BOARD_AT}]}
+
+
+def _board_shows(node: str, man) -> bool:
+    """`boardShows` for real -- with `findArt`, which it reads the board's entry through."""
+    fns = "\n".join([_lift(r"function findArt\(man, name\) \{[\s\S]*?\n\}"),
+                     _lift(r"function boardShows\(man\) \{[\s\S]*?\n\}")])
+    return json.loads(_run(node, f"{fns}\nconsole.log(JSON.stringify("
+                                 f"boardShows({json.dumps(man)})));"))
+
+
+def test_the_board_retires_when_a_slate_is_newer_than_it(node):
+    assert _board_shows(node, WEEK_2) is False
+
+
+def test_the_board_shows_when_it_is_newer_than_every_slate(node):
+    man = {"artifacts": [
+        {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"},
+        {"name": "draft_board", "generated_at": "2027-07-10T12:00:00+00:00"}]}
+    assert _board_shows(node, man) is True
+
+
+def test_the_board_shows_when_no_slate_was_ever_published(node):
+    assert _board_shows(node, JULY) is True
+
+
+def test_one_newer_slate_among_older_ones_retires_the_board(node):
+    man = {"artifacts": [
+        {"name": "preds_2025_wk18", "generated_at": "2026-01-10T00:00:00+00:00"},
+        {"name": "draft_board", "generated_at": BOARD_AT},
+        {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"}]}
+    assert _board_shows(node, man) is False
+
+
+def test_a_board_with_no_usable_stamp_renders_nothing_rather_than_a_guess(node):
+    for entry in ({"name": "draft_board"},
+                  {"name": "draft_board", "generated_at": None},
+                  {"name": "draft_board", "generated_at": "yesterday-ish"}):
+        assert _board_shows(node, {"artifacts": [entry]}) is False, entry
+    assert _board_shows(node, {"artifacts": [WEEK_2["artifacts"][0]]}) is False
+    assert _board_shows(node, None) is False
+
+
+def test_a_slate_stamp_that_does_not_parse_cannot_retire_the_board(node):
+    man = {"artifacts": [{"name": "draft_board", "generated_at": BOARD_AT},
+                         {"name": "preds_2026_wk02", "generated_at": "garbage"},
+                         {"name": "preds_2026_wk03"}]}
+    assert _board_shows(node, man) is True
+
+
+def test_the_board_panel_is_gated_on_the_comparison():
+    """The rule is only worth its tests if the render asks it. The panel is hidden off the
+    answer and the board is not even fetched for a retired one."""
+    text = PAGE.read_text()
+    assert re.search(r"const shows = boardShows\(man\);", text), "render no longer asks"
+    assert "boardEl.hidden = !shows;" in text, "the answer no longer hides the panel"
+    assert re.search(r"shows \? await load\(\"draft_board\"\)", text)
+
+
+def test_the_retired_board_is_hidden_not_deleted():
+    """Retirement is a render decision: the section stays in the markup, and the rule never
+    touches the file or its manifest entry."""
+    text = PAGE.read_text()
+    assert '<section id="p-board">' in text
+    assert "section[hidden] { display: none; }" in text
+    assert (DATA / "draft_board.json").exists()
+    man = json.loads((DATA / "manifest.json").read_text())
+    assert any(a["name"] == "draft_board" for a in man["artifacts"])
+
+
 # --- both published weeks are reachable, and each says which season (#23) ----
 
 def _other_weeks(node: str, man, shown):
@@ -1178,6 +1255,11 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
         ("plain-warning", '<p class="${STATE.unconfirmed}">These figures',
          '<p class="warn">These figures',
          "test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state"),
+        ("board-ignores-the-comparison", "const shows = boardShows(man);",
+         "const shows = true;", "test_the_board_panel_is_gated_on_the_comparison"),
+        ("board-retires-on-the-wrong-side", "Date.parse(a.generated_at) > built",
+         "Date.parse(a.generated_at) < built",
+         "test_the_board_retires_when_a_slate_is_newer_than_it"),
     ]:
         mutant = text.replace(old, new)
         assert mutant != text, f"{name}: the mutation did not land"
