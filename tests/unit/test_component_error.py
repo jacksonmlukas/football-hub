@@ -298,3 +298,51 @@ def test_a_component_with_no_spread_or_no_column_is_left_out_of_both_arms():
     assert "receiving_yards" in fits
     err = CE._points_error(frame, dict.fromkeys(CE.COMPONENTS, (1.0, 0.0)))
     assert err.shape == (50,) and (err >= 0).all()
+
+
+# --- `main` end to end on injected pairs (issue #403) --------------------------------------
+
+def test_main_without_the_flag_prints_help_and_loads_nothing(capsys):
+    def load(seasons):
+        raise AssertionError("help must not read anything")
+
+    assert CE.main([], load=load) == 0
+    assert "--run" in capsys.readouterr().out
+
+
+def test_main_runs_the_lifecycle_on_injected_pairs_and_writes_one_ledger_entry(capsys):
+    ledger = Ledger(path=None)
+    asked = []
+
+    def load(seasons):
+        asked.append(list(seasons))
+        return _seasons()
+
+    assert CE.main(["--run", "--seasons", ",".join(str(s) for s in SEASONS)],
+                   load=load, ledger=ledger) == 0
+    said = capsys.readouterr().out
+    assert asked == [list(SEASONS)]
+    written = ledger._read()
+    assert written is not None and [e.name for e in written] == ["component_calibration"]
+    # The verdict printed is the verdict filed.
+    assert written[0].verdict in said
+    assert "the Gate, through `experiment.run_gate`" in said
+    assert "the gap, decomposed" in said
+
+
+def test_main_reports_pairs_that_cannot_be_read_and_writes_nothing(capsys):
+    ledger = Ledger(path=None)
+
+    def load(seasons):
+        raise OSError("no cache")
+
+    assert CE.main(["--run"], load=load, ledger=ledger) == 1
+    assert "hub.models.component_error" in capsys.readouterr().err
+    assert ledger._read() in (None, [])
+
+
+def test_main_with_nothing_paired_exits_nonzero_and_writes_nothing(capsys):
+    ledger = Ledger(path=None)
+    assert CE.main(["--run"], load=lambda seasons: pl.DataFrame(), ledger=ledger) == 1
+    assert "nothing paired" in capsys.readouterr().err
+    assert ledger._read() in (None, [])

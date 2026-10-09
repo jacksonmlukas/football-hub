@@ -633,3 +633,80 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     assert sorted(p.source for p in nv.pins_this_run()) == ["ff_opportunity",
                                                             "player_stats"], (
         "the gate's read did not reach the run around it: scoping lost a read")
+
+
+# --- `main` end to end on injected inputs (issue #403) -------------------------------------
+#
+# `main(load=, ledger=)` is the seam: the walk-forward read and the ledger are handed in, and
+# the scope, `unavailable`, `compare`, `HARNESS.run`, the print and the write run as in
+# production. The Cohort, the moments and `compare`'s own arithmetic are each tested above and
+# stay stubbed here, but `compare` is stubbed *recording what it was handed*, so the ceiling
+# flag is checked by running `main` and not by reading its source.
+
+def _drive_lineup(monkeypatch, argv, *, load=None):
+    from hub.draft import cohort as cohort_mod
+    from hub.draft.board import Board
+    from hub.models import predict
+
+    board = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"],
+                          "proj_ppg": [20.0, 15.0], "games": [16, 16]})
+    moments = pl.DataFrame({"player": ["A", "B"], "pos": ["QB", "RB"], "mu": [20.0, 15.0],
+                            "sd": [2.0, 2.0], "games": [16, 16]})
+    paired = pl.DataFrame({"season": [2024] * 4, "roster": [0, 1, 2, 3],
+                           "projections": [10.0, 11.0, 9.0, 10.5],
+                           "optimiser": [9.0, 10.0, 8.5, 9.0]})
+    paired = paired.with_columns((pl.col("optimiser") - pl.col("projections")).alias("diff"))
+    seen: dict = {}
+
+    def compare(*a, **k):
+        seen.update(k)
+        return paired
+
+    def default_load(seasons, build_board, *, on_season=None):
+        return ({yr: Board.served(board) for yr in seasons},
+                {yr: _flat([("A", "QB", 20.0, 2.0), ("B", "RB", 15.0, 2.0)]) for yr in seasons})
+
+    monkeypatch.setattr(predict, "moments", lambda b: moments)
+    monkeypatch.setattr(cohort_mod, "cohort",
+                        lambda *a, **k: cohort_mod.Cohort([[0, 1]], [[]], ["QB", "RB"]))
+    monkeypatch.setattr(lg, "compare", compare)
+    monkeypatch.setattr(lg, "HARNESS", lg.HARNESS._replace(bootstrap=100))
+    ledger = Ledger(path=None)
+    code = lg.main(["--seasons", "2024", "--drafts", "1", *argv],
+                   load=load or default_load, ledger=ledger)
+    return code, ledger, seen
+
+
+def test_main_runs_the_lifecycle_on_injected_inputs_and_writes_one_ledger_entry(
+        monkeypatch, capsys, tmp_path):
+    out = tmp_path / "paired.parquet"
+    code, ledger, _ = _drive_lineup(monkeypatch, ["--out", str(out)])
+    said = capsys.readouterr().out
+    assert code == 0
+    written = ledger._read()
+    assert written is not None and [e.name for e in written] == ["lineup"]
+    assert "Both arms see only projections" in said and f"wrote 4 paired rows to {out}" in said
+    assert pl.read_parquet(out).height == 4
+
+
+def test_main_reports_boards_that_cannot_be_built_and_writes_nothing(monkeypatch, capsys):
+    def load(seasons, build_board, *, on_season=None):
+        raise OSError("no cache")
+
+    code, ledger, seen = _drive_lineup(monkeypatch, [], load=load)
+    assert code == 1 and seen == {}, "compare must not run on inputs that were never read"
+    assert "hub.season.lineup_gate" in capsys.readouterr().err
+    assert ledger._read() in (None, [])
+
+
+@pytest.mark.parametrize(("argv", "ceiling", "arm"), [
+    ([], False, lg.DECLARED_CEILING_ARM),
+    (["--ceiling"], True, lg.DECLARED_CEILING_ARM),
+    (["--ceiling", "--ceiling-arm", "foresight"], True, "foresight"),
+])
+def test_main_hands_the_ceiling_flags_to_the_comparison(monkeypatch, argv, ceiling, arm):
+    """Replaces the source-reading check that `main` reads `a.ceiling`: run it, and read what
+    `compare` was handed."""
+    assert arm in lg.CEILING_ARMS
+    _, _, seen = _drive_lineup(monkeypatch, argv)
+    assert seen == {"ceiling": ceiling, "ceiling_arm": arm}

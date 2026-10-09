@@ -188,34 +188,28 @@ def test_main_without_the_flag_prints_help_and_runs_nothing(capsys):
     assert "--run" in capsys.readouterr().out
 
 
-def test_main_says_so_when_the_schedules_cannot_be_read(monkeypatch, capsys):
-    from hub.fetch import nflverse
-
-    def boom(*a, **k):
+def test_main_says_so_when_the_schedules_cannot_be_read(capsys):
+    def boom():
         raise OSError("no cache")
 
-    monkeypatch.setattr(nflverse, "load", boom)
-    assert fl.main(["--run"]) == 1
+    ledger = Ledger(path=None)
+    assert fl.main(["--run"], load=boom, ledger=ledger) == 1
     assert "hub.models.favourite_longshot" in capsys.readouterr().err
+    assert ledger._read() in (None, [])
 
 
-def test_main_with_nothing_to_score_exits_nonzero(monkeypatch, capsys):
-    from hub.fetch import nflverse
-
-    monkeypatch.setattr(nflverse, "load", lambda *a, **k: _schedules(synth(1, seasons=range(1999, 2003))))
-    monkeypatch.setattr(nflverse, "every_season", lambda: [1999])
-    assert fl.main(["--run"]) == 1
+def test_main_with_nothing_to_score_exits_nonzero(capsys):
+    ledger = Ledger(path=None)
+    assert fl.main(["--run"], ledger=ledger,
+                   load=lambda: _schedules(synth(1, seasons=range(1999, 2003)))) == 1
     assert "nothing to gate" in capsys.readouterr().out
+    assert ledger._read() in (None, [])
 
 
 def test_main_runs_the_gate_once_and_prints_the_verdict(monkeypatch, capsys):
-    from hub.fetch import nflverse
-
-    monkeypatch.setattr(nflverse, "load", lambda *a, **k: _schedules(synth(1, REAL)))
-    monkeypatch.setattr(nflverse, "every_season", lambda: list(range(1999, 2026)))
+    monkeypatch.setattr(fl, "HARNESS", fl.HARNESS._replace(bootstrap=200))
     ledger = Ledger(path=None)
-    monkeypatch.setattr(fl, "HARNESS", fl.HARNESS._replace(ledger=ledger, bootstrap=200))
-    assert fl.main(["--run"]) == 0
+    assert fl.main(["--run"], load=lambda: _schedules(synth(1, REAL)), ledger=ledger) == 0
     out = capsys.readouterr().out
     assert "ADOPT" in out and "MDE" in out and "ceiling" in out
     written = ledger._read()

@@ -125,7 +125,18 @@ def test_every_gate_offers_its_ceiling_under_the_one_flag_name(name, capsys):
         f"docs/gate-power.md stage 2 cannot be run for it")
 
 
-@pytest.mark.parametrize("name", GATES_WITH_A_CEILING)
+# #403: three of the four are no longer read off their source. `hub.season.weekly_gate` and
+# `hub.season.lineup_gate` take their inputs as arguments to `main`, and
+# `test_weekly_gate.py::test_main_hands_the_ceiling_flag_to_the_comparison` /
+# `test_lineup_gate.py::test_main_hands_the_ceiling_flags_to_the_comparison` run `main` and
+# read what `compare` was handed; `hub.models.starter_change`'s is
+# `test_starter_change.py::test_the_cli_ceiling_flag_defaults_on_and_no_ceiling_turns_it_off`.
+# The draft backtest stays on the source read: its `main` hands the flag to a season of
+# simulated drafts, which no injected input makes cheap enough to run in the suite.
+GATES_READ_OFF_THEIR_SOURCE = ("hub.draft.backtest",)
+
+
+@pytest.mark.parametrize("name", GATES_READ_OFF_THEIR_SOURCE)
 def test_the_ceiling_flag_reaches_the_comparison_it_asks_for(name):
     """Accepting the flag is not answering it.
 

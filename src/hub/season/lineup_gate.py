@@ -33,6 +33,7 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -43,6 +44,7 @@ from hub.declare import not_an_input
 from hub.draft.board import board_as_of
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import REG_SEASON_WEEKS, starting_lineup
+from hub.ledger import Ledger
 from hub.ledger import recipe as _recipe
 from hub.models.experiment import (
     Actions,
@@ -321,7 +323,13 @@ def run_recipe(*, seasons: Sequence[int], drafts: int, seed: int, ceiling_arm: s
                    parameter_uncertainty=parameter_uncertainty)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, load: Callable[..., Any] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """The gate's command line. `load` and `ledger` are #403's seam: the one network-bound read
+    (`walk_forward_inputs` by default, called as `load(seasons, board_as_of, on_season=...)`)
+    and the ledger the run is written to (`None` is the harness's own file-backed one), so a
+    test drives scope, inputs inside `unavailable`, compare, `HARNESS.run`, print and write
+    with injected inputs and an in-memory ledger."""
     from hub.draft.cohort import DRAFTS
 
     ap = argparse.ArgumentParser(
@@ -370,7 +378,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the defect it exists to fix wearing a different hat.
     with reads_of_one_run():
         try:
-            boards, realised = walk_forward_inputs(
+            boards, realised = (load or walk_forward_inputs)(
                 seasons, board_as_of,
                 on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
         except Exception as e:
@@ -412,6 +420,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         paired = compare(rosters, realised, ceiling=a.ceiling, ceiling_arm=a.ceiling_arm)
         # #387: `ceiling_arm` is the one field #138 lets a run choose.
         harness = HARNESS._replace(ceiling_arm=CEILING_ARM_NAMES[a.ceiling_arm])
+        if ledger is not None:
+            harness = harness._replace(ledger=ledger)
         run = harness.run(
             paired, seed=a.seed, boards=boards,
             recipe=run_recipe(seasons=seasons, drafts=a.drafts, seed=a.seed,

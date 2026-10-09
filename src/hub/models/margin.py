@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import pairwise
 from math import erf, sqrt
 from pathlib import Path
@@ -637,7 +637,11 @@ def _report_shape(resid: pl.DataFrame, *, trailing: int = TRAILING) -> None:
     print(f"\n  {sentence}")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *,
+         load: Callable[[], pl.DataFrame] | None = None) -> int:
+    """`load` is #403's seam: the one network-bound read (every season's schedules,
+    `nflverse.load` by default). This gate's verdicts go through `Harness.decide`, which writes
+    no ledger, so there is no `ledger` to inject."""
     ap = argparse.ArgumentParser(
         prog="hub.models.margin",
         description="Fit the margin dispersion around the closing spread, and gate it.")
@@ -655,7 +659,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print("  loading schedules ...")
     try:
-        resid = residuals(nflverse.load("schedules", nflverse.every_season(), refresh=True))
+        resid = residuals(load() if load is not None
+                          else nflverse.load("schedules", nflverse.every_season(),
+                                             refresh=True))
     except Exception as e:
         return unavailable("hub.models.margin", "nflverse schedules", e)
     if a.shape:

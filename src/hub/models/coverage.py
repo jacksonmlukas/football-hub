@@ -1394,7 +1394,10 @@ def _schedules(seasons: Sequence[int], cache: Path | None) -> pl.DataFrame:
     return nflverse.load("schedules", seasons=list(seasons), cache=cache)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> int:
+    """`ledger` is #403's seam: the ledger the shape gate is written to (`None` is the
+    file-backed `WIDTH_STATE` one). The gate's reads already go through `_stats` and
+    `_schedules`, which are this module's loaders."""
     ap = argparse.ArgumentParser(
         prog="hub.models.coverage",
         description="Grade the shipped weekly interval, and the survivor price by spread.")
@@ -1483,8 +1486,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as e:
             return unavailable("hub.models.coverage", "nflverse player_stats", e)
         try:
-            run, paired, pooled = shape_law(stats, min_prior=a.min_prior,
-                                            ledger=Ledger(WIDTH_STATE))
+            shape_ledger = ledger if ledger is not None else Ledger(WIDTH_STATE)
+            run, paired, pooled = shape_law(stats, min_prior=a.min_prior, ledger=shape_ledger)
         except (ValueError, NotEnoughWeeks) as e:
             print(f"hub.models.coverage: {e}", file=sys.stderr)
             return 1
