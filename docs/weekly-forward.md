@@ -812,3 +812,31 @@ fit and everything the forward measurement scores are untouched. The behavioural
 | `hub.names` `93e503040186` |
 | `hub.season.weekly_gate` `73cc434a55db` |
 | `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-08: the pin is checked after #320's hold-out binds the imputation error, and does not move (prior text kept)
+
+The hold-out sets in `conf/holdout/` now carry values for `predict.IMPUTE_CV` and
+`predict.IMPUTE_CV_BY_POS` (option B of #320; [impute-cv.md](impute-cv.md)), where they carried
+`null` with a reason. The ticket asked for the forward-pin rule to be applied because the two
+names are in `hub.holdout.HELD_OUT`. **They were already in it** -- `HELD_OUT` has held all eleven
+keys since #294, with these two declined -- so no edit to `hub/holdout.py` was needed or made, and
+neither was any other module of the 29: the change is four JSON files, `hub.draft.impute_cv` (not
+in the closure), tests and docs. The pin is a hash of source bytes, so it did not move:
+`PINNED_ARM_DIGEST` is still **`6f3a04e853ad4428`** (the pin #405's amendment above set, on `main`
+`15cad00`; this change adds nothing to it), and `arm_closure()` on this tree equals
+`PINNED_ARM_MODULES` module for module (29 of 29).
+
+**Why the arm computes what it did.** What changed is data the arm reads only under `--holdout`
+(`weekly_gate_data`'s `applied(yr)`), and the rebinding reaches the arm only through
+`predict.talent_cv_for(pos, imputed)`, which adds `IMPUTE_CV_BY_POS.get(pos, IMPUTE_CV)` to a
+position's talent spread **only when handed `imputed`**. Every call of `talent_cv_for` in the
+closure passes one argument (`hub.draft.season`); the one call that passes `imputed` is in
+`hub.exhibits.championship_equity`, which is outside the closure. That is a test now
+(`tests/unit/test_holdout.py::test_nothing_in_the_forward_arms_closure_reads_the_imputation_error`),
+with a positive control that the walk finds the exhibit's call. The behavioural identity test
+(#430) passes on this tree. `config_digest` `96fee74f` and `fitted_digest` `772d3bba` are the
+same as before the change: no constant's value or declaration moved.
+
+*Note on combining (#323, 2026-10-08).* The amendment above was written on a `main` that did not yet
+carry #323's `hub.models.margin` re-pin; its "still `6f3a04e853ad4428`" is true of that tree.
+On the tree that carries both, `PINNED_ARM_DIGEST` is `060820bfc56a32db`, as the #323 amendment above records.
