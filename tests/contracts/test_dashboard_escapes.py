@@ -1466,3 +1466,37 @@ def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node
     assert _parses(node, _script(mutant)).returncode == 0
     got = _run_module_against(_mutant_site(tmp_path / name, mutant))
     assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- a card never outgrows its container (#350 review) -----------------------
+
+PHONE = 375
+
+
+def _grid_minimum_fits(style: str, viewport: int = PHONE) -> bool:
+    """Whether `.grid`'s track minimum can exceed the content box at `viewport` px.
+
+    Fits when the minimum is wrapped in `min(..., 100%)`, which caps it at the container, or
+    when its literal px is no more than the viewport less the body's side padding."""
+    rule = re.search(r"\.grid\s*\{[^}]*grid-template-columns:[^;}]*minmax\(([^;]*?),\s*1fr\)",
+                     style)
+    assert rule, "`.grid` no longer declares a minmax track; this test is looking at nothing"
+    minimum = rule.group(1).strip()
+    if re.fullmatch(r"min\([^)]*100%\s*\)", minimum):
+        return True
+    px = re.fullmatch(r"([0-9.]+)px", minimum)
+    pad = re.search(r"body\s*\{[^}]*padding:\s*([0-9.]+)rem", style)
+    assert px and pad, f"cannot read the track minimum {minimum!r} or the body padding"
+    return float(px.group(1)) <= viewport - 2 * float(pad.group(1)) * 16
+
+
+def test_the_grid_track_minimum_cannot_exceed_the_content_width_at_375px():
+    assert _grid_minimum_fits(_style())
+
+
+def test_a_fixed_340px_track_minimum_is_caught():
+    """The planted failure: 340px against a 327px content box (375 less 2 x 24px padding)."""
+    planted = _style().replace("minmax(min(340px, 100%), 1fr)", "minmax(340px, 1fr)")
+    assert planted != _style(), "the plant did not land"
+    assert _grid_minimum_fits(planted) is False
+    assert _grid_minimum_fits(planted.replace("340px", "300px")) is True
