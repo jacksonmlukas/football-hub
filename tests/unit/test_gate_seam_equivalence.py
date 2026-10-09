@@ -431,7 +431,10 @@ def test_margin_shape_verdict_runs():
 # different points (the one-draft, one-season gain moved -0.54 -> +13.72 points per team game;
 # the sensitivity case's seasons row moved with it and its verdict text read "won 0 ... lost 1"
 # and now reads "won 1 ... lost 0" of one season, status SHOW in both). The seam itself did
-# not move; every other entry is untouched.
+# not move; every other entry is untouched. Re-captured on the merged tree 2026-10-09 and
+# unchanged by it. #464: the -0.54 -> +13.72 is a fixture artefact of arm B's tie reshuffle at
+# the fixture's 2x10 budget, not a material change of the objective (season level -1.56, within
+# noise; verdict stays REMOVE, ceiling +21.90).
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_the_gate_run_is_byte_identical_to_the_golden_capture(name):
     assert _reduce(CASES[name]()) == GOLDEN[name]

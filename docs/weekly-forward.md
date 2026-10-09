@@ -840,3 +840,28 @@ same as before the change: no constant's value or declaration moved.
 *Note on combining (#323, 2026-10-08).* The amendment above was written on a `main` that did not yet
 carry #323's `hub.models.margin` re-pin; its "still `6f3a04e853ad4428`" is true of that tree.
 On the tree that carries both, `PINNED_ARM_DIGEST` is `060820bfc56a32db`, as the #323 amendment above records.
+
+## Amended 2026-10-09: `hub.draft.season` re-pinned for #315 item 1 (prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; one row of the latest is superseded.
+
+**What changed.** Item 1 of #315: `hub.draft.season._absence_factor` returns the played-week mask
+and the play fraction, and a played week is drawn at mean `mu/f` and sd `sd/sqrt(f)` where the
+whole draw was divided by `f`. It changes `hub.draft.season` and no other module of the closure:
+on this tree `arm_closure()` differs from the pin in that one module, and `hub.draft.board` is
+byte-identical to `main`'s (`65ae0104fb6c`). Item 3 of #315 (PAVA imputation) is #462 and is not
+part of this.
+
+**Why the arm's figures are unchanged.** The weekly gate never reaches `_absence_factor`: with
+`simulate_weeks` and `_absence_factor` replaced by functions that raise, the 2022-2025 cohorts
+`assemble_universe` drafts were built without either being called, because `hub.draft.cohort`'s
+market strategy does not simulate a season and `weekly_gate_data` reads the board only for names
+and ranks. #464 cleared item 1 against its pre-stated criterion (its comment
+`issuecomment-6075756324`): the +13.72 of the draft-gate fixture is a fixture artefact, the
+season-level effect is -1.56 and within noise, the verdict stays REMOVE and the ceiling +21.90.
+No 2026 outcome has been read, and #430's identity test
+(`tests/unit/test_weekly_projection_move.py`) passes on this tree.
+
+**The row now pinned.** `hub.draft.season` `8a4f096b219b` (was `55989706066a`); the other 28 rows
+are as in the latest table above. Closure digest **`625cf0d04f3404fe`** (was `060820bfc56a32db`).

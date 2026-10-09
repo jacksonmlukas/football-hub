@@ -1703,6 +1703,10 @@ FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
 # above) unchanged. Not a different objective and not a different constant: the corrected
 # arithmetic on the same seeds, at a budget whose run-to-run spread is the size of the move.
 # ADR-0009's published figure is re-run by the draft gate, not here.
+# Re-captured on the merged tree 2026-10-09 and unchanged by it. #464 explained the move: arm B
+# changes here because of a tie reshuffle at this fixture's 2x10 budget (the candidates are
+# within noise of each other), not because the objective changed materially; the season-level
+# effect there is -1.56, within noise, and the verdict stays REMOVE.
 FROZEN_ARM_B = ["Christian McCaffrey", "Kyren Williams", "Josh Jacobs", "Tank Dell",
                 "Calvin Ridley", "Kirk Cousins"]
 
