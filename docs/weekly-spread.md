@@ -115,6 +115,17 @@ player-weeks — so the aggregation is exact and the data is in place.
 games and more than 3 ppg. Fringe players are excluded, and their spread is the least
 well-described by any of this.
 
+**The shape constant is fitted on survivors (named 2026-10-07, #313, audit IV R11).** The
+8-game, over-3-ppg sample above is two conditions on the realised outcome, and `K[position]` is
+then applied to every player, the sub-three bench included. The excluded population is the
+high-variance tail, so the constant is argued to be biased *low* exactly where it is most often
+applied -- intervals on low-mean players too narrow. The direction is #313's argument and has
+not been measured. **The refit without the exclusion has not been done**: it moves every
+interval on the board and the constant is one of those the hold-out refits and the forward
+arm reads (`predict.WEEKLY_K`), so under rule 1 it waits on a pre-registered design with a
+maintainer's `ADOPTED:` line, and none exists yet. Until then the shipped constant is the
+filtered one, and this paragraph is its stated direction. Prior text kept.
+
 **Within-season trend counts as spread.** A player whose role grows across a season shows
 that growth as weekly variance. Some of k is really usage drift.
 

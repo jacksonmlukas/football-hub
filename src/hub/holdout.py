@@ -27,7 +27,8 @@ carried `MIN_SKEW` would be a second mechanism for the thing `hub.declare` made 
 **A missing key is recorded, not assumed.** Three of the eight (`TALENT_CV`,
 `PICK_NOISE_INTERCEPT`, `PICK_NOISE_SLOPE`) are fitted on this league's ESPN draft history
 and cannot be refitted without a session; a script that cannot run records `why_not` for
-the key and the run line carries it. A season
+the key and the run line carries it. `load` refuses a file that leaves any of the eleven out
+-- a key nobody accounted for would read as "shipped, not refitted" with no reason (#320). A season
 with no file at all is refused: replaying "under hold-out" on a season nobody fitted for
 would be the shipped run wearing the hold-out's name.
 
@@ -37,6 +38,7 @@ key, so a tuple key is written `"QB|WR"` and read back as the tuple.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 from collections.abc import Callable, Iterator, Sequence
@@ -109,6 +111,24 @@ def _read(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+@contextmanager
+def _locked(directory: Path) -> Iterator[None]:
+    """Hold an exclusive lock on the sets directory for a read-modify-write (#320).
+
+    `atomic.write_text` makes the *write* whole, and that is all it does: two fitting
+    scripts recording into one season's file each read it, each added their own key, and the
+    later rename dropped the earlier script's with no error. The lock is `flock` on the
+    directory itself, so there is no lock file to commit, glob or leave behind, and it is
+    released by the kernel if the holder dies."""
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def record(season: int, key: str, value: Any, *, command: str, root: Path | None = None,
            why_not: str | None = None) -> Path:
     """Write one constant into the season's set, keeping every other key the file holds.
@@ -118,25 +138,26 @@ def record(season: int, key: str, value: Any, *, command: str, root: Path | None
     """
     if key not in HELD_OUT:
         raise KeyError(f"{key!r} is not one of the held-out constants: {', '.join(HELD_OUT)}")
+    if value is None and not why_not:
+        raise ValueError(f"{key}: a missing value needs why_not")
     path = _path(season, root)
-    raw = _read(path)
-    raw.setdefault("excluded_season", season)
-    constants = raw.setdefault("constants", {})
     stamp = datetime.now(UTC).date().isoformat()
-    if value is None:
-        if not why_not:
-            raise ValueError(f"{key}: a missing value needs why_not")
-        constants[key] = {"value": None, "command": command, "why_not": why_not,
-                          "recorded": stamp}
-    else:
-        constants[key] = {"value": _to_json(value), "command": command, "recorded": stamp}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic.write_text(path, json.dumps(raw, indent=2, sort_keys=True) + "\n")
+    with _locked(path.parent):
+        raw = _read(path)
+        raw.setdefault("excluded_season", season)
+        constants = raw.setdefault("constants", {})
+        if value is None:
+            constants[key] = {"value": None, "command": command, "why_not": why_not,
+                              "recorded": stamp}
+        else:
+            constants[key] = {"value": _to_json(value), "command": command, "recorded": stamp}
+        atomic.write_text(path, json.dumps(raw, indent=2, sort_keys=True) + "\n")
     return path
 
 
 def load(season: int, root: Path | None = None) -> ConstantSet:
-    """The season's set. Refused, not defaulted, when no file exists."""
+    """The season's set. Refused, not defaulted, when no file exists or when it leaves a
+    held-out constant unaccounted for."""
     path = _path(season, root)
     if not path.exists():
         raise FileNotFoundError(
@@ -149,11 +170,24 @@ def load(season: int, root: Path | None = None) -> ConstantSet:
     values: dict[str, Any] = {}
     commands: dict[str, str] = {}
     missing: dict[str, str] = {}
-    for key, entry in (raw.get("constants") or {}).items():
+    constants = raw.get("constants") or {}
+    for key in constants:
         if key not in HELD_OUT:
             raise KeyError(f"{path} carries {key!r}, which is not a held-out constant")
+    # Every held-out key is accounted for: a value, or the reason there is none. A file that
+    # omits a key would be read as "shipped, not refitted" with nothing said about why --
+    # the shipped constant under the hold-out's name (#320).
+    omitted = [k for k in HELD_OUT if k not in constants]
+    if omitted:
+        raise ValueError(
+            f"{path} does not account for {', '.join(omitted)}: each held-out constant needs a "
+            f"value or a null value with a why_not (run its fitting script with "
+            f"--exclude-season {season} --record)")
+    for key, entry in constants.items():
         if entry.get("value") is None:
-            missing[key] = entry.get("why_not") or "no reason recorded"
+            if not str(entry.get("why_not") or "").strip():
+                raise ValueError(f"{path}: {key} has no value and no why_not")
+            missing[key] = entry["why_not"]
         else:
             values[key] = _from_json(key, entry["value"])
         commands[key] = entry.get("command", "")

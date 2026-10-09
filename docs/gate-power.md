@@ -581,6 +581,31 @@ implementation detail. The mechanism takes it as a parameter and declares nothin
 > unrelated, already-tracked reason (#298), not a defect in the gate or the width ledger.**
 > No bug filed, no constant changed by this diagnosis, no re-run performed.
 >
+> **Restated 2026-10-08 (#320, option B; the note above kept).** Two things in it are now
+> different. (1) "`hub.holdout`'s `HELD_OUT` set never overrides this constant either way" is
+> no longer true: the four sets bind `IMPUTE_CV` and `IMPUTE_CV_BY_POS`, so a `--holdout`
+> replay no longer reads the checked-out tree's rookie measurement. (2) The ledger's 2026-09-16
+> hold-out run (`--holdout --workers 4`, seed 0, 20 drafts x 4 seasons) is **not** re-run by
+> this change, but its recipe was re-measured on today's code and board `fa974b0d`, same flags,
+> **with the old sets** (both imputation keys declined, so shipped 0.315 etc.) and **with the
+> new**; only the sets differ: optimizer - market **-11.90 -> -10.19** points per team game;
+> 95% t CI **[-18.82, -4.97] -> [-16.71, -3.67]**, percentile [-16.24, -7.55] -> [-14.21,
+> -6.17]; interval width **8.69 -> 8.04**; MDE 8.76 -> 8.25; per season (2022-25) -16.25 /
+> -8.42 / -6.68 / -16.23 -> -14.77 / -4.88 / -7.46 / -13.64. The sign and the verdict class do
+> not move (the optimizer loses in the pooled estimate and in every season by point estimate;
+> neither run carried `--ceiling`, so both print NOT RUNNABLE under ADR-0019's #363). The
+> binding takes the replay about 1.7 points per team game toward zero and narrows the
+> interval by 0.65, consistent with 2022 and 2023 replaying at 0.187 and 0.248 rather than
+> 0.315 (less imputation noise in those seasons' sims); a single seed does not isolate the
+> mechanism. Both runs are single seed-0 draws, 1.7 is about three of #194's 0.5-point
+> run-to-run standard errors, and each run's own write to `state/gate-width.json` was
+> reverted. The old-sets run executed on the tree before `main`'s #405 merge and the new-sets
+> run's workers had already imported that same code when the merge landed, so the ledger
+> prints "other arm source" between them; the board digest `fa974b0d` is identical.
+> Why the 2026-09-21 diagnosis missed the mechanism: it read `championship_equity` as an
+> exhibit, but `win_probability` is arm B's scorer and hands each row's `xfp_imputed` flag to
+> `talent_cv_for`; the `backtest.LIMITATIONS` sentence saying otherwise is corrected.
+>
 > `state/gate-width.json` is restored after this run the same way both weekly runs were:
 > `git checkout -- state/gate-width.json` once the numbers above were recorded, so #362's
 > evidence -- the `requires_review` entries the live file already carries -- stays exactly what
@@ -1379,6 +1404,19 @@ finding. Whether the four that could not be refitted move more is exactly what t
 yet say; the two ESPN-bound scripts record their reason into the set and re-run with a session
 (`--exclude-season N --record` overwrites the key), and the two estimator-bound ones wait on
 the decisions named.
+
+> **Amended 2026-10-08 (#320, option B adopted; prior text above kept).** The `IMPUTE_CV` /
+> `IMPUTE_CV_BY_POS` row of the table is no longer true: the four sets now **refit both**, on
+> the seasons strictly before the replayed one (rule 2), and `--holdout` reads them. Values
+> (pooled / RB / WR; QB and TE at pooled in every set, as fewer than 20 rookies cannot split):
+> 2022 0.187 (fit on 2021 alone, one cluster), 2023 0.248 (2021-22), 2024 0.287 / 0.287 /
+> 0.273 (2021-23), 2025 0.317 / 0.379 / 0.279 (2021-24), against the shipped 0.315 /
+> 0.359 / 0.288. The reason the sets carried for declining ("fewer clusters than the decision
+> was taken on") applied to every leave-one-season-out fit by construction and is dropped.
+> The row's other claim, that the constant "is not a simulator constant", was also wrong --
+> see the restatement beside the 2026-09-21 note. So a hold-out replay now moves the weekly
+> law, the teammate correlation **and the rookie imputation error**. Full table and method:
+> [impute-cv.md](impute-cv.md).
 
 **What a run should print.** Per season, `season 2024: constants from conf/holdout/2024.json
 (fitted without 2024); refitted: predict.WEEKLY_K, predict.WEEKLY_K_POOLED,

@@ -452,24 +452,391 @@ that did not change what the arm computes is answered by showing so (the identit
 outcome is read. An edit that did change it is a new arm and needs a new pre-registration.
 `test_the_pin_is_recorded_in_the_document` holds the constant and this table equal.
 
-## Amended 2026-10-07: `hub.draft.season` re-pinned for #315 item 1 (prior text kept)
 
-Before any capture is read and before any 2026 outcome has been read. The closure table above
-stands as the record of what was pinned until today; one row of it is superseded.
+## Amended 2026-10-07: the pin is re-pinned after #442's behaviour-neutral edits (prior text kept)
 
-**What changed.** Item 1 of #315: `hub.draft.season._absence_factor` now returns the played-week
-mask and the play fraction, and a played week is drawn at mean `mu/f` and sd `sd/sqrt(f)` where
-the whole draw was divided by `f`. It changes `hub.draft.season` and no other module in the
-closure; `hub.draft.board` is byte-identical to `main`'s and keeps `6e61e56ecac0`. (Item 3 of
-#315, a PAVA imputation in `board.py`, was withdrawn to #462 and is not part of this re-pin.)
+Still before any capture exists and before any 2026 outcome has been read. The #456 table above
+is kept as the record of what was pinned until today; the pin below supersedes it.
 
-**Why the arm's figures are unchanged.** The weekly gate never reaches `_absence_factor`: with
-`simulate_weeks` and `_absence_factor` replaced by functions that raise, `cohort(board, season,
-drafts=20, seed=0)` drafted the 2022-2025 rosters of `assemble_universe` without either being
-called. `weekly_gate_data` reads the board for names and ranks and drafts through
-`hub.draft.cohort`, whose market strategy does not simulate a season. Nothing the forward
-measurement scores is computed by the changed function; `tests/unit/test_weekly_projection_move.py`
-(#430's identity test) passes on this tree.
+**What changed in the closure, and why nothing the arm computes did.** Three of the 29 modules
+were edited by #442 (ledger follow-ups) and none of them in anything the forward measurement
+reaches. (1) `hub.models.margin` gained `NFL_WEEKS = 18` (moved there from
+`hub.season.survivor`, so that `survival_beside`'s default no longer needs a function-local import
+of the survivor pool's module, which the walk would otherwise have had to pin) and lost that
+import; its `Harness` declarations now say `arm_roots=("hub.models.margin",)` where they listed
+nine modules. (2) `hub.models.coverage` and (3) `hub.season.weekly_gate` changed the same
+declaration only (`arm_roots=(...)` in place of a hand-kept `arm_modules` tuple). The set of
+modules in the closure is unchanged: 29, the same names. The identity test
+`tests/unit/test_weekly_projection_move.py` (#430) passes on this tree, so the figures computed
+on the pre-move code are still reproduced; `survival_beside` and the harness declarations are not
+called by `project`, the shrinkage fit or anything the forward measurement scores.
 
-**The row now pinned.** `hub.draft.season` `56b60168eb98` (was `601db0b4f9f1`). The other 28
-rows are as in the table above. Closure digest **`54d9a530aa5822d0`** (was `7bc93c290a5cc331`).
+| module | was | now |
+|---|---|---|
+| `hub.models.coverage` | `e036e1981cef` | `fcfc597b98e8` |
+| `hub.models.margin` | `9da0f4839e89` | `8d58c201cc4b` |
+| `hub.season.weekly_gate` | `211f84e4a564` | `73cc434a55db` |
+
+**The closure pinned, digest `fc8042b7baaf9f88`** (29 modules; was `7bc93c290a5cc331`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `b5c2b10a2ec1` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `601db0b4f9f1` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `d5b25ec6130b` |
+| `hub.holdout` `a8d095db300c` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `c402b0c4856f` |
+| `hub.models.conformal` `f98558ab2051` |
+| `hub.models.coverage` `fcfc597b98e8` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `2f9f2aad1946` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-07: the arm is re-pinned for two docstrings (#313; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #313 names three
+leakage surfaces in the docstrings of `hub.models.components` and `hub.models.panel` (and
+corrects the direction of one existing sentence in `panel.assign_weeks`), which are two modules
+in the closure above. The pin is a hash of source bytes, so a docstring edit moves it, and the
+amendment obligation above applies: show the edit did not change what the arm computes, re-pin,
+date it.
+
+**The evidence.** Parsing each of the two modules at `main` (`3729e6b`) and in this change, and
+removing every module, class and function docstring, the two syntax trees are equal
+(`ast.dump`): the change is docstrings and nothing else, so no statement the arm executes
+differs. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430) is
+run on this tree beside it (result in the commit). The arm's inputs and outputs are not reached:
+no constant, no join, no column and no default moved.
+
+**What did not change:** `hub.models.predict`, `WEEKLY_K` and every fitted constant, so no
+interval and no scored quantity on the forward arm moves. The refit of the spread law that #313
+also asks for is **not** in this amendment; it is not landed (no adopted design exists for it),
+and if it lands it is a separate amendment with its own evidence, because `predict.WEEKLY_K` is
+read by the arm.
+
+**The pin now, digest `c891aaf58f135479`.** Exactly two rows moved:
+
+| module and digest now | was |
+|---|---|
+| `hub.models.components` `b23c5d7d0c49` | `c402b0c4856f` |
+| `hub.models.panel` `99d19fba99e0` | `2f9f2aad1946` |
+
+The other 27 rows of the table above stand. (Previous digest `7bc93c290a5cc331`.)
+
+## Amended 2026-10-08: the two re-pins above, combined (#442 with #313; prior text kept)
+
+Both re-pins above were taken from the #456 table (digest `7bc93c290a5cc331`) and landed
+together, so neither section's digest is the pin now. They touch disjoint modules: #442 moved
+`hub.models.coverage`, `hub.models.margin` and `hub.season.weekly_gate`; #313 moved
+`hub.models.components` and `hub.models.panel`. Each table row above that is not one of those
+five stands. Nothing else changed in the merge, and the closure is still the same 29 modules.
+
+**The pin now, digest `cf9b4b9eea056369`** (was `fc8042b7baaf9f88` on #442 alone and
+`c891aaf58f135479` on #313 alone): the #442 table with `hub.models.components` `b23c5d7d0c49`
+and `hub.models.panel` `99d19fba99e0` taken from #313's.
+
+
+## Amended 2026-10-08: the arm is re-pinned for declaration spellings (#321; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #321 widened
+`hub.declare`'s walk and gave four numbers in the closure a declaration they lacked, which is
+an edit to four of the 29 modules. The pin is a hash of source bytes, so it moves, and the
+amendment obligation above applies: show the edit did not change what the arm computes, re-pin,
+date it.
+
+**What changed, and why nothing the arm computes did.** Each edit wraps an existing value in one
+of `hub.declare`'s markers, which return their first argument unchanged at run time:
+`weekly_projection.MIN_UNITS` `not_an_input(8.0, ...)` -> `chosen(8.0)`;
+`optimize._TD_LUCK_NOTE` `0.5` -> `not_an_input(0.5, ...)`;
+`conformal.DEFAULT_ALPHA` `ModelConfig().conformal_alpha` -> `not_an_input(<same>, ...)`;
+`coverage._SIGMA_SCALE` `math.sqrt(2.0)` -> `not_an_input(<same>, ...)`; plus the
+`hub.declare` import each needed and, in `weekly_projection`, a comment. `hub.declare` is
+itself exempt from the closure (`CLOSURE_EXEMPT`), so the set is unchanged: 29 modules, the
+same names.
+
+**The evidence.** Parsing each of the four modules at the parent commit and in this change,
+removing every module, class and function docstring, replacing each call of `chosen`,
+`not_an_input` or `fitted` by its first argument and dropping the `from hub.declare import`
+line, the two syntax trees are equal (`ast.dump`) for all four: no statement the arm executes
+differs. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430) passes
+on this tree, so the figures computed on the pre-move code are still reproduced.
+
+**What did move:** `config_digest` `c4606f91` -> `96fee74f` and `fitted_digest` `5024dd03` ->
+`772d3bba`, because `MIN_UNITS` entered the covered declarations (a coverage correction, same
+value; recorded in `tests/unit/test_config.py`). That is the model version's label and not a
+number the arm computes.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.optimize` | `b5c2b10a2ec1` | `314a78a8b5ef` |
+| `hub.exhibits.weekly_projection` | `d5b25ec6130b` | `372f7180071e` |
+| `hub.models.conformal` | `f98558ab2051` | `79827e566bba` |
+| `hub.models.coverage` | `fcfc597b98e8` | `3c2d88cc6908` |
+
+**The closure pinned, digest `da1dfa2e9571eea7`** (29 modules; was `cf9b4b9eea056369`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `601db0b4f9f1` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `a8d095db300c` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+
+## Amended 2026-10-08: the arm is re-pinned for the hold-out rebinding every reader (#320; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #320 makes a held-out
+constant held out everywhere it is read, and edits two of the 29 modules: `hub.draft.season`
+no longer re-exports the six held-out names (`TALENT_CV`, `TALENT_CV_BY_POS`, `WEEKLY_K`,
+`WEEKLY_K_POOLED`, `WEEKLY_SKEW`, `WEEKLY_SKEW_POOLED`), which were copies a `holdout.applied`
+rebind could not reach; and `hub.holdout` refuses a set that leaves a held-out key unaccounted
+for, and holds a lock across the record's read-modify-write. The pin is a hash of source bytes,
+so it moves, and the amendment obligation above applies: show the edit did not change what the
+arm computes, re-pin, date it.
+
+**Why nothing the arm computes changed.** `hub.draft.season`: parsing the file at the parent
+commit and in this change, removing docstrings and the six names from the one `from
+hub.models.predict import` line, the two syntax trees are equal (`ast.dump`); nothing in the
+closure imports those names from it (the only importers were `hub.draft.calibrate` and
+`hub.exhibits.leverage`, neither in the closure). `hub.holdout`: the arm reaches it only through
+`--holdout` (`weekly_gate_data`'s `applied(yr)` and `weekly_gate`'s `run_lines`); the four
+committed sets in `conf/holdout/` already account for all eleven keys, each with a value or a
+reason, and `load` returns an identical `ConstantSet` and `describe` line for each of 2022-25
+before and after. The behavioural identity test `tests/unit/test_weekly_projection_move.py`
+(#430) passes on this tree.
+
+**What did not move:** `config_digest` `96fee74f` and `fitted_digest` `772d3bba`, the same on
+`main` `1bbb8c7` and on this tree: no constant's value or declaration changed.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.season` | `601db0b4f9f1` | `55989706066a` |
+| `hub.holdout` | `a8d095db300c` | `e74f918fab67` |
+
+**The closure pinned, digest `2932bb4a2c589e97`** (29 modules; was `da1dfa2e9571eea7`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `6e61e56ecac0` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `55989706066a` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `e74f918fab67` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-08: the arm is re-pinned for the board's capture stamp (#405; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #405 makes the age
+the board reports (`last_good`, `board_age_hours`, the poller's "board built Nh ago", the
+adherence replay's copy note) the age of its *capture* -- a stamp `_persist` writes beside the
+parquet, `fetch.cached`'s record -- instead of the file's mtime. That edits one of the 29
+modules, `hub.draft.board`; the pin is a hash of source bytes, so it moves, and the amendment
+obligation above applies: show the edit did not change what the arm computes, re-pin, date it.
+
+**Why nothing the arm computes changed.** The arm reaches `hub.draft.board` through
+`board_as_of` (`weekly_gate_data`). Parsing the file at the parent commit and in this change and
+comparing every top-level statement by `ast.dump`, exactly four functions differ -- `_persist`,
+`board_age_hours`, `last_good` and `build_or_last_good` -- and none is called by `board_as_of`,
+`build` or anything else the forward measurement reaches (`_persist` writes the files `main`
+prints, `last_good` is the offline fallback and the poller's reader, `board_age_hours` formats an
+age). `build`, `board_as_of`, `recommend` and every other function and constant are
+syntax-tree-identical; the only additions are two helpers (`board_stamp_path`,
+`board_captured_at`) and the constant `BOARD_STAMP_SUFFIX`, plus `cached` on the existing
+`from hub.fetch import` line. `hub.fetch.*` is exempt from the closure (`CLOSURE_EXEMPT`), so the
+import adds no module: the closure is still 29, and the walk against the new pin reports no
+difference. The behavioural identity test `tests/unit/test_weekly_projection_move.py` (#430)
+passes on this tree.
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.board` | `6e61e56ecac0` | `65ae0104fb6c` |
+
+**The closure pinned, digest `6f3a04e853ad4428`** (29 modules; was `2932bb4a2c589e97`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `65ae0104fb6c` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `55989706066a` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `e74f918fab67` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8d58c201cc4b` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+
+## Amended 2026-10-08: the arm is re-pinned for `survival_beside`'s default (#323; prior text kept)
+
+Still before any capture exists and before any 2026 outcome has been read. #323 makes
+`hub.models.margin.survival_beside` raise to the pool's pick count (24: a second pick in each
+of weeks 13-18) and not to the 18 weeks of the season. That edits one of the 29 modules: it
+adds `from hub.config import PoolConfig` (`hub.config` is in `CLOSURE_EXEMPT`, so the closure's
+membership is unchanged: the same 29 names), a function `pool_picks`, the default inside
+`survival_beside`, and one string in `survival_line`. The pin is a hash of source bytes, so it
+moves, and the amendment obligation above applies: show the edit did not change what the arm
+computes, re-pin, date it.
+
+**Why nothing the arm computes changed.** `survival_beside`, `survival_line` and `pool_picks`
+are called from `hub.models.margin`'s `--shape` report and from tests, and from nowhere else in
+`src/`. The one thing the closure takes from `margin` is `home_win_prob` and `home_won`
+(`hub.models.coverage`, a function-local import), and neither moved. `project`, the shrinkage
+fit and everything the forward measurement scores are untouched. The behavioural identity test
+`tests/unit/test_weekly_projection_move.py` (#430) passes on this tree.
+
+**What did not move:** `config_digest` `96fee74f` and `fitted_digest` `772d3bba`, the same on
+`main` and on this tree: no constant's value or declaration changed (`PoolConfig`'s
+`double_pick_weeks` is read, not edited).
+
+| module | was | now |
+|---|---|---|
+| `hub.models.margin` | `8d58c201cc4b` | `8fd45168e983` |
+
+**The closure pinned, digest `060820bfc56a32db`** (29 modules; was `6f3a04e853ad4428`):
+
+| module and digest |
+|---|
+| `hub.draft.adp_history` `286f2d9c667d` |
+| `hub.draft.availability` `34b707bf7e75` |
+| `hub.draft.board` `65ae0104fb6c` |
+| `hub.draft.cohort` `5d6e03fc2cd5` |
+| `hub.draft.durability` `59fbe0402d35` |
+| `hub.draft.optimize` `314a78a8b5ef` |
+| `hub.draft.picks` `c695b87cc5e8` |
+| `hub.draft.playoff_sos` `42bc422f88eb` |
+| `hub.draft.prior_signal` `4b7421479470` |
+| `hub.draft.regression` `3ba22b3a649e` |
+| `hub.draft.report` `df1f8e20569e` |
+| `hub.draft.season` `55989706066a` |
+| `hub.draft.state` `ad958507df6a` |
+| `hub.exhibits.weekly_projection` `372f7180071e` |
+| `hub.holdout` `e74f918fab67` |
+| `hub.league` `1d50b1eaf7ef` |
+| `hub.models.base` `8c41cd5f26d1` |
+| `hub.models.components` `b23c5d7d0c49` |
+| `hub.models.conformal` `79827e566bba` |
+| `hub.models.coverage` `3c2d88cc6908` |
+| `hub.models.margin` `8fd45168e983` |
+| `hub.models.market` `098baf487556` |
+| `hub.models.panel` `99d19fba99e0` |
+| `hub.models.predict` `ddf960a1dfe6` |
+| `hub.models.scoring_rules` `3c201f3a0d6f` |
+| `hub.models.volume` `31e5321b1e6d` |
+| `hub.names` `93e503040186` |
+| `hub.season.weekly_gate` `73cc434a55db` |
+| `hub.season.weekly_gate_data` `1823ccae01c3` |
+
+## Amended 2026-10-08: the pin is checked after #320's hold-out binds the imputation error, and does not move (prior text kept)
+
+The hold-out sets in `conf/holdout/` now carry values for `predict.IMPUTE_CV` and
+`predict.IMPUTE_CV_BY_POS` (option B of #320; [impute-cv.md](impute-cv.md)), where they carried
+`null` with a reason. The ticket asked for the forward-pin rule to be applied because the two
+names are in `hub.holdout.HELD_OUT`. **They were already in it** -- `HELD_OUT` has held all eleven
+keys since #294, with these two declined -- so no edit to `hub/holdout.py` was needed or made, and
+neither was any other module of the 29: the change is four JSON files, `hub.draft.impute_cv` (not
+in the closure), tests and docs. The pin is a hash of source bytes, so it did not move:
+`PINNED_ARM_DIGEST` is still **`6f3a04e853ad4428`** (the pin #405's amendment above set, on `main`
+`15cad00`; this change adds nothing to it), and `arm_closure()` on this tree equals
+`PINNED_ARM_MODULES` module for module (29 of 29).
+
+**Why the arm computes what it did.** What changed is data the arm reads only under `--holdout`
+(`weekly_gate_data`'s `applied(yr)`), and the rebinding reaches the arm only through
+`predict.talent_cv_for(pos, imputed)`, which adds `IMPUTE_CV_BY_POS.get(pos, IMPUTE_CV)` to a
+position's talent spread **only when handed `imputed`**. Every call of `talent_cv_for` in the
+closure passes one argument (`hub.draft.season`); the one call that passes `imputed` is in
+`hub.exhibits.championship_equity`, which is outside the closure. That is a test now
+(`tests/unit/test_holdout.py::test_nothing_in_the_forward_arms_closure_reads_the_imputation_error`),
+with a positive control that the walk finds the exhibit's call. The behavioural identity test
+(#430) passes on this tree. `config_digest` `96fee74f` and `fitted_digest` `772d3bba` are the
+same as before the change: no constant's value or declaration moved.
+
+*Note on combining (#323, 2026-10-08).* The amendment above was written on a `main` that did not yet
+carry #323's `hub.models.margin` re-pin; its "still `6f3a04e853ad4428`" is true of that tree.
+On the tree that carries both, `PINNED_ARM_DIGEST` is `060820bfc56a32db`, as the #323 amendment above records.

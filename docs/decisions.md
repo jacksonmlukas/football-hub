@@ -1047,6 +1047,24 @@ month (61) plus its own floor (~10), rounded up. Combined spend is about 100-115
 so at normal cadence neither floor binds; the ordering matters only if something burns credits.
 The two entries above that cite a floor of 50 are left as written: they were true on their date.
 
+**`starter_change` split at the event seam (2026-10-08, #346, architecture review candidate 5).**
+`hub.models.starter_events` holds the Starter change construction (the events, the play-by-play
+source and its reconciliation, `priced` and `results`); `hub.models.starter_study` is the
+line-move study and its verdict; `hub.models.starter_change` keeps the quarterback gate, the
+event-count and horizon reports and the CLI (`python -m hub.models.starter_change` is unchanged
+and printed the same lines before and after). The split is at a seam, not at adjacency
+(ADR-0021): one builder, two readers. The study's verdict now reads `experiment`'s machinery --
+`t_interval` for the coefficient's interval (`study_interval` is deleted), and the new
+`experiment.smallest_n_resolving` for "how many would it take", which the gate's
+`event_seasons_needed` and the study's `study_events_needed` both call (`mde_at` is deleted).
+`verdict`'s non-inferiority branches stay the study's own: the rule is not a Gate's. **Not a
+restatement**: every number and sentence is as before (`study_interval` and `t_interval` are
+the same expression, held by the boundary test in `tests/unit/test_starter_study.py`), so no
+verdict changed and nothing acts on the product. The gate's arm closure now reaches the study
+through the CLI's import, a superset of what it ran, as it was a superset when it was one
+module. The mutation script is re-pointed at the three modules and its count re-taken: 12 of
+12 killed.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win

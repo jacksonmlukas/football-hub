@@ -1,6 +1,13 @@
 """Measure how players' weekly scores move together.
 
 `hub.models.predict.TEAMMATE_RHO` carries three within-team edges, measured this way.
+**`TEAMMATE_RHO` is a points-layer number** (declared 2026-10-08, #369): a Pearson r on
+standardised weekly points, as measured here. `group_sd` applies it to the points variance, so
+its implied pair correlation is the constant; the simulator applies it to the latent normal
+before `skewed()` and realises about 97% of it (QB-WR 0.232 -> about 0.225). Known limit, no
+number moves: `docs/correlation.md`, "Which layer the number lives on";
+`tests/unit/test_teammate_rho_layer.py` holds both.
+
 `docs/correlation.md` names what it does not cover:
 
 > **Opponent correlation is not modelled.** [...] Shared game exposure shrinks *margin*

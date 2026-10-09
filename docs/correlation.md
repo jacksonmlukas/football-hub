@@ -92,6 +92,46 @@ this way, because catchers compete for the same targets and would need a slightl
 conditional correlation. The overstatement is small and in the conservative direction for a
 roster holding two catchers from one team.
 
+> **Restated 2026-10-08 (#369, method.md rule 13; the paragraph above is kept, not edited).**
+> *Prior value: "around +0.05 where the measured figure is +0.014", through "a shared
+> quarterback".* That describes a one-factor construction the code does not use.
+> `correlated_normal` builds each team's correlation matrix explicitly from `teammate_rho` and
+> takes its Cholesky; `teammate_rho("WR", "WR")` is 0.0, so the catchers' latent correlation is
+> **exactly 0** (re-measured through the sampler: -0.002 at 300k draws; the one-factor figure
+> would be 0.232^2 = +0.054), against a measured +0.014 in the data. The shipped behaviour is the
+> star topology the data shows, and the matrix stays PSD while k catchers' squared correlations
+> sum below one, so no repair fires for a one-quarterback team. The paragraph's conclusion
+> (conservative for a two-catcher stack) therefore does not apply: the simulator neither
+> overstates nor understates WR-WR, it prices it at zero, 0.014 under the measurement. Held by
+> `tests/unit/test_teammate_rho_layer.py`.
+
+## Which layer the number lives on
+
+> **Declared 2026-10-08, issue #369 (option C, adopted; no number moves).** `TEAMMATE_RHO` is a
+> **points-layer** number: a Pearson r on standardised weekly *points*
+> (`hub.models.correlate`). `group_sd` applies it to the points variance, the layer it was
+> measured on and the one the L1 gate (72.9% -> 80.4%) validated, so its implied pair
+> correlation *is* the constant. `correlated_normal` applies it to the latent normal before
+> `skewed()`, so the realised points correlation is slightly under it.
+>
+> **Known limit, next to audit IV's R12 (2026-09-16, `docs/audits/2026-09-16-audit-iv.json`,
+> never edited): the simulator realises about 97% of the constant.** Measured 2026-10-08 through
+> the shipped `skewed()` (Cornish-Fisher plus the clip at zero, `WEEKLY_SKEW`, sd = 0.55 mu + 2,
+> mean of the receiver 6 to 14, 400k draws):
+>
+> | edge | latent (= constant) | realised points | ratio |
+> |---|---|---|---|
+> | QB-WR | 0.232 | 0.2236-0.2263 | 0.964-0.975 |
+> | QB-TE | 0.225 | 0.2166-0.2192 | 0.963-0.974 |
+> | QB-RB | 0.054 | 0.0520-0.0526 | 0.964-0.974 |
+>
+> Lineup decisions are unaffected (`group_sd` reads the matching number). The simulator, hence
+> the draft optimizer and champion probabilities, is about 0.007 weak on the QB-catcher edges.
+> It is left alone: converting latent to points correlation (option A) would move simulator
+> output for a 3% effect. If it is ever done, this section and
+> `tests/unit/test_teammate_rho_layer.py`, whose band is centred on 0.97 of the constant with a
+> 0.006 tolerance, change in the same commit.
+
 ## What this does not cover
 
 **Opponent correlation is not modelled.** `championship-leverage.md` makes the point that

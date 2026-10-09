@@ -128,13 +128,18 @@ What this repo has spent against two metered third-party accounts:
   ([-0.0041, +0.0867]) sat at the same `c4606f91`/`3028f320` as the old one ([-0.0150,
   +0.0602]). The key is now `(name, recipe, config_digest, data_digest, code_digest)`:
   `code_digest` is 8 hex characters of a SHA-256 over the name and source bytes of the modules
-  the gate declares in `Harness.arm_modules` (`hub.ledger.code_digest`; a contract holds every
-  harness to naming its own module and to every name resolving). **It covers exactly the declared
-  modules, and the declaration is held to the first-party import closure (#439):**
-  `test_every_gate_declares_the_code_it_runs` walks the AST (module-level and function-local
-  `hub.*` imports) from the gate's module and from each declared module, and fails on any module
-  reached that is neither declared nor on its `EXEMPT` list, which gives each exemption's reason
-  (the shared rule, `hub.fetch.*`, config, I/O and CLI plumbing). The first declarations omitted
+  the gate runs (`hub.ledger.code_digest`). **Since #442 that list is derived, not hand-kept:** a
+  `Harness` declares `arm_roots` (its own module) and `Harness.arm_modules` is the first-party
+  import closure of those roots (`hub.closure.import_closure`: the AST, module-level and
+  function-local `hub.*` imports, stopping at `hub.closure.CLOSURE_EXEMPT`, each exemption with
+  its reason: the shared rule, `hub.fetch.*`, config, I/O and CLI plumbing). Deriving it
+  reproduced every hand-kept list exactly, so the derivation itself moved no gate's module set
+  (the lane's own edits to `margin`, `coverage` and `weekly_gate` moved the digests of the gates
+  that run them, as any source edit does); the consequence,
+  intended, is that a new first-party import in an arm module now moves that gate's digest
+  without anyone editing a list. `test_every_gate_declares_the_code_it_runs` holds every harness
+  to naming its own module, every exemption to being reached by some arm, and `src/hub` to no
+  relative imports. The first (#439) hand-kept declarations omitted
   `hub.exhibits.championship_equity` from the draft gate and `weekly_gate_data`, `weekly` and
   `panel` from the weekly gate, so an edit there kept the old history comparable. A direct
   `run_gate` call that declares no modules is not a "no modules declared" run: it is of unknown

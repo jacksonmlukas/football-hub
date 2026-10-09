@@ -24,6 +24,7 @@ import polars as pl
 import pytest
 
 from hub.draft import calibrate
+from hub.models import predict
 
 
 def _synthetic(cv_true, n=900, seed=0, games=None):
@@ -39,7 +40,7 @@ def _synthetic(cv_true, n=900, seed=0, games=None):
     pos = rng.choice(["QB", "RB", "WR", "TE"], n)
     mu = 26.0 * pick ** -0.28                      # the market's projection, a power law
     g = np.full(n, 15) if games is None else games
-    total = calibrate.simulate_seasons(mu, cv_true, g, rng)
+    total = calibrate.simulate_seasons(mu, cv_true, g, rng, k=predict.WEEKLY_K_POOLED)
     return pl.DataFrame({"season": [2024] * n, "pick": pick, "pos": pos,
                          "total": total, "games": g})
 
@@ -158,7 +159,7 @@ def test_the_fit_reports_what_it_was_fitted_on():
 def test_the_current_constant_is_inside_the_fitted_interval():
     """The guard. `TALENT_CV` was 0.35 on a guess and the fit put it 4.6 se too low; if
     somebody reverts it without re-fitting, this fails."""
-    from hub.draft.season import TALENT_CV
+    from hub.models.predict import TALENT_CV
     # The nominal's interval, not the dispersion's: net of absence the two differ (#235),
     # and the constant in use is the nominal.
     lo, hi = calibrate.FITTED_NOMINAL_CI95
@@ -328,7 +329,7 @@ def _one_frame(players=80, repeats=1, seed=3, tied=True):
     pos = np.array(["QB", "RB", "WR", "TE"] * -(-players // 4))[:players]
     mu = 26.0 * pick ** -0.28
     g = np.full(players, 15)
-    total = calibrate.simulate_seasons(mu, 0.40, g, rng)
+    total = calibrate.simulate_seasons(mu, 0.40, g, rng, k=predict.WEEKLY_K_POOLED)
     rows = []
     for s in range(repeats):
         rows.append(pl.DataFrame({

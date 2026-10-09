@@ -206,7 +206,8 @@ def test_each_position_gets_its_own_fitted_dispersion():
     """Fitted in `hub.draft.calibrate`, written up in `docs/talent-cv.md`. Only RB and TE
     are far enough from the pool to differ: RB at +2.6 se and TE at -3.8 se, while QB and
     WR sit within one standard error and shrink back onto the pooled value."""
-    from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS, talent_cv_for
+    from hub.draft.season import talent_cv_for
+    from hub.models.predict import TALENT_CV, TALENT_CV_BY_POS
     assert TALENT_CV_BY_POS["RB"] > TALENT_CV > TALENT_CV_BY_POS["TE"]
     got = talent_cv_for(np.array(["RB", "TE", "QB"]))
     assert got.tolist() == [TALENT_CV_BY_POS["RB"], TALENT_CV_BY_POS["TE"],
@@ -216,7 +217,8 @@ def test_each_position_gets_its_own_fitted_dispersion():
 def test_an_unknown_position_falls_back_to_the_pooled_value():
     """K and DST are not drafted here and were never fitted. Falling back beats a KeyError
     in the middle of a draft."""
-    from hub.draft.season import TALENT_CV, talent_cv_for
+    from hub.draft.season import talent_cv_for
+    from hub.models.predict import TALENT_CV
     assert talent_cv_for(np.array(["K", "DST"])).tolist() == [TALENT_CV, TALENT_CV]
 
 
@@ -242,7 +244,7 @@ def test_passing_a_single_number_still_works():
 def test_the_fitted_constants_are_inside_their_fitted_intervals():
     """Guard against a silent revert to a guessed value, same as the pooled one."""
     from hub.draft.calibrate import FITTED_BY_POS, FITTED_NOMINAL_CI95
-    from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
+    from hub.models.predict import TALENT_CV, TALENT_CV_BY_POS
     assert FITTED_NOMINAL_CI95[0] <= TALENT_CV <= FITTED_NOMINAL_CI95[1]
     for pos, v in TALENT_CV_BY_POS.items():
         assert v == pytest.approx(FITTED_BY_POS[pos], abs=0.01)

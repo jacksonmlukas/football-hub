@@ -8,6 +8,8 @@ that runs it on the archive can be read for its numbers rather than its plumbing
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import polars as pl
 import pytest
@@ -139,30 +141,109 @@ def test_a_held_out_season_leaves_the_measurement_and_is_named():
     assert same.height == 6 and "nothing held out" in said_none
 
 
-def test_the_script_records_the_constant_as_not_refitted_with_the_rookie_number_in_the_reason(
+def _measured(*, clustered_mean, pooled, by_pos, clusters=1, n=30):
+    """A `measure` result in the shape `refit` and `main` read."""
+    cells = {p: {"n": c[0], "cv": c[1], "median": 0.0} for p, c in by_pos.items()}
+    cells["pooled"] = {"n": n, "cv": pooled, "median": 0.0}
+    clustered = None if clustered_mean is None else {"mean": clustered_mean}
+    return {"n": n, "seasons": [2021, 2022], "clusters": clusters,
+            "xfp_pg": {"by_position": cells, "clustered": clustered}}
+
+
+def test_the_refit_gives_a_position_its_own_cv_only_with_enough_rookies_and_pools_the_rest():
+    """The shipped table's own split as a threshold: RB (36) and WR (42) carry their own CV, QB
+    (8) and TE (6) the pooled value. The pooled value is the season-clustered mean when there
+    is one, else the single season's pooled CV, and every value is rounded to three places."""
+    by_pos = {"QB": (8, 0.164), "RB": (36, 0.3594), "WR": (42, 0.2881), "TE": (6, 0.319)}
+    got = impute_cv.refit(_measured(clustered_mean=0.31549, pooled=0.324, by_pos=by_pos))
+    assert got == (0.315, {"QB": 0.315, "RB": 0.359, "WR": 0.288, "TE": 0.315}, ["RB", "WR"])
+    # One fit season has no clustered estimate: the one season's pooled CV is the mean of one.
+    one = impute_cv.refit(_measured(clustered_mean=None, pooled=0.1869, by_pos=by_pos))
+    assert one is not None and one[0] == 0.187 and one[1]["QB"] == 0.187
+    # The threshold is inclusive, and a position with n at it keeps its own value.
+    edge = {**by_pos, "QB": (impute_cv.MIN_POS_N, 0.2)}
+    kept = impute_cv.refit(_measured(clustered_mean=0.3, pooled=0.3, by_pos=edge))
+    assert kept is not None and kept[1]["QB"] == 0.2 and "QB" in kept[2]
+    # No spread anywhere: nothing to record.
+    nothing = dict.fromkeys(by_pos, (1, None))
+    assert impute_cv.refit(_measured(clustered_mean=None, pooled=None, by_pos=nothing)) is None
+
+
+def test_the_script_records_the_refit_on_the_seasons_strictly_before_the_excluded_one(
         monkeypatch, tmp_path, capsys):
-    """`--exclude-season N --record` (#294) writes IMPUTE_CV and IMPUTE_CV_BY_POS into the
-    season's set as *not refitted*. Since #298 the shipped constant *is* this script's
-    measurement on all five seasons, so the reason says that, carries the hold-out's own
-    pooled value so the replay's run line shows what it did not use, and no longer calls
-    the adoption an open decision or cites the veteran 0.260 as the shipped number."""
+    """`--exclude-season N --point-in-time --record` (#320) fits on the seasons before N and
+    writes IMPUTE_CV and IMPUTE_CV_BY_POS into N's set as values, with the command that
+    reproduces them. It no longer records them as not refitted."""
+    import json
+
     from hub import holdout
 
     monkeypatch.setattr(holdout, "SETS", tmp_path)
-    result = {"n": 5, "seasons": [2021, 2022], "clusters": 1,
-              "xfp_pg": {"by_position": {"pooled": {"cv": 0.3125, "n": 5, "median": 0.0}}}}
-    monkeypatch.setattr(impute_cv, "measure", lambda *a, **k: (result, ["  a line"]))
-    assert impute_cv.main(["--exclude-season", "2022", "--record"]) == 0
-    got = holdout.load(2022)
-    assert got.values == {}
-    assert set(got.missing) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
-    why = got.missing["predict.IMPUTE_CV"]
-    assert "pooled 0.312" in why and "#298" in why
-    assert "0.260" not in why and "open decision" not in why
-    assert "0.315" in why, "the reason names the shipped value the hold-out is read against"
+    seen: dict[str, Any] = {}
+
+    def fake_measure(seasons, **kw):
+        seen["seasons"], seen["kw"] = list(seasons), kw
+        by_pos = {"QB": (3, 0.1), "RB": (25, 0.4), "WR": (30, 0.3), "TE": (2, 0.2)}
+        return _measured(clustered_mean=0.3126, pooled=0.33, by_pos=by_pos, clusters=2), ["  a line"]
+
+    monkeypatch.setattr(impute_cv, "measure", fake_measure)
+    argv = ["--exclude-season", "2024", "--point-in-time", "--record"]
+    assert impute_cv.main(argv) == 0
+    assert seen["seasons"] == [2021, 2022, 2023], "strictly before 2024, and 2025 is not read"
+    assert seen["kw"]["exclude"] is None, "no further leave-out: the earlier seasons are the fit"
+    consts = json.loads((tmp_path / "2024.json").read_text())["constants"]
+    assert set(consts) == {"predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"}
+    assert consts["predict.IMPUTE_CV"]["value"] == 0.313
+    assert consts["predict.IMPUTE_CV_BY_POS"]["value"] == {
+        "QB": 0.313, "RB": 0.4, "WR": 0.3, "TE": 0.313}
+    assert all("why_not" not in v for v in consts.values())
+    assert "--exclude-season 2024 --point-in-time --record" in consts["predict.IMPUTE_CV"]["command"]
     out = capsys.readouterr().out
-    assert "unchanged by this run" not in out, "the pre-#298 closing line: no longer true"
-    assert "#298" in out and "0.315" in out
+    assert "strictly before 2024" in out and "(pooled: < 20 rookies)" in out
+
+
+def test_a_hold_out_with_no_earlier_board_records_not_refitted_with_the_reason(
+        monkeypatch, tmp_path):
+    import json
+
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path)
+    monkeypatch.setattr(impute_cv, "measure", lambda *a, **k: pytest.fail("nothing to fit"))
+    assert impute_cv.main(["--exclude-season", "2021", "--point-in-time", "--record"]) == 0
+    consts = json.loads((tmp_path / "2021.json").read_text())["constants"]
+    assert all(v["value"] is None and "no board before 2021" in v["why_not"]
+               for v in consts.values())
+
+
+def test_a_fit_with_no_pooled_spread_records_not_refitted_and_a_plain_run_records_nothing(
+        monkeypatch, tmp_path, capsys):
+    """Too few rookies to measure on the earlier seasons: both keys are recorded null with the
+    reason. And a leave-one-out print (no `--point-in-time`) writes nothing at all."""
+    import json
+
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "SETS", tmp_path)
+    nothing = dict.fromkeys(("QB", "RB", "WR", "TE"), (1, None))
+    thin = _measured(clustered_mean=None, pooled=None, by_pos=nothing)
+    monkeypatch.setattr(impute_cv, "measure", lambda *a, **k: (thin, ["  a line"]))
+    assert impute_cv.main(["--exclude-season", "2023", "--point-in-time", "--record"]) == 0
+    consts = json.loads((tmp_path / "2023.json").read_text())["constants"]
+    assert all(v["value"] is None and "too few rookies" in v["why_not"] for v in consts.values())
+    assert impute_cv.main(["--exclude-season", "2024"]) == 0
+    assert not (tmp_path / "2024.json").exists()
+    assert "refit for" not in capsys.readouterr().out
+
+
+def test_the_flags_that_make_a_record_honest_are_required_together():
+    """A set recorded from the leave-one-out fit would be a second meaning of `excluded_season`
+    beside the point-in-time one; `--record` without `--point-in-time` is refused, and so is
+    `--point-in-time` with no season to be strictly before."""
+    with pytest.raises(SystemExit, match="--record needs --point-in-time"):
+        impute_cv.main(["--exclude-season", "2022", "--record"])
+    with pytest.raises(SystemExit, match="--point-in-time needs --exclude-season"):
+        impute_cv.main(["--point-in-time"])
 
 
 def test_the_measurement_reports_n_the_clusters_and_the_shipped_value_beside_each_rookie_cv():

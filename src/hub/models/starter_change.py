@@ -1,17 +1,10 @@
-"""Starter-change events, and the two readers that share them: the quarterback adjustment's
-own gate (#291) and the line-move study (#221).
+"""The quarterback adjustment's own gate (#291) over the starter-change events, and the CLI
+that runs it beside the line-move study (#221).
 
-Both questions are asked on the same games -- the ones whose frozen price predates a change
-of starting quarterback -- so the event set is built once here and read twice. A **starter
-change** is a team whose starter on game *g* differs from its starter on its previous game
-*g - 1* of the same season. The starter is *observed*, never reported: the source's own
-starter column on the row (`hub.fetch.nfeloqb`, where a played row carries who started and
-the coming week's row carries who is named), or the passer of the first pass attempt in
-play-by-play where the cache carries that column. The injury report is not consulted -- #221
-records why: one row per player-week, timestamped Friday, and fourteen quarterbacks out
-across all of 2024, where the starter changes about fifty-three times a season. A change
-across the offseason is flagged and is not an event; the betting market priced it all
-summer.
+The events are built once in `hub.models.starter_events` and read twice: here, by the gate,
+and by `hub.models.starter_study`, by the study and its verdict (#346). This module holds the
+gate, the event-count and horizon reports, and the entry point. `python -m
+hub.models.starter_change` is unchanged by the split.
 
 **The gate** (`docs/gate-power.md`, pre-registered 2026-09-13 before this module existed):
 over event games, log-loss of the frozen price moved by the shipped seam --
@@ -33,35 +26,16 @@ verdict sentence names the event-seasons the pilot says are needed.
 
 **Amended 2026-09-17 (#300): this gate is a diagnostic.** No branch of it licenses ADOPT or
 pulls the module any longer -- #270's pull trigger above is superseded. The ADOPT condition
-is the study's coefficient, below, read against 0.132; this gate is reported beside it, its
-own power requirement stated beside it (29 event-seasons at 80% power against the pilot's
-target), and its NOT-RUNNABLE branch is an exemption from firing below that power, not a bar
-to the coefficient's own verdict (`docs/gate-power.md`, `docs/qb-adjustment.md`).
+is the study's coefficient (`hub.models.starter_study`) read against 0.132; this gate is
+reported beside it, its own power requirement stated beside it (29 event-seasons at 80% power
+against the pilot's target), and its NOT-RUNNABLE branch is an exemption from firing below
+that power, not a bar to the coefficient's own verdict (`docs/gate-power.md`,
+`docs/qb-adjustment.md`).
 
-**The study**: the home-spread move from the frozen price to the last snapshot before the
-game day, less the mean move of the week's other games between the same two poll days,
-regressed on the net ex-ante quality gap -- arriving starter's value minus departing, home
-minus away, both off the pinned file -- against 538's 0.132 points per value unit. The
-standard error is #214's noise floor per window over the gap's spread and root n - 1 (OLS's
-own denominator, #303), because the event rows alone cannot resolve their own residual. An
-event game with no result yet is excluded rather than priced off a truncated in-flight
-snapshot, and the count is reported; a week whose only other archived games are themselves
-event games has no control and is refused rather than fitted at a manufactured zero
-week-mean. Censored events (no snapshot before the change could be known) are split on the
-run line into never-polled and polled-only-after-the-change, two different facts a single
-count used to conflate, and the change-point -- scanned over poll days, bounded at the game
-day, every date compared through the poll-day conversion -- is reported in days from the
-previous game day, beside the coefficient. **Since 2026-09-17 (#300) this coefficient is the
-module's ADOPT condition**: sign and magnitude against the 0.132 benchmark, season-clustered
-once two seasons exist (`docs/gate-power.md`).
-
-Nothing here fetches but one guarded call: `--study` asks `hub.fetch.odds._qb_starters` for
-the depth chart #214's own floor conditions on, exactly as `odds.noise_floor_report` does,
-and degrades the same way that report does when the chart is unavailable -- the floor is
-still printed, over every live interval, and the line says the same-quarterback condition
-was not applied rather than printing an unconditioned number under that label (#330). The
-nfeloqb cache and the snapshot archive are everything else that is read, and a season either
-caches does not hold is reported as not established.
+An event game with no result yet is excluded rather than priced off a truncated in-flight
+snapshot, and the count is reported. Nothing here fetches but one guarded call: `--study` asks
+`hub.fetch.odds.load_qb_starters` for the depth chart the study's floor conditions on, and a
+season either cache does not hold is reported as not established.
 
     uv run python -m hub.models.starter_change --events --gate --study
 """
@@ -76,28 +50,38 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import numpy as np
 import polars as pl
 
 from hub import store
 from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
-from hub.declare import not_an_input
-from hub.fetch import nfeloqb, nflverse, odds
+from hub.fetch import nfeloqb, odds
 from hub.ledger import Ledger
 from hub.ledger import recipe as _recipe
 from hub.models import experiment, quarterback
 from hub.models.experiment import SEASON_CLUSTER, Harness
 from hub.models.market import MARGIN_SD, normal_cdf
+from hub.models.starter_events import (
+    event_games,
+    events,
+    in_season_events,
+    observed,
+    pbp_team_games,
+    poll_day,
+    priced,
+    reconcile,
+    results,
+    team_games,
+    unreadable_games,
+    with_values,
+)
+from hub.models.starter_study import (
+    BENCHMARK,
+    DELTA,
+    study_report,
+)
 
 PROG = "hub.models.starter_change"
-
-# 538's conversion, 3.3 Elo per value unit over 25 Elo per point: the coefficient the
-# study's fitted slope is read against. A benchmark no prediction reads.
-BENCHMARK = not_an_input(
-    3.3 / 25,
-    "the study's benchmark slope, 538's own construction; a comparison figure the line-move "
-    "study prints, and nothing that predicts reads it")
 
 # ADR-0019: no gate in the repo runs at fewer than three seasons, and one that did should
 # say so. Pre-registered as the gate's first precondition.
@@ -144,374 +128,7 @@ WITHIN: tuple[str, ...] = SEASON_CLUSTER
 HARNESS = Harness(name="quarterback_gate", arm_a="the frozen line", arm_b="quarterback-adjusted",
                   within=WITHIN, ceiling_arm=CEILING_ARM, actions=ACTIONS,
                   unit="log-loss per event game", places=4, ceiling_column="ceiling",
-                  arm_modules=("hub.models.base", "hub.models.conformal", "hub.models.market",
-                               "hub.models.quarterback", "hub.models.starter_change"))
-
-PASSER = "passer_player_id"
-
-TEAM_GAME_SCHEMA: dict[str, Any] = {
-    "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "date": pl.Utf8,
-    "team": pl.Utf8, "home": pl.Boolean, "qb": pl.Utf8, "value": pl.Float64,
-    "adj": pl.Float64, "score": pl.Int64, "opp_score": pl.Int64,
-    "base_prob": pl.Float64, "qb_prob": pl.Float64,
-}
-
-
-# --- the event construction ---------------------------------------------------------------
-#
-# #339: the transform below used to be hand-built here -- a private `_schedule` plus a
-# duplicate of `team_games`'s own per-side unpivot -- reaching past `hub.fetch.nfeloqb`'s
-# public surface six times (`nfeloqb.ABBREVIATIONS` three times over, `nfeloqb._blank`) to
-# rebuild what `nfeloqb.team_games` now does once, for both this module and the fetch
-# module's own state path. Everything here reads that public function; nothing computes the
-# schema-level transform itself.
-#
-# #374: `nfeloqb.schedule`/`nfeloqb.team_games` take `regular_season_only` explicitly, with
-# no default that would hide the choice. This module's question is regular-season by
-# pre-registration, so every call below passes `True`; `nfeloqb.state` is the other reader,
-# and passes `False` so a team's tenure run can reach back across the postseason boundary.
-
-def team_games(rows: pl.DataFrame) -> pl.DataFrame:
-    """One row per (team, game) off the source's rows, keyed by nflverse's game id, with the
-    previous-game link (#301) `events` reads straight off. Read off
-    `hub.fetch.nfeloqb.team_games`, which owns the source's schema -- the two-sided row, the
-    blank convention, the abbreviation map -- and builds this frame for its own state path
-    too (#339); this keeps only the columns both of this module's readers need
-    (`TEAM_GAME_SCHEMA`, plus `prev_game_id`/`prev_season`/`prev_date`) and computes none of
-    the schema-level transform itself. Regular season only (#374): the line-move study is
-    regular-season by pre-registration."""
-    return nfeloqb.team_games(rows, regular_season_only=True).select(
-        *TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date")
-
-
-def unreadable_games(rows: pl.DataFrame) -> int:
-    """Team-games a blank side made unreadable: entries `hub.fetch.nfeloqb.schedule`'s full
-    row set carries for a team that `team_games` has no row for, because that side's qb,
-    value or adjustment was null. Counts both sides of a two-sided blank, one each, alongside
-    every one-sided blank's single side (#328). Reported on the run line so a hole is
-    counted, not silently closed over the way the previous-game link used to close it
-    (#301). Regular season only (#374), matching `team_games`."""
-    return nfeloqb.schedule(rows, regular_season_only=True).height - team_games(rows).height
-
-
-def starters_from_pbp(pbp: pl.DataFrame) -> pl.DataFrame:
-    """Who took the first pass attempt for each (game, team): the observed starter, off
-    play-by-play. One row per (game_id, team) with `season`, `week` and `qb` -- the passer's
-    id, so a frame built here joins the source's values through `with_values` and never by
-    name. The standard `PBP_COLS` slice does not carry the passer, and a cache without it is
-    refused by the column's name rather than read for a starter it cannot hold.
-
-    **Regular season only (#420)**: the question is regular-season by pre-registration, and a
-    playoff game would otherwise be a team's "previous game" for the next season's week 1.
-    `season_type` is therefore required, and refused by name like the passer.
-
-    **The rule is the passer of the first pass play, whoever he is.** Reconciled against
-    nfeloqb's starter column on 2022-2025 (docs/qb-adjustment.md, 2026-10-06): 6 of 2,174
-    team-games differ. It does not know a position, so a trick play that opens a game names
-    its thrower as the starter and reads as a change out and a change back. One of the six
-    disagreements is a brief first appearance (the first passer threw under three pass plays,
-    the file's starter eight or more), and six team-games in all have a first passer who threw
-    two or fewer. A guard against them would be a second definition of "starter" chosen after
-    the numbers, which rule 1 forbids; the count is the standing cost of the rule.
-    """
-    for column in (PASSER, "season_type"):
-        if column not in pbp.columns:
-            raise ValueError(f"play-by-play carries no '{column}' column; the first pass "
-                             f"attempt cannot name a regular-season starter without it "
-                             f"(the PBP_COLS slice does not include it; the study's own is "
-                             f"nflverse.STARTER_PBP_COLS)")
-    passes = pbp.filter((pl.col("season_type") == "REG") & (pl.col("play_type") == "pass")
-                        & pl.col(PASSER).is_not_null())
-    return (passes.sort("game_id", "posteam", "play_id")
-                  .group_by("game_id", "posteam", maintain_order=True).first()
-                  .select(pl.col("game_id"), pl.col("season").cast(pl.Int64),
-                          pl.col("week").cast(pl.Int64), pl.col("posteam").alias("team"),
-                          pl.col(PASSER).alias("qb")))
-
-
-def events(starters: pl.DataFrame) -> pl.DataFrame:
-    """Every game where a team's starter differs from its starter on its previous known game.
-
-    `starters` is one row per (team, game) with `game_id`, `season`, `week`, `team`, `qb` --
-    `team_games` or `starters_from_pbp` -- ordered within a team by season and week. The
-    departing starter is the last row with a known starter, the arriving one this row's; a
-    team's first known row has nothing to differ from and is never an event. `departing_game_id`
-    and `departing_season` name *that* row -- the departing starter's own last known game, not
-    necessarily the team's immediately previous one -- so `in_season` and any other reader can
-    be stated on it without re-deriving it. Where the frame carries `value`, `adj` and `date`
-    (the source's rows do), the ex-ante values ride along: the departing starter's value off
-    his last known start, the arriving starter's value and adjustment off the event row, and
-    `gap`, arriving minus departing.
-
-    `prev_game_id`, `prev_season` and `prev_date` -- the ancestor `frozen_before` prices off
-    -- are the team's *actual* previous game, never the previous row that happens to survive
-    a one-sided blank (#301): where the frame already carries them (`team_games` builds them
-    off the full schedule, both sides, before either is filtered for blanks), they are read
-    straight off it rather than re-derived from whichever rows survived. A frame with no such
-    columns (`starters_from_pbp`'s, which has no one-sided blanks to lose a game to) falls
-    back to the previous surviving row -- the same row `departing_game_id` names there, since
-    with no full-schedule link the two coincide.
-
-    `in_season` is whether the *departing starter's own* last known game was the same season
-    as this one -- not whether the team's immediately previous game (`prev_season`) was,
-    which can differ across a one-sided blank that itself spans the season boundary (#328): a
-    blank week-1 row behind an offseason starter is still an ancestor of week 2 for pricing,
-    but it is not evidence the change happened in-season, and the data cannot say whether it
-    did. Such a change is flagged rather than counted, the same way an ordinary offseason
-    change is.
-    """
-    has_link = {"prev_game_id", "prev_season", "prev_date"}.issubset(starters.columns)
-    carried = [c for c in ("date", "value", "adj") if c in starters.columns]
-    shift_cols = ["qb", "game_id", "season", *carried]
-    # Every shifted column in one pass, *before* the rows that are not events are dropped:
-    # shifted after the filter, "the previous row" is the previous event and not the
-    # previous game, and the departing starter's value is another change's.
-    prev = {c: pl.col(c).shift(1).over("team") for c in shift_cols}
-    shifted = [prev["qb"].alias("departing"), pl.col("qb").alias("arriving"),
-               prev["game_id"].alias("departing_game_id"),
-               prev["season"].alias("departing_season")]
-    if not has_link:
-        shifted += [prev["game_id"].alias("prev_game_id"), prev["season"].alias("prev_season")]
-        if "date" in carried:
-            shifted.append(prev["date"].alias("prev_date"))
-    if "value" in carried:
-        shifted += [prev["value"].alias("departing_value"), pl.col("value").alias("arriving_value"),
-                    (pl.col("value") - prev["value"]).alias("gap")]
-    if "adj" in carried:
-        shifted.append(pl.col("adj").alias("arriving_adj"))
-    out = (starters.sort("team", "season", "week")
-                   .with_columns(shifted)
-                   .filter(pl.col("departing").is_not_null()
-                           & (pl.col("arriving") != pl.col("departing")))
-                   .with_columns(
-                       (pl.col("season") == pl.col("departing_season")).alias("in_season")))
-    keep = ["game_id", "season", "week", "team", "departing", "arriving", "departing_game_id",
-            "departing_season", "prev_game_id", "prev_season", "in_season"]
-    keep += [c for c in ("date", "prev_date", "departing_value", "arriving_value", "gap",
-                         "arriving_adj") if c in out.columns]
-    return out.select(keep)
-
-
-def with_values(ev: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
-    """Events built off play-by-play, given the source's ex-ante values by (team, game): the
-    arriving starter's value and adjustment off the event row, the departing starter's
-    value off the previous game's row, and the two dates. The pinned file is the one
-    quality measure both readers use, so a starter identified elsewhere still prices here.
-
-    **Dates the events already carry are kept (#420)**: events built off the schedule
-    (`team_games_from_pbp`) have a date for every game the season plays, and the file has
-    dates only for the games it holds -- one week of 2026 -- so overwriting them from it
-    would erase the dates of exactly the games the file cannot see. Events with no dates
-    (a bare starters frame) still take them from the file. A value the file does not hold is
-    null, and so is the gap built from it: `event_games` refuses to read a null as zero."""
-    dated = {"date", "prev_date"}.issubset(ev.columns)
-    here = tg.select(pl.col("team"), pl.col("game_id"),
-                     *([] if dated else [pl.col("date")]),
-                     pl.col("value").alias("arriving_value"), pl.col("adj").alias("arriving_adj"))
-    there = tg.select(pl.col("team"), pl.col("game_id").alias("prev_game_id"),
-                      *([] if dated else [pl.col("date").alias("prev_date")]),
-                      pl.col("value").alias("departing_value"))
-    dropped = ["departing_value", "arriving_value", "gap", "arriving_adj",
-               *([] if dated else ["date", "prev_date"])]
-    return (ev.drop([c for c in dropped if c in ev.columns])
-              .join(here, on=["team", "game_id"], how="left")
-              .join(there, on=["team", "prev_game_id"], how="left")
-              .with_columns((pl.col("arriving_value") - pl.col("departing_value")).alias("gap")))
-
-
-# --- the event source for the study: play-by-play (#420, ADOPTED (B) on #421) --------------------
-#
-# The study's in-season events used to come from nfeloqb's starter column, and that file is
-# pinned (`hub.fetch.nfeloqb.COMMIT`, 2026-09-13): it holds one week of 2026 and cannot hold a
-# change made after the pin, so "2026: 0 changes" was a fact about the file (V2, #420). Moving
-# the pin moves `config_digest` and the model version on every published prediction, for an
-# adjustment that is off the published path; the maintainer's disposition (#421) is to leave
-# it and observe the starter from play-by-play, which the slate's nflverse store carries
-# through the week just played. The adjustment, the gate and the pinned input read the file
-# exactly as before; only the study and the event counts read this.
-
-SCHEDULE_COLS: tuple[str, ...] = ("game_id", "season", "week", "game_type", "gameday",
-                                  "home_team", "away_team", "home_score", "away_score")
-
-
-def schedule_team_games(sched: pl.DataFrame) -> pl.DataFrame:
-    """One row per (team, regular-season game) the schedule holds, played or not, in
-    `TEAM_GAME_SCHEMA`'s shape plus the previous-game link `events` reads: `date` is the game
-    day, `score`/`opp_score` the result (null until it is played), and `prev_game_id`,
-    `prev_season`, `prev_date` the team's actual previous game on the schedule -- a bye never
-    makes it the game before. `qb`, `value`, `adj` and the two probabilities are null: this
-    frame names no starter, `team_games_from_pbp` does, and the file's values join on later."""
-    missing = [c for c in SCHEDULE_COLS if c not in sched.columns]
-    if missing:
-        raise ValueError(f"the schedule carries no {missing} column(s); the study cannot "
-                         f"date or settle a game without them")
-    reg = sched.filter(pl.col("game_type") == "REG")
-    side = {"home": ("home_team", "away_team", "home_score", "away_score"),
-            "away": ("away_team", "home_team", "away_score", "home_score")}
-    long = pl.concat([
-        reg.select(pl.col("game_id"), pl.col("season").cast(pl.Int64),
-                   pl.col("week").cast(pl.Int64), pl.col("gameday").cast(pl.Utf8).alias("date"),
-                   pl.col(t).alias("team"), pl.lit(name == "home").alias("home"),
-                   pl.col(s).cast(pl.Int64).alias("score"),
-                   pl.col(o).cast(pl.Int64).alias("opp_score"))
-        for name, (t, _, s, o) in side.items()])
-    prev = {c: pl.col(c).shift(1).over("team")
-            for c in ("game_id", "season", "date")}
-    return (long.sort("team", "date", "game_id")
-                .with_columns(prev["game_id"].alias("prev_game_id"),
-                              prev["season"].alias("prev_season"),
-                              prev["date"].alias("prev_date"),
-                              pl.lit(None, dtype=pl.Utf8).alias("qb"),
-                              *(pl.lit(None, dtype=pl.Float64).alias(c)
-                                for c in ("value", "adj", "base_prob", "qb_prob")))
-                .select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date"))
-
-
-def team_games_from_pbp(pbp: pl.DataFrame, sched: pl.DataFrame) -> pl.DataFrame:
-    """The schedule's team-games with each one's observed starter: the passer of the first
-    pass play, null for a game with no pass play yet (not yet played, or in flight before
-    its first pass) -- those rows are kept, because they are what tells a played week from
-    one not yet read, and `events` is handed only the rows with a starter."""
-    starters = starters_from_pbp(pbp).select("game_id", "team", pl.col("qb").alias("_qb"))
-    return (schedule_team_games(sched)
-            .join(starters, on=["game_id", "team"], how="left")
-            .with_columns(pl.col("_qb").alias("qb")).drop("_qb")
-            .select(*TEAM_GAME_SCHEMA, "prev_game_id", "prev_season", "prev_date"))
-
-
-def observed(tg: pl.DataFrame) -> pl.DataFrame:
-    """The team-games whose starter has been observed -- what `events` is handed."""
-    return tg.filter(pl.col("qb").is_not_null())
-
-
-class Reconciliation(NamedTuple):
-    """The two sources' in-season changes, counted over the team-games both observed: the
-    pinned file's, play-by-play's, and those both name. `compared` is those team-games."""
-
-    compared: int
-    file: int
-    pbp: int
-    both: int
-
-
-def reconcile(pbp_tg: pl.DataFrame, file_tg: pl.DataFrame) -> Reconciliation:
-    """Compare the two definitions of "starter" where both exist (#420's adopted acceptance):
-    each source's in-season changes over the team-games both observed. Counts, never rows.
-    A game one source does not hold is outside the comparison rather than a disagreement --
-    the pinned file holds one week of 2026, and counting every later game as a miss would
-    read its horizon as unreliability."""
-    both_rows = observed(pbp_tg).join(file_tg.select("game_id", "team"),
-                                      on=["game_id", "team"], how="semi")
-    shared = both_rows.select("game_id", "team")
-    file_rows = file_tg.join(shared, on=["game_id", "team"], how="semi")
-
-    def keys(frame: pl.DataFrame) -> set[tuple[str, str]]:
-        found = in_season_events(events(frame)).select("game_id", "team")
-        return set(zip(found["game_id"], found["team"], strict=True))
-    mine, theirs = keys(both_rows), keys(file_rows)
-    return Reconciliation(compared=both_rows.height, file=len(theirs), pbp=len(mine),
-                          both=len(mine & theirs))
-
-
-def in_season_events(ev: pl.DataFrame) -> pl.DataFrame:
-    """The events proper: a change between two games of one season."""
-    return ev.filter(pl.col("in_season"))
-
-
-EVENT_GAME_SCHEMA: dict[str, Any] = {
-    "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "date": pl.Utf8,
-    "home_team": pl.Utf8, "away_team": pl.Utf8, "home_gap": pl.Float64,
-    "away_gap": pl.Float64, "net_gap": pl.Float64, "changes": pl.UInt32,
-    "frozen_before": pl.Utf8,
-}
-
-
-def event_games(ev: pl.DataFrame) -> pl.DataFrame:
-    """One row per event game: the home and away gaps (null where that side did not change),
-    the net gap home minus away, how many sides changed, and `frozen_before` -- the earliest
-    previous game day among the changes, before which no change could have been known.
-
-    **`net_gap` is null when a side that changed has no gap (#420)**, not zero. A side that
-    did not change contributes nothing, and that is a real zero; a side that changed to or
-    from a starter the pinned file holds no value for contributes an unknown, and reading it
-    as zero would enter a game as "no quality difference" -- the manufactured zero the
-    study's week-mean refusal already exists to prevent. Events off the pinned file always
-    have both values, so this only bites events it cannot see."""
-    if ev.is_empty():
-        return pl.DataFrame(schema=EVENT_GAME_SCHEMA)
-    parts = pl.col("game_id").str.split("_")
-    home = pl.col("team") == parts.list.get(3)
-    return (ev.with_columns(home.alias("_home"))
-              .group_by("game_id").agg(
-                  pl.col("season").first(), pl.col("week").first(), pl.col("date").first(),
-                  parts.list.get(3).first().alias("home_team"),
-                  parts.list.get(2).first().alias("away_team"),
-                  pl.col("gap").filter(pl.col("_home")).first().alias("home_gap"),
-                  pl.col("gap").filter(~pl.col("_home")).first().alias("away_gap"),
-                  pl.len().alias("changes"),
-                  pl.col("gap").is_null().any().alias("_unvalued"),
-                  pl.col("prev_date").min().alias("frozen_before"))
-              .with_columns(pl.when(pl.col("_unvalued")).then(None)
-                              .otherwise(pl.col("home_gap").fill_null(0.0)
-                                         - pl.col("away_gap").fill_null(0.0)).alias("net_gap"))
-              .select(*EVENT_GAME_SCHEMA)
-              .sort("season", "week", "game_id"))
-
-
-# --- the archive, read as the two readers need it -------------------------------------------
-
-def _poll_day(col: str = "captured_at") -> pl.Expr:
-    """A naive-UTC capture as the Eastern date it fell on, ISO, comparable to the source's
-    `date` column -- the same zone `hub.fetch.nfeloqb.game_day` converts through."""
-    return (pl.col(col).dt.replace_time_zone("UTC")
-              .dt.convert_time_zone(nfeloqb.GAME_DAY_ZONE).dt.date().cast(pl.Utf8))
-
-
-def _last_before(polls: pl.DataFrame, games: pl.DataFrame, day: str, name: str) -> pl.DataFrame:
-    """Per game, the last poll whose Eastern day is strictly before the game's `day` column:
-    `<name>` and `<name>_at`, null where no poll precedes it."""
-    joined = (games.select("game_id", day)
-                   .join(polls.select("game_id", "close_spread", "captured_at", "poll_day"),
-                         on="game_id", how="inner")
-                   .filter(pl.col("poll_day") < pl.col(day))
-                   .sort("game_id", "captured_at")
-                   .group_by("game_id").agg(pl.col("close_spread").last().alias(name),
-                                            pl.col("captured_at").last().alias(f"{name}_at")))
-    return games.join(joined, on="game_id", how="left")
-
-
-def priced(polls: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
-    """Event games with their two prices off the archive: `frozen`, the last snapshot before
-    `frozen_before` (the comparator both readers use), and `close`, the last before the game
-    day. A game with no snapshot before its `frozen_before` is `censored`: the archive
-    could only have seen it after it moved, and the row is kept and marked rather than
-    dropped, so the readers can count what they could not see.
-
-    `censored` conflates two different facts and always has (#303): a game the archive holds
-    no poll for at all, and a game it polled only after the change had already happened.
-    `never_polled` tells the two apart -- true when the game's id appears nowhere in `polls`,
-    false when it does (whether or not any of those polls precede `frozen_before`) -- so a
-    caller can report "never polled" and "polled only after the change" as the separate
-    counts they are rather than one number that could be either.
-
-    `windowless` is a third fact (#420): a game whose frozen price is also its only price
-    before the game day. It is not censored, since a snapshot predates the change; and it
-    is not a move of zero, since nothing was observed moving. A back-filled lookahead from
-    before the season is exactly this for every 2026 week the in-season captures have not
-    reached."""
-    days = polls.with_columns(_poll_day().alias("poll_day"))
-    out = _last_before(days, games, "frozen_before", "frozen")
-    out = _last_before(days, out, "date", "close")
-    polled_ids = polls["game_id"].unique().to_list()
-    return out.with_columns(
-        pl.col("frozen").is_null().alias("censored"),
-        (~pl.col("game_id").is_in(polled_ids)).alias("never_polled"),
-        # #420: the frozen poll is also the last one before the game day -- the same capture,
-        # so there is no window in which a move could have been seen. Not censored (a price
-        # predates the change), and not a zero move either: `study_rows` refuses it.
-        (pl.col("frozen_at").is_not_null()
-         & (pl.col("frozen_at") == pl.col("close_at"))).alias("windowless"))
-
+                  arm_roots=("hub.models.starter_change",))
 
 def _log_loss(prob: float, y: float, eps: float = 1e-15) -> float:
     p = min(max(prob, eps), 1.0 - eps)
@@ -521,61 +138,6 @@ def _log_loss(prob: float, y: float, eps: float = 1e-15) -> float:
 def _home_prob(spread: float) -> float:
     """`MarketBaseline`'s conversion, so the arms differ in the spread and nothing else."""
     return normal_cdf(spread / MARGIN_SD)
-
-
-def _results(tg: pl.DataFrame) -> pl.DataFrame:
-    """Per game, the home result: 1 a home win, 0 a loss, 0.5 a tie; unplayed games absent."""
-    home = tg.filter(pl.col("home") & pl.col("score").is_not_null())
-    return home.select(
-        pl.col("game_id"),
-        pl.when(pl.col("score") > pl.col("opp_score")).then(1.0)
-          .when(pl.col("score") < pl.col("opp_score")).then(0.0)
-          .otherwise(0.5).alias("y"),
-        pl.col("base_prob"), pl.col("qb_prob"))
-
-
-def _exclude_unplayed(have: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
-    """`have` (uncensored, priced event games) with no result yet dropped. `gate_rows` has
-    always joined `_results` before scoring an arm; the study never did (#303), so an
-    in-flight game's `close` -- the last snapshot before its own game day -- was just its
-    latest snapshot, not the last one before a move that had finished happening, and the
-    move it fed into the regression was truncated with nothing marking the row. A semi join
-    on `_results(tg)` keeps exactly the rows the gate would keep."""
-    return have.join(_results(tg).select("game_id"), on="game_id", how="semi")
-
-
-def unplayed_study_games(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame) -> int:
-    """How many uncensored, priced event games `study_rows` excludes as unplayed (#303) --
-    off the same `priced` frame `study_rows` itself filters, so the count and the exclusion
-    can never disagree about which games they mean. Reported on the run line rather than
-    left to shrink `n` silently. Counted among the valued games, so this and
-    `unvalued_study_games` partition what `study_rows` drops and never both claim a game."""
-    have = _valued(_priced_both_ways(polls, games))
-    if have.is_empty():
-        return 0
-    return have.height - _exclude_unplayed(have, tg).height
-
-
-def _priced_both_ways(polls: pl.DataFrame, games: pl.DataFrame) -> pl.DataFrame:
-    """Event games with a frozen price and a *later* pre-game one: what `study_rows` starts
-    from. A windowless game (`priced`) is out -- it would enter the regression as a move of
-    zero that nobody observed (#420)."""
-    return priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null()
-                                       & ~pl.col("windowless"))
-
-
-def _valued(have: pl.DataFrame) -> pl.DataFrame:
-    """The priced games whose net gap is known; a game it is null for is `unvalued`."""
-    return have.filter(pl.col("net_gap").is_not_null())
-
-
-def unvalued_study_games(polls: pl.DataFrame, games: pl.DataFrame) -> int:
-    """How many uncensored, priced event games `study_rows` excludes because the pinned
-    file holds no value for a starter who changed (#420) -- a play-by-play event in a week
-    the file does not reach has a price and a result and no regressor. Reported on the run
-    line, so the coefficient's `n` is never short for a reason it does not say."""
-    have = _priced_both_ways(polls, games)
-    return have.height - _valued(have).height
 
 
 # --- the gate ---------------------------------------------------------------------------------
@@ -660,7 +222,7 @@ def gate_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
     on it drops the game rather than counting it as no effect.
     """
     have = priced(polls, games).filter(~pl.col("censored") & pl.col("close").is_not_null())
-    have = have.join(_results(tg).select("game_id", "y"), on="game_id", how="inner")
+    have = have.join(results(tg).select("game_id", "y"), on="game_id", how="inner")
     if have.is_empty():
         return pl.DataFrame(schema=PAIRED_SCHEMA)
     have = _adjusted(have, rows, tg).filter(pl.col("adjusted_by").is_not_null()
@@ -685,7 +247,7 @@ def pilot(tg: pl.DataFrame, games: pl.DataFrame) -> dict[str, Any]:
     than two seasons. Not a verdict: the source's arm on nflfastR outcomes, not this
     estimator on a frozen line."""
     scored = (games.select("game_id", "season")
-                   .join(_results(tg), on="game_id", how="inner")
+                   .join(results(tg), on="game_id", how="inner")
                    .drop_nulls(["base_prob", "qb_prob"]))
     per = []
     for season, part in scored.group_by("season", maintain_order=True):
@@ -701,22 +263,17 @@ def pilot(tg: pl.DataFrame, games: pl.DataFrame) -> dict[str, Any]:
             "season_sd": statistics.stdev(means) if len(means) > 1 else float("nan")}
 
 
-def mde_at(k: int, season_sd: float) -> float:
-    """The MDE at `k` event-seasons: `(t(0.975, k-1) + z(0.80)) * s / sqrt(k)`, on the t
-    reference `docs/gate-power.md` restated on 2026-09-07 -- one function with the gate's,
-    handed the season-clustered standard error `s / sqrt(k)`."""
-    return experiment.minimum_detectable_effect(season_sd / math.sqrt(k), k)
-
-
 def event_seasons_needed(target: float, season_sd: float, *, cap: int = 100) -> int | None:
     """The smallest number of event-seasons at which the MDE is at or below the target, or
-    None when none up to `cap` reaches it -- or when either input is not a number."""
+    None when none up to `cap` reaches it -- or when either input is not a number. The MDE at
+    `k` event-seasons is `(t(0.975, k-1) + z(0.80)) * s / sqrt(k)`, on the t reference
+    `docs/gate-power.md` restated on 2026-09-07: `experiment.smallest_n_resolving` handed the
+    season-clustered standard error `s / sqrt(k)` (#346; the study's events-needed search is
+    the same function over its own standard error)."""
     if not (math.isfinite(target) and math.isfinite(season_sd)) or target <= 0:
         return None
-    for k in range(2, cap + 1):
-        if mde_at(k, season_sd) <= target:
-            return k
-    return None
+    return experiment.smallest_n_resolving(
+        target, lambda k: season_sd / math.sqrt(k), cap=cap)
 
 
 def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
@@ -765,420 +322,10 @@ def run(paired: pl.DataFrame, *, needed: int | None, ceiling: bool = True,
         recipe=_recipe(ceiling=ceiling))
 
 
-# --- the study --------------------------------------------------------------------------------
-
-def _week_means(polls: pl.DataFrame, rows: pl.DataFrame,
-                event_ids: Sequence[str]) -> pl.DataFrame:
-    """Per event game, the mean move over every *other* archived game of the same week
-    between the same two poll days -- the week fixed effect as the subtraction it is --
-    excluding every game in `event_ids`, not just the row's own (#303): `event_ids` is every
-    event game in the span under study, so a week with two starter changes never uses one
-    treated game as the other's control. `week_mean` is null, and `week_others` zero, where
-    no untreated game was polled on both days; `study_rows` refuses such a row rather than
-    fitting it as though the week's mean move were zero."""
-    excluded = set(event_ids)
-    days = (polls.with_columns(_poll_day().alias("poll_day"))
-                 .sort("game_id", "captured_at")
-                 .group_by("game_id", "week", "poll_day", maintain_order=True)
-                 .agg(pl.col("close_spread").last()))
-    out = []
-    for r in rows.iter_rows(named=True):
-        f_day, c_day = r["frozen_day"], r["close_day"]
-        others = days.filter((pl.col("week") == r["week"])
-                             & ~pl.col("game_id").is_in(list(excluded))
-                             & pl.col("poll_day").is_in([f_day, c_day]))
-        pivot = (others.group_by("game_id").agg(
-            pl.col("close_spread").filter(pl.col("poll_day") == f_day).first().alias("a"),
-            pl.col("close_spread").filter(pl.col("poll_day") == c_day).first().alias("b"))
-                       .drop_nulls())
-        moves = (pivot["b"] - pivot["a"]).to_list()
-        out.append({"game_id": r["game_id"],
-                    "week_mean": statistics.fmean(moves) if moves else None,
-                    "week_others": len(moves)})
-    return pl.DataFrame(out, schema={"game_id": pl.Utf8, "week_mean": pl.Float64,
-                                     "week_others": pl.Int64})
-
-
-def _change_points(polls: pl.DataFrame, rows: pl.DataFrame, floor: float) -> list[float | None]:
-    """Per event game, days from the previous game day to the first poll *day* -- the last
-    poll of an Eastern date standing for the date, exactly as every other date comparison in
-    this module goes through `_poll_day` -- strictly after the frozen poll's day and
-    strictly before the game day, whose move from the frozen price clears
-    `floor * sqrt(days since the frozen poll)`. None where no such poll day does.
-
-    Before #303 this scanned individual polls rather than poll days, so several captures on
-    one Eastern date could fire the threshold intraday rather than at the day the archive's
-    own "one poll per Eastern date" convention (`hub.fetch.odds`) means; it also had no
-    upper bound, so a poll captured after the game's own kickoff -- which `priced`'s `close`
-    never reads either -- could set a change-point no poll before kickoff had seen. And the
-    date arithmetic itself compared the poll's raw UTC calendar date against `frozen_before`,
-    an Eastern one; a capture in the small hours UTC is the previous Eastern day, and the old
-    line counted it a day too many."""
-    days = (polls.with_columns(_poll_day().alias("poll_day"))
-                 .sort("game_id", "captured_at")
-                 .group_by("game_id", "poll_day", maintain_order=True)
-                 .agg(pl.col("close_spread").last(), pl.col("captured_at").last()))
-    out: list[float | None] = []
-    for r in rows.iter_rows(named=True):
-        later = (days.filter((pl.col("game_id") == r["game_id"])
-                             & (pl.col("poll_day") > r["frozen_day"])
-                             & (pl.col("poll_day") < r["date"]))
-                     .sort("poll_day"))
-        seen: float | None = None
-        for p in later.iter_rows(named=True):
-            elapsed = (p["captured_at"] - r["frozen_at"]).total_seconds() / 86400.0
-            if abs(p["close_spread"] - r["frozen"]) > floor * math.sqrt(max(elapsed, 0.0)):
-                seen = float((dt.date.fromisoformat(p["poll_day"])
-                              - dt.date.fromisoformat(r["frozen_before"])).days)
-                break
-        out.append(seen)
-    return out
-
-
-STUDY_SCHEMA: dict[str, Any] = {
-    "game_id": pl.Utf8, "season": pl.Int64, "week": pl.Int64, "net_gap": pl.Float64,
-    "changes": pl.UInt32, "frozen": pl.Float64, "close": pl.Float64, "move": pl.Float64,
-    "week_mean": pl.Float64, "week_others": pl.Int64, "adjusted_move": pl.Float64,
-    "window_days": pl.Float64, "days_to_change": pl.Float64,
-}
-
-
-def study_rows(polls: pl.DataFrame, games: pl.DataFrame, tg: pl.DataFrame,
-               floor_per_root_day: float | None = None) -> pl.DataFrame:
-    """One row per uncensored, played event game: the move from the frozen price to the last
-    snapshot before the game day, the week's mean move over the same two poll days --
-    excluding every other event game of the week, not just this one -- the week-adjusted
-    move, the net gap, the window in days, and -- given a floor per root-day -- the
-    change-point in days from the previous game day.
-
-    **An event game with no result yet is excluded (#303)**, the same way `gate_rows` has
-    always excluded one: an in-flight game's `close` is just its latest snapshot, not the
-    last one before a move that has finished happening, and reading it as the move would
-    truncate the regressor. `unplayed_study_games` reports how many, off the same frame this
-    filters. **A row whose week has no game left to serve as a control is refused**, not
-    fitted at a manufactured zero week-mean (`_week_means`'s own null `week_mean`). **A game
-    whose net gap is unknown is refused too (#420)**, counted by `unvalued_study_games`."""
-    have = _valued(_priced_both_ways(polls, games))
-    if have.is_empty():
-        return pl.DataFrame(schema=STUDY_SCHEMA)
-    have = _exclude_unplayed(have, tg)
-    if have.is_empty():
-        return pl.DataFrame(schema=STUDY_SCHEMA)
-    have = have.with_columns(_poll_day("frozen_at").alias("frozen_day"),
-                             _poll_day("close_at").alias("close_day"),
-                             (pl.col("close") - pl.col("frozen")).alias("move"),
-                             ((pl.col("close_at") - pl.col("frozen_at")).dt.total_seconds()
-                              / 86400.0).alias("window_days"))
-    have = have.join(_week_means(polls, have, games["game_id"].to_list()),
-                     on="game_id", how="left")
-    have = have.filter(pl.col("week_mean").is_not_null())
-    if have.is_empty():
-        return pl.DataFrame(schema=STUDY_SCHEMA)
-    changes = (_change_points(polls, have, floor_per_root_day)
-               if floor_per_root_day is not None else [None] * have.height)
-    return (have.with_columns((pl.col("move") - pl.col("week_mean")).alias("adjusted_move"),
-                              pl.Series("days_to_change", changes, dtype=pl.Float64))
-                .select(*STUDY_SCHEMA))
-
-
-def study_mde(*, n: int, sd_gap: float, window_days: float, floor_per_root_day: float) -> float:
-    """The coefficient's MDE before the run, as pre-registered: `(t(0.975, n-1) + z(0.80))
-    * floor_window / (sd(gap) * sqrt(n - 1))`, the floor per window `floor_per_root_day *
-    sqrt(window_days)`; the cluster is the game. The denominator is `n - 1`, OLS's own
-    (#303), matching `study_fit`'s `se` so the MDE stated here and the one a fitted run
-    reports are never two formulas."""
-    if n < 2 or not (sd_gap > 0):
-        return float("nan")
-    se = floor_per_root_day * math.sqrt(window_days) / (sd_gap * math.sqrt(n - 1))
-    return experiment.minimum_detectable_effect(se, n)
-
-
-def study_fit(rows: pl.DataFrame, *, floor_per_root_day: float) -> dict[str, float]:
-    """The slope of the week-adjusted move on the net gap, with its error from the floor.
-
-    Ordinary least squares with an intercept; the standard error is the noise floor per
-    window over the gap's spread and root n - 1 rather than the residual's, because a season
-    of events cannot resolve its own residual against a floor measured on twelve games --
-    OLS's own denominator (#303: dividing by root n instead undercounted the error by 41% at
-    n=2 and about 1% at n=53). `t` against the benchmark says whether the betting market
-    moved as the source would.
-    """
-    n = rows.height
-    nan = float("nan")
-    if n < 2:
-        return {"n": float(n), "beta": nan, "se": nan, "mde": nan, "benchmark": BENCHMARK,
-                "t_vs_benchmark": nan, "sd_gap": nan, "floor_window": nan}
-    x = rows["net_gap"].to_numpy().astype(float)
-    y = rows["adjusted_move"].to_numpy().astype(float)
-    sd_gap = float(np.std(x, ddof=1))
-    beta = float(np.polyfit(x, y, 1)[0]) if sd_gap > 0 else nan
-    window = rows["window_days"].to_numpy().astype(float).mean()
-    floor_window = floor_per_root_day * math.sqrt(float(window))
-    se = floor_window / (sd_gap * math.sqrt(n - 1)) if sd_gap > 0 else nan
-    return {"n": float(n), "beta": beta, "se": se,
-            "mde": experiment.minimum_detectable_effect(se, n), "benchmark": BENCHMARK,
-            "t_vs_benchmark": (beta - BENCHMARK) / se if se and math.isfinite(se) else nan,
-            "sd_gap": sd_gap, "floor_window": floor_window}
-
-
-# --- the study's verdict (#329) -----------------------------------------------------------------
-
-# ADOPTED 2026-09-17 (#329; the maintainer's `ADOPTED:` comment on #300;
-# docs/gate-power.md's *Amended 2026-09-17 (#300) -- the ADOPT condition*). **Derivation**: the
-# smallest line-move coefficient worth pricing is one half-point tick (the betting market's own
-# resolution) on a one-sd starter change -- gap sd 66.3 value units over 231 in-season events
-# 2022-2025 (docs/gate-power.md's per-season table: 80.4 / 62.2 / 69.2 / 50.3 on n=62/61/51/57,
-# 62+61+51+57=231). 0.5 / 66.3 = 0.0075. DELTA is a constant, pre-registered here, never
-# re-derived from the events under test -- the restatement trigger below is what would move
-# it, and moving it is a print, never a silent recomputation.
-DELTA = not_an_input(
-    0.0075,
-    "the smallest line-move coefficient worth pricing (#329): one half-point tick on a "
-    "one-sd starter change, gap sd 66.3 value units over 231 in-season events 2022-2025 "
-    "(docs/gate-power.md)")
-
-# The band the per-season gap sds DELTA was derived from span, 50.3 to 80.4 (rounded out to
-# 50-85). A test archive's own gap sd outside it flags the derivation for restatement; inside
-# it nobody decides anything -- a print `main` makes beside DELTA, never a branch `verdict`
-# reads.
-GAP_SD_RESTATEMENT_BAND = not_an_input(
-    (50.0, 85.0),
-    "the restatement-trigger band DELTA's own per-season gap sds (50.3-80.4) were derived "
-    "from, rounded out (#329); a print beside DELTA, never a number a prediction reads")
-
-
-def gap_sd_restatement_flag(sd_gap: float) -> str | None:
-    """None when `sd_gap` falls inside `GAP_SD_RESTATEMENT_BAND`; otherwise the sentence
-    naming that DELTA's derivation should be restated (#329's pre-registered trigger). A
-    print the run makes beside DELTA and never a branch `verdict` reads."""
-    lo, hi = GAP_SD_RESTATEMENT_BAND
-    if not math.isfinite(sd_gap) or lo <= sd_gap <= hi:
-        return None
-    return (f"gap sd {sd_gap:.1f} value units is outside the {lo:.0f}-{hi:.0f} band delta "
-            f"was derived from -- derivation flagged for restatement")
-
-
-def study_events_needed(sd_gap: float, floor_window: float, *, cap: int = 500) -> int | None:
-    """The smallest n (event games) at which the coefficient's MDE is at or below DELTA -- the
-    same search `event_seasons_needed` runs for the gate's own seasons, here over event games
-    and off `study_fit`'s own `sd_gap` and `floor_window`, so the number `verdict`'s
-    NOT-RUNNABLE sentence names and the number this computes cannot be two numbers. None when
-    the inputs cannot support the search, or no n up to `cap` clears DELTA. The denominator
-    is `n - 1`, matching `study_fit`'s `se` (#303)."""
-    if not (math.isfinite(sd_gap) and math.isfinite(floor_window)) or sd_gap <= 0:
-        return None
-    for n in range(2, cap + 1):
-        se = floor_window / (sd_gap * math.sqrt(n - 1))
-        if experiment.minimum_detectable_effect(se, n) <= DELTA:
-            return n
-    return None
-
-
-def study_interval(fit: dict[str, float]) -> tuple[float, float]:
-    """The coefficient's interval at the season count `study_fit` was given: a t interval,
-    `t_quantile(0.975, n - 1)` margins on `fit['se']` -- the same reference
-    `minimum_detectable_effect` reads, so the interval and the MDE cannot disagree about what
-    distribution they are drawn from.
-
-    **At one event-season this is the game-level, floor-based SE `study_fit` returns.** The
-    season cluster once two event-seasons exist (docs/gate-power.md's *Amended
-    2026-09-17*): `study_fit` does not yet expose a season-clustered SE, so this function does
-    not build that clustering here -- it is named, not implemented; #221/#303 own the day it
-    is. NaN, NaN where the inputs cannot support a t interval (fewer than two rows).
-    """
-    n, se, beta = fit["n"], fit["se"], fit["beta"]
-    if n < 2 or not (math.isfinite(se) and math.isfinite(beta)):
-        return float("nan"), float("nan")
-    margin = experiment.t_quantile(0.975, int(n) - 1) * se
-    return beta - margin, beta + margin
-
-
-def benchmark_reading(beta: float, lo: float, hi: float) -> str:
-    """0.132 (`BENCHMARK`) read beside the fitted coefficient -- **reported, never gated on**
-    (docs/gate-power.md: *0.132 is reported, never gated on*): replication if the interval
-    contains it, otherwise below or above. Called from `main`, printed beside the coefficient
-    -- never read by `verdict`, and it appears in none of that function's branches."""
-    if math.isfinite(lo) and math.isfinite(hi) and lo <= BENCHMARK <= hi:
-        return "replication (the interval contains 0.132)"
-    if not math.isfinite(beta):
-        return "not established"
-    return "below 0.132" if beta < BENCHMARK else "above 0.132"
-
-
-def verdict(fit: dict[str, float]) -> tuple[str, str]:
-    """The study's own rule over `study_fit`'s coefficient (#329) -- **non-inferiority against
-    DELTA**, the machinery stage 2 (`experiment.gate`'s NOT-RUNNABLE precondition) already
-    uses. The *statistic* is shared (`study_fit`, `study_mde`); the *rule* is this function's
-    own (method.md rule 1, *Where the rule lives in code*) -- a verdict separate from the
-    log-loss gate's `run()` above, which has been a diagnostic since #300 and decides neither
-    ADOPT nor REMOVE for this module.
-
-    **NOT-RUNNABLE comes first, ahead of every branch**, exactly as `experiment.gate`'s stage 2
-    orders its own precondition: `fit['mde']` not finite (fewer than two rows) or exceeding
-    DELTA means the interval below is not read at all, and the sentence names how many event
-    games DELTA needs (`study_events_needed`, off `study_fit`'s own `sd_gap` and
-    `floor_window`, so it never disagrees with the MDE that triggered it).
-
-    Past that gate, `study_interval` decides among three:
-
-    * **ADOPT** -- the interval's lower bound exceeds DELTA. The route back opens: a ticket
-      restores `quarterback.apply` to the published path with the `-qb` mark, the separate
-      partition and the track-record split kept.
-    * **REMOVE** -- the interval excludes zero on the negative side. The route back closes:
-      the module becomes an Exhibit under `hub.exhibits` per ADR-0007, the refuting
-      measurement re-runnable, the module gone from `hub.models`.
-    * **SHOW** -- anything else: excludes zero positively but the lower bound does not clear
-      DELTA (a real effect too small to price), or does not exclude zero at all. Stays
-      harness-only either way; the sentence names what a second event-season's
-      season-clustered MDE would resolve.
-
-    0.132 never appears here. `benchmark_reading` is a separate, informational read, called
-    from `main` beside the coefficient and not from this function.
-    """
-    mde = fit["mde"]
-    if not math.isfinite(mde) or mde > DELTA:
-        needed = study_events_needed(fit.get("sd_gap", float("nan")),
-                                     fit.get("floor_window", float("nan")))
-        need = (f"the pilot says {needed} event games are needed to clear delta at 80% power"
-                if needed is not None
-                else "the event games delta needs cannot be stated from these inputs (no "
-                     "usable spread across games yet)")
-        mde_text = f"{mde:.4f}" if math.isfinite(mde) else "not established"
-        return "NOT-RUNNABLE", (
-            f"NOT RUNNABLE: the smallest coefficient this run could resolve at 80% power is "
-            f"{mde_text} points per value unit against delta = {DELTA:.4f} -- the study "
-            f"cannot tell a real, price-worthy effect from noise at this n. No branch below "
-            f"is read; {need}.")
-    lo, hi = study_interval(fit)
-    if lo > DELTA:
-        return "ADOPT", (
-            f"ADOPT: the interval's lower bound ({lo:+.4f}) exceeds delta ({DELTA:.4f} points "
-            f"per value unit). The route back opens: a ticket restores quarterback.apply to "
-            f"the published path with the -qb mark, the separate partition and the "
-            f"track-record split kept -- the study shows the betting market moves by the "
-            f"coefficient per value unit; the mark leaves only on direct evidence about the "
-            f"module's own predictions.")
-    if hi < 0:
-        return "REMOVE", (
-            f"REMOVE: the interval excludes zero on the negative side ([{lo:+.4f}, "
-            f"{hi:+.4f}]) -- the betting market moving the wrong way on a quarterback "
-            f"downgrade is a refutation. The route back closes: the module becomes an "
-            f"Exhibit under hub.exhibits per ADR-0007, the refuting measurement re-runnable, "
-            f"the module gone from hub.models.")
-    if lo > 0:
-        return "SHOW", (
-            f"SHOW: the interval [{lo:+.4f}, {hi:+.4f}] excludes zero on the positive side "
-            f"but its lower bound does not clear delta ({DELTA:.4f}) -- a real effect too "
-            f"small to price. Stays harness-only; a second event-season's season-clustered "
-            f"MDE is what would resolve it.")
-    return "SHOW", (
-        f"SHOW: the interval [{lo:+.4f}, {hi:+.4f}] does not exclude zero. Stays harness-only; "
-        f"a second event-season's season-clustered MDE is what would resolve it.")
-
-
-# --- the entry point --------------------------------------------------------------------------
-
-class PbpGames(NamedTuple):
-    """`team_games_from_pbp`'s frame, and the sources it was served from last-good rather
-    than refreshed (named, so a run line can say so)."""
-
-    tg: pl.DataFrame
-    stale: tuple[str, ...]
-
-
-def _last_good(source: str, seasons: Sequence[int], cols: Sequence[str] | None, *,
-               fresh: bool, cache: Path | None) -> tuple[pl.DataFrame, bool]:
-    """One `nflverse.load`, refreshed when `fresh` and served from the cache when the wire
-    will not answer -- last-good rather than an error (CLAUDE.md, graceful degradation). The
-    flag is whether last-good was what came back after a refresh was asked for."""
-    if fresh:
-        try:
-            return nflverse.load(source, seasons, cols, refresh=True, cache=cache), False
-        except Exception:
-            pass
-    return nflverse.load(source, seasons, cols, cache=cache), fresh
-
-
-def pbp_team_games(seasons: Sequence[int], *, cache: Path | None = None) -> PbpGames:
-    """The study's events source, read through `hub.fetch.nflverse.load`: play-by-play for
-    each season (one per call -- the cache's own grain, and the slate's -- never a loop over
-    teams or games) and the schedule for dates and results. The season in progress is
-    refreshed, since it is the one that changes between runs; a completed season is a cache
-    hit after its first read. Raises when neither the wire nor the cache has a source, and
-    `main` then reads the pinned file instead and says so."""
-    stale: list[str] = []
-    frames = []
-    for season in seasons:
-        frame, was_stale = _last_good("pbp", [season], list(nflverse.STARTER_PBP_COLS),
-                                       fresh=season >= SEASON_AHEAD, cache=cache)
-        frames.append(frame)
-        if was_stale:
-            stale.append(f"play-by-play {season}")
-    sched, was_stale = _last_good("schedules", seasons, None,
-                                  fresh=max(seasons) >= SEASON_AHEAD, cache=cache)
-    if was_stale:
-        stale.append("schedules")
-    tg = team_games_from_pbp(pl.concat(frames), sched.select(*SCHEDULE_COLS))
-    return PbpGames(tg, tuple(stale))
-
-
 def archive(season: int, base: Path | None) -> pl.DataFrame:
     """The season's polls off the store, in the shape the readers take; empty on a fresh
     clone. `store.lines` is the one reader of every poll; this takes its four columns."""
     return store.lines(season, base=base).select("game_id", "close_spread", "captured_at", "week")
-
-
-def noise_floor_per_root_day(
-        parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | None]],
-) -> tuple[float, int, tuple[int, ...]]:
-    """#214's own same-quarterback floor per root-day, computed the way
-    `hub.fetch.odds.noise_floor_report` computes its "floor" line -- not re-derived: frozen
-    lookaheads excluded first, then intervals `odds.line_moves` marks `same_qb` false or
-    unknown, off a starters frame handed to that same call.
-
-    **One `(season, polls, starters)` triple per season, because the chart is per season
-    too.** `odds._starter_at` is a backward as-of join, so a poll needs a chart *of its own
-    season* before it to be conditioned at all -- a chart fetched for one season and handed
-    to every season's polls (#331) leaves every other season's `same_qb` null, which
-    `odds.line_moves` cannot tell apart from a genuine unknown and this function used to
-    drop the same way: silently, off the floor, with the run line still calling it
-    same-quarterback. `polls` is a season's own slice of the archive (`archive`'s shape);
-    `starters` is the depth-chart frame `odds._qb_starters` returns for that season, or
-    `None` where the chart could not be read. Each season's live intervals are filtered on
-    `same_qb` only when that season has a chart; a season with none contributes its live
-    intervals unconditioned -- not dropped -- and is named in the returned `not_applied`
-    tuple rather than silently counted as though excluded.
-
-    **`starters` is never this module's own team-game rows.** `apply`'s as-of join reads
-    "who was listed from this moment on"; this module's `date` is *kickoff*, so a change
-    dated at kickoff is invisible to every poll of that game, which by construction all
-    precede its own kickoff (#330). A starters frame built off kickoff dates therefore never
-    excludes the interval it exists to exclude.
-
-    NaN and zero with nothing left to measure across every season; `not_applied` names every
-    season handed no chart (or an empty one), in the order given, whether or not it had any
-    live intervals to contribute.
-    """
-    live_parts: list[pl.DataFrame] = []
-    not_applied: list[int] = []
-    for season, polls, starters in parts:
-        if polls.is_empty():
-            continue
-        have = starters is not None and not starters.is_empty()
-        moves = odds.line_moves(odds.staleness(polls), starters if have else None)
-        live = moves.filter(~pl.col("frozen"))
-        if have:
-            live = live.filter(pl.col("same_qb"))
-        else:
-            not_applied.append(season)
-        live_parts.append(live)
-    if not live_parts:
-        return float("nan"), 0, tuple(not_applied)
-    combined = pl.concat(live_parts)
-    if combined.is_empty():
-        return float("nan"), 0, tuple(not_applied)
-    floor = odds.noise_floor(combined, bootstrap=1)
-    return float(floor["sd_per_root_day"]), int(floor["games"]), tuple(not_applied)
 
 
 class SeasonEventSummary(NamedTuple):
@@ -1271,7 +418,7 @@ def beyond_price_horizon(polls: pl.DataFrame, tg: pl.DataFrame) -> dict[int, Bey
     out: dict[int, Beyond] = {}
     if polls.is_empty():
         return out
-    last = (polls.with_columns(_poll_day().alias("_day"))
+    last = (polls.with_columns(poll_day().alias("_day"))
                  .join(tg.select("game_id", "season").unique(), on="game_id", how="inner")
                  .group_by("season").agg(pl.col("_day").max().alias("through")))
     for season, through in zip(last["season"], last["through"], strict=True):
@@ -1280,103 +427,6 @@ def beyond_price_horizon(polls: pl.DataFrame, tg: pl.DataFrame) -> dict[int, Bey
         if late:
             out[int(season)] = Beyond(str(through), late)
     return out
-
-
-def same_quarterback_floor_label(n_seasons: int, not_applied: Sequence[int],
-                                  qb_notes: Sequence[str]) -> tuple[str, str]:
-    """The same-quarterback floor's label and the parenthetical naming which seasons its
-    chart failed for and why (#345). `n_seasons` is how many seasons had polls to condition
-    at all (`len(study_parts)`); `not_applied` and `qb_notes` are `noise_floor_per_root_day`'s
-    own and the depth-chart fetch loop's, paired by position (season order).
-
-    Three branches: *applied* -- `"same-quarterback floor"` -- where every season with polls
-    also had a usable chart, or where there was nothing to try (`n_seasons == 0`); *partial*
-    where some seasons' charts resolved and others did not; *not applied* --
-    `"all-games floor, SAME-QUARTERBACK NOT APPLIED"` -- where none did. The parenthetical is
-    empty on the first branch and names every failed season and why on the other two."""
-    if n_seasons == 0 or not not_applied:
-        label = "same-quarterback floor"
-    elif len(not_applied) == n_seasons:
-        label = "all-games floor, SAME-QUARTERBACK NOT APPLIED"
-    else:
-        label = "same-quarterback floor, PARTIAL"
-    qb_note = (f" (same-quarterback NOT applied for "
-              f"{', '.join(str(s) for s in not_applied)}: {'; '.join(qb_notes)})"
-              if not_applied else "")
-    return label, qb_note
-
-
-class StudyReport(NamedTuple):
-    """Every value the `--study` line group prints (#345), computed once so `main`'s
-    `--study` block is dispatch and printing over it and nothing more. `established` is
-    whether `study_rows` found an uncensored event game with both a frozen and a pre-game
-    price; `fit`, `benchmark_sentence`, `n_change_seen` and `change_point_median` are only
-    meaningful when it is, exactly as `rows_.is_empty()` gated them before this was a typed
-    result rather than inline branches in `main`."""
-
-    label: str
-    qb_note: str
-    floor: float
-    floor_games: int
-    used: float
-    sd_gap: float
-    n_gaps: int
-    restatement_flag: str | None
-    n_typical: int
-    mde: float
-    unplayed: int
-    unvalued: int
-    fit: dict[str, float]
-    established: bool
-    n_events: int
-    verdict_label: str
-    verdict_sentence: str
-    benchmark_sentence: str | None
-    n_change_seen: int
-    change_point_median: Any
-
-
-def study_report(study_parts: Sequence[tuple[int, pl.DataFrame, pl.DataFrame | None]],
-                  qb_notes: Sequence[str], ev: pl.DataFrame, games: pl.DataFrame,
-                  polls: pl.DataFrame, season_games: pl.DataFrame,
-                  tg: pl.DataFrame) -> StudyReport:
-    """The line-move study's report (#221), computed once as a typed result (#345) rather
-    than as local variables `main`'s `--study` block built and printed from inline.
-    `study_parts` and `qb_notes` are the depth-chart fetch loop's own -- the one network call
-    `--study` makes, and the one thing this function does not do itself, so a season whose
-    chart failed is named here without reaching the network to find out."""
-    floor, floor_games, not_applied = noise_floor_per_root_day(study_parts)
-    label, qb_note = same_quarterback_floor_label(len(study_parts), not_applied, qb_notes)
-    used = floor if math.isfinite(floor) else 0.40
-    gaps = in_season_events(ev)["gap"].drop_nulls().to_list()
-    sd_gap = statistics.stdev(gaps) if len(gaps) > 1 else float("nan")
-    per_season = games.group_by("season").len()["len"].to_list()
-    n_typical = int(statistics.median(per_season)) if per_season else 0
-    restatement_flag = gap_sd_restatement_flag(sd_gap)
-    mde = study_mde(n=n_typical, sd_gap=sd_gap, window_days=7.0, floor_per_root_day=used)
-    unplayed = unplayed_study_games(polls, season_games, tg)
-    unvalued = unvalued_study_games(polls, season_games)
-    rows_ = study_rows(polls, season_games, tg,
-                       floor_per_root_day=floor if math.isfinite(floor) else None)
-    fit = study_fit(rows_, floor_per_root_day=used)
-    established = not rows_.is_empty()
-    verdict_label, verdict_sentence = verdict(fit)
-    benchmark_sentence: str | None = None
-    n_change_seen = 0
-    change_point_median: Any = None
-    if established:
-        seen_change = rows_["days_to_change"].drop_nulls()
-        n_change_seen = seen_change.len()
-        change_point_median = seen_change.median() if seen_change.len() else float("nan")
-        lo, hi = study_interval(fit)
-        benchmark_sentence = benchmark_reading(fit["beta"], lo, hi)
-    return StudyReport(label=label, qb_note=qb_note, floor=floor, floor_games=floor_games,
-                       used=used, sd_gap=sd_gap, n_gaps=len(gaps),
-                       restatement_flag=restatement_flag, n_typical=n_typical, mde=mde,
-                       unplayed=unplayed, unvalued=unvalued, fit=fit, established=established,
-                       n_events=rows_.height, verdict_label=verdict_label,
-                       verdict_sentence=verdict_sentence, benchmark_sentence=benchmark_sentence,
-                       n_change_seen=n_change_seen, change_point_median=change_point_median)
 
 
 def horizon_line(season: int, study_tg: pl.DataFrame, file_tg: pl.DataFrame,
@@ -1391,7 +441,7 @@ def horizon_line(season: int, study_tg: pl.DataFrame, file_tg: pl.DataFrame,
     seen = mine.filter(pl.col("qb").is_not_null())["date"].max()
     file_last = file_tg.filter(pl.col("season") == season)["date"].max()
     ours = polls.filter(pl.col("game_id").str.starts_with(f"{season}_"))
-    last_poll = None if ours.is_empty() else ours.select(_poll_day().max().alias("d"))["d"][0]
+    last_poll = None if ours.is_empty() else ours.select(poll_day().max().alias("d"))["d"][0]
     last_week = played["week"].max()
     week = last_week if isinstance(last_week, int) else None
     return (f"  horizons {season}: played through {last_played} (week {week}); starters "
@@ -1592,7 +642,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             chart: pl.DataFrame | None = None
             try:
-                chart = odds._qb_starters(s)
+                chart = odds.load_qb_starters(s)
             except Exception as exc:                         # pragma: no cover - network
                 qb_notes.append(f"{s} ({type(exc).__name__}: {exc})")
             study_parts.append((s, p, chart))

@@ -440,18 +440,7 @@ ACTIONS = Actions(
 # its ceiling.
 HARNESS = Harness(name="weekly", arm_a="weekly", arm_b="consensus", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS, unit=UNIT, places=PLACES,
-                  arm_modules=(
-                      "hub.draft.adp_history", "hub.draft.availability", "hub.draft.board",
-                      "hub.draft.cohort", "hub.draft.durability", "hub.draft.optimize",
-                      "hub.draft.picks", "hub.draft.playoff_sos", "hub.draft.prior_signal",
-                      "hub.draft.regression", "hub.draft.report", "hub.draft.season",
-                      "hub.draft.state", "hub.exhibits.weekly_projection", "hub.holdout",
-                      "hub.league", "hub.models.base",
-                      "hub.models.components", "hub.models.conformal", "hub.models.coverage",
-                      "hub.models.margin", "hub.models.market", "hub.models.panel",
-                      "hub.models.predict", "hub.models.scoring_rules", "hub.models.volume",
-                      "hub.names", "hub.season.weekly_gate",
-                      "hub.season.weekly_gate_data"))
+                  arm_roots=("hub.season.weekly_gate",))
 
 
 def run_recipe(*, seasons: Sequence[int], drafts: int, seed: int, churn: bool, open_pool: bool,

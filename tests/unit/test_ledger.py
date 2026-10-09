@@ -368,7 +368,7 @@ def test_a_row_of_unknown_recipe_stays_unknown_through_a_rewrite_of_the_file(tmp
 def test_the_closure_helpers_refuse_a_name_that_is_not_a_source_module():
     """A name that does not resolve raises, rather than hashing or walking nothing: a pin over a
     module that is not there would pass trivially."""
-    from hub.ledger import first_party_imports, module_digests
+    from hub.closure import first_party_imports, module_digests
 
     with pytest.raises(ValueError, match="not a module with a source file"):
         module_digests(["hub.nothing_here_456"])
@@ -377,7 +377,7 @@ def test_the_closure_helpers_refuse_a_name_that_is_not_a_source_module():
 
 
 def test_module_digests_are_per_module_and_an_exempt_module_is_not_walked_in():
-    from hub.ledger import import_closure, module_digests
+    from hub.closure import import_closure, module_digests
 
     got = module_digests(["hub.names", "hub.league"])
     assert set(got) == {"hub.names", "hub.league"} and all(len(v) == 12 for v in got.values())

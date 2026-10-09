@@ -321,3 +321,24 @@ def run():
     from hub.fetch import nflverse
     with nflverse.reads_of_one_run() as reads:
         yield reads
+
+
+@pytest.fixture
+def record_holdout_set():
+    """Write one season's hold-out set the way `load` now insists on: the given values, and
+    every other held-out key recorded as not refitted with a reason (#320). Fitting scripts
+    record a key at a time, so tests that need a *loadable* set go through this."""
+    from hub import holdout
+
+    def record(season: int, values: dict | None = None, root: Path | None = None) -> Path:
+        values = values or {}
+        path = None
+        for key in holdout.HELD_OUT:
+            if key in values:
+                path = holdout.record(season, key, values[key], command="x", root=root)
+            else:
+                path = holdout.record(season, key, None, command="x", root=root,
+                                      why_not="not refitted in this fixture")
+        assert path is not None
+        return path
+    return record

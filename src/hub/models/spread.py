@@ -43,6 +43,16 @@ review, and the four stamps.
 
 Both arms are always given the *same* `mu`, so the comparison isolates the spread question
 from projection error and cannot favour either arm.
+
+**The shape constant is fitted on survivors (named 2026-10-07, #313, audit IV R11).**
+`player_seasons` keeps a player-season only at `MIN_GAMES` games and a mean above `MIN_PPG` --
+both conditions on the realised outcome -- and `fit_weekly_law` fits `WEEKLY_K` on what is left,
+which `predict.moments` then applies to every player, the sub-three bench included. The excluded
+population is the high-variance tail, so the constant is biased *low* exactly where it is most
+often applied: intervals on low-mean players are too narrow (the direction is #313's argument,
+not yet a measurement; the refit is what measures it). The refit without the exclusion is
+#313's and waits on a pre-registered, adopted design (`docs/gate-power.md`); until it lands the
+shipped constant is the filtered one and this is its stated direction.
 """
 from __future__ import annotations
 
@@ -59,8 +69,8 @@ from hub.cli import unavailable
 from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 from hub.ledger import Ledger, recipe
+from hub.models import predict
 from hub.models.experiment import Actions, GateRun, Harness, expanding_seasons
-from hub.models.predict import WEEKLY_K, WEEKLY_K_POOLED
 
 # Matching docs/weekly-spread.md's sample exactly, so the two measurements are comparable.
 # Below 8 games the sd is a handful of numbers; below 3 ppg the ratio sd/sqrt(mu) is
@@ -107,8 +117,7 @@ ACTIONS = Actions(
 HARNESS = Harness(name="player_spread", arm_a="candidate", arm_b="positional", within=WITHIN,
                   ceiling_arm=CEILING_ARM, actions=ACTIONS,
                   unit="MAE points of predicted weekly sd", places=4,
-                  arm_modules=("hub.models.components", "hub.models.predict",
-                               "hub.models.spread", "hub.models.volume"))
+                  arm_roots=("hub.models.spread",))
 
 # Prior-season role features for the `usage` arm. `drift` is the within-season slope of
 # snap share, which is the term docs/weekly-spread.md accuses of masquerading as spread.
@@ -124,7 +133,7 @@ STAT_COLS = ("season", "week", "player_id", "position", "fantasy_points_ppr", "s
 
 def _positional_k(pos: pl.Expr) -> pl.Expr:
     return pos.cast(pl.Utf8).fill_null("").replace_strict(
-        WEEKLY_K, default=WEEKLY_K_POOLED, return_dtype=pl.Float64)
+        predict.WEEKLY_K, default=predict.WEEKLY_K_POOLED, return_dtype=pl.Float64)
 
 
 def _opt(df: pl.DataFrame, c: str) -> pl.Expr:

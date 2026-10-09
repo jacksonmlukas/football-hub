@@ -21,8 +21,9 @@ error against the consensus projection, adopt if it wins. It cannot be run.
 
 So the only incumbent worth beating exists as a *ranking*. There is no incumbent points
 projection to take a paired difference against, and the repo's whole record says the incumbent
-that matters is the free public one: fourteen measurements, and the five nulls all lost to
-consensus rather than to a straw man.
+that matters is the free public one: fourteen measurements (the count on this ADR's date,
+2026-08-27; fifteen since 2026-09-11, and `docs/method.md`'s table is the current count), and
+the five nulls all lost to consensus rather than to a straw man.
 
 ## Considered, and rejected
 

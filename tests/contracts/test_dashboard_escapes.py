@@ -230,6 +230,83 @@ def test_the_page_never_spells_an_artifact_name_itself():
                        f"off `manifest.artifacts` instead.")
 
 
+# --- the draft board retires itself when a newer slate exists (#348) ---------
+
+BOARD_AT = "2026-09-04T17:22:50+00:00"
+JULY = {"season": 2027, "week": 1, "artifacts": [
+    {"name": "draft_board", "generated_at": "2027-07-10T12:00:00+00:00"}]}
+WEEK_2 = {"season": 2026, "week": 2, "artifacts": [
+    {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"},
+    {"name": "draft_board", "generated_at": BOARD_AT}]}
+
+
+def _board_shows(node: str, man) -> bool:
+    """`boardShows` for real -- with `findArt`, which it reads the board's entry through."""
+    fns = "\n".join([_lift(r"function findArt\(man, name\) \{[\s\S]*?\n\}"),
+                     _lift(r"function boardShows\(man\) \{[\s\S]*?\n\}")])
+    return json.loads(_run(node, f"{fns}\nconsole.log(JSON.stringify("
+                                 f"boardShows({json.dumps(man)})));"))
+
+
+def test_the_board_retires_when_a_slate_is_newer_than_it(node):
+    assert _board_shows(node, WEEK_2) is False
+
+
+def test_the_board_shows_when_it_is_newer_than_every_slate(node):
+    man = {"artifacts": [
+        {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"},
+        {"name": "draft_board", "generated_at": "2027-07-10T12:00:00+00:00"}]}
+    assert _board_shows(node, man) is True
+
+
+def test_the_board_shows_when_no_slate_was_ever_published(node):
+    assert _board_shows(node, JULY) is True
+
+
+def test_one_newer_slate_among_older_ones_retires_the_board(node):
+    man = {"artifacts": [
+        {"name": "preds_2025_wk18", "generated_at": "2026-01-10T00:00:00+00:00"},
+        {"name": "draft_board", "generated_at": BOARD_AT},
+        {"name": "preds_2026_wk02", "generated_at": "2026-09-16T17:00:00+00:00"}]}
+    assert _board_shows(node, man) is False
+
+
+def test_a_board_with_no_usable_stamp_renders_nothing_rather_than_a_guess(node):
+    for entry in ({"name": "draft_board"},
+                  {"name": "draft_board", "generated_at": None},
+                  {"name": "draft_board", "generated_at": "yesterday-ish"}):
+        assert _board_shows(node, {"artifacts": [entry]}) is False, entry
+    assert _board_shows(node, {"artifacts": [WEEK_2["artifacts"][0]]}) is False
+    assert _board_shows(node, None) is False
+
+
+def test_a_slate_stamp_that_does_not_parse_cannot_retire_the_board(node):
+    man = {"artifacts": [{"name": "draft_board", "generated_at": BOARD_AT},
+                         {"name": "preds_2026_wk02", "generated_at": "garbage"},
+                         {"name": "preds_2026_wk03"}]}
+    assert _board_shows(node, man) is True
+
+
+def test_the_board_panel_is_gated_on_the_comparison():
+    """The rule is only worth its tests if the render asks it. The panel is hidden off the
+    answer and the board is not even fetched for a retired one."""
+    text = PAGE.read_text()
+    assert re.search(r"const shows = boardShows\(man\);", text), "render no longer asks"
+    assert "boardEl.hidden = !shows;" in text, "the answer no longer hides the panel"
+    assert re.search(r"shows \? await load\(\"draft_board\"\)", text)
+
+
+def test_the_retired_board_is_hidden_not_deleted():
+    """Retirement is a render decision: the section stays in the markup, and the rule never
+    touches the file or its manifest entry."""
+    text = PAGE.read_text()
+    assert re.search(r'<section id="p-board"[^>]*>', text)
+    assert "section[hidden] { display: none; }" in text
+    assert (DATA / "draft_board.json").exists()
+    man = json.loads((DATA / "manifest.json").read_text())
+    assert any(a["name"] == "draft_board" for a in man["artifacts"])
+
+
 # --- both published weeks are reachable, and each says which season (#23) ----
 
 def _other_weeks(node: str, man, shown):
@@ -673,6 +750,235 @@ def test_the_survivor_panel_escapes_its_own_numbers_too():
     assert not raw, f"unescaped interpolations in the survivor panel: {raw}"
 
 
+# --- the page speaks one confidence grammar (#347) ---------------------------
+#
+# Every number is frozen, live, stale or unconfirmed and the page says which by how it draws
+# the number. Each state below is planted -- an artifact older than its window, a pool rule
+# nobody confirmed -- and the rendered label asserted, because a test that renders only the
+# healthy case passes on a page that has no grammar at all. The stale test is the one a
+# guard on the page points at, and `test_a_panel_with_the_wrong_state_turns_the_grammar_red`
+# plants the mislabelled panel and requires red.
+
+STATE_CLASSES = {"frozen": "state-frozen", "live": "state-live", "stale": "state-stale",
+                 "unconfirmed": "state-unconfirmed"}
+
+
+def _panel_parts(node: str, opts_js: str) -> dict:
+    """`panelParts(...)` as the page defines it, run in node. `opts_js` is a JS expression, so
+    a test can plant an age relative to now rather than a date that will go out of date."""
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
+        _lift(r"function panelParts\([\s\S]*?\n\}"),
+        _lift(r"const staleOf = [^\n]*"),
+    ])
+    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify({opts_js}));"))
+
+
+PLANTED_STALE = ("(() => { const art = {stale: true, reason: 'ESPN unreachable', "
+                 "generated_at: new Date(Date.now() - 3 * 864e5).toISOString()}; "
+                 "return panelParts({age: '12 rostered', html: '<td>Q. Example 18.4</td>', "
+                 "stale: staleOf(art)}); })()")
+
+
+def test_a_stale_artifact_renders_in_the_stale_state_with_its_age(node):
+    """Planted: an artifact three days old that the manifest marks stale. The warning is in
+    the stale state, carries the age, the panel is stale, and the value is still there."""
+    got = _panel_parts(node, PLANTED_STALE)
+    assert got["cls"] == STATE_CLASSES["stale"]
+    assert f'class="warn {STATE_CLASSES["stale"]}"' in got["body"]
+    assert "Stale: ESPN unreachable" in got["body"]
+    assert "artifact 3d ago" in got["body"], got["body"]
+    assert "<td>Q. Example 18.4</td>" in got["body"], "a stale panel must not blank its value"
+
+
+def test_a_stale_artifact_that_cannot_say_its_age_says_so(node):
+    """The age stamp is required. An artifact with no `generated_at` is stale with an
+    unknown age, and the warning says that rather than omitting the stamp."""
+    got = _panel_parts(node, "panelParts({html: 'v', stale: staleOf("
+                             "{stale: true, reason: 'r', generated_at: null})})")
+    assert "artifact age unknown" in got["body"]
+    assert got["cls"] == STATE_CLASSES["stale"]
+
+
+def test_a_current_artifact_is_frozen_and_carries_no_stale_label(node):
+    """The control for the two above: the same panel with a current manifest entry is the
+    default state, and nothing on it says stale."""
+    got = _panel_parts(node, "panelParts({html: 'v', stale: staleOf("
+                             "{stale: false, reason: null, generated_at: 'x'})})")
+    assert got["cls"] == STATE_CLASSES["frozen"]
+    assert got["body"] == "v"
+
+
+def test_a_panel_with_no_data_renders_its_reason_and_does_not_throw(node):
+    got = _panel_parts(node, "panelParts({warn: 'No roster yet.'})")
+    assert got["body"] == '<p class="warn">No roster yet.</p>'
+    assert got["cls"] == STATE_CLASSES["frozen"]
+
+
+def test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state(node):
+    """Planted: a survivor artifact naming a rule nobody has confirmed. The note renders in
+    the unconfirmed state and names the rule; with nothing unconfirmed, no state is drawn."""
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function unconfirmedNote\(surv\) \{[\s\S]*?\n\}"),
+    ])
+    out = _run(node, f"{lifted}\nconsole.log(unconfirmedNote("
+                     f"{json.dumps({'unconfirmed': ['co_survivor_rule']})}));")
+    assert f'class="{STATE_CLASSES["unconfirmed"]}"' in out
+    assert "co_survivor_rule" in out
+    clean = _run(node, f"{lifted}\nconsole.log(unconfirmedNote({{unconfirmed: []}}));")
+    assert STATE_CLASSES["unconfirmed"] not in clean
+
+
+def test_the_roster_withheld_note_renders_in_the_unconfirmed_state():
+    """The note is built inside `render`, which needs a DOM to run, so this reads the page:
+    the sentence that names the withheld players is the one opening in the state."""
+    got = re.search(r'`<p class="([^"]*)">Withheld as unavailable:', PAGE.read_text())
+    assert got, "the withheld note is gone, or no longer an unlabelled paragraph"
+    assert got.group(1) == "${STATE.unconfirmed}"
+
+
+def test_every_stale_warning_goes_through_the_one_stale_note():
+    """No panel spells its own `Stale:` warning. A hand-written one would render without the
+    age, which is the omission the grammar exists to stop."""
+    text = PAGE.read_text()
+    assert len(re.findall(r"`[^`]*Stale:", text)) == 1
+    sites = re.findall(r"stale: staleOf\(", text)
+    assert len(sites) == 5, f"expected the five panel exits that can be stale, got {len(sites)}"
+
+
+def _style() -> str:
+    text = PAGE.read_text()
+    return text[text.index("<style>"):text.index("</style>")]
+
+
+def test_the_four_states_are_a_named_token_set_in_both_colour_schemes():
+    style = _style()
+    for cls in STATE_CLASSES.values():
+        assert re.search(rf"\.{cls}\b[^{{]*\{{", style), f"no rule for .{cls}"
+    split = style.index("prefers-color-scheme: dark")
+    light, dark = style[:split], style[split:style.index("* { box-sizing")]
+    tokens = set(re.findall(r"--st-[\w-]+(?=:)", light))
+    assert tokens, "no --st- tokens declared"
+    missing = {t for t in tokens if t not in dark}
+    assert not missing, f"tokens with no dark-scheme value: {sorted(missing)}"
+
+
+def _rule(selector: str) -> str:
+    got = re.search(rf"(?m)^\s*{re.escape(selector)}\s*\{{([^}}]*)\}}", _style())
+    assert got, f"no rule for {selector!r}"
+    return got.group(1)
+
+
+def test_the_four_states_are_drawn_differently():
+    """Distinguishable by treatment and not by hue alone: solid rule, tinted field, dotted
+    rule on dimmed ink, dashed hatch."""
+    assert "solid" in _rule(".state-frozen")
+    assert "var(--st-live-tint)" in _rule(".state-live, .grp-live")
+    assert "dotted" in _rule(".state-stale")
+    unconfirmed = _rule(".state-unconfirmed")
+    assert "dashed" in unconfirmed and "repeating-linear-gradient" in unconfirmed
+
+
+def test_the_slates_live_group_is_an_alias_of_the_live_state_not_a_second_rule():
+    defs = re.findall(r"(?m)^\s*([^\n{}]*\.grp-live[^\n{}]*?)\s*\{", _style())
+    assert defs == [".state-live, .grp-live"], (
+        f"`.grp-live` must be defined once, sharing `.state-live`'s rule; found {defs}")
+
+
+def _token(block: str, name: str) -> str:
+    got = re.search(rf"{re.escape(name)}:\s*(#[0-9a-fA-F]{{3,6}})\b", block)
+    assert got, f"no {name} colour in that scheme"
+    return got.group(1)
+
+
+def _linear(c: float) -> float:
+    c /= 255
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _full(hex_: str) -> str:
+    h = hex_.lstrip("#")
+    return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h)
+
+
+def _luminance(hex_: str) -> float:
+    h = _full(hex_).lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * _linear(r) + 0.7152 * _linear(g) + 0.0722 * _linear(b)
+
+
+def _blend(fg: str, bg: str, alpha: float) -> str:
+    f, b = _full(fg).lstrip("#"), _full(bg).lstrip("#")
+    return "#" + "".join(f"{round(alpha * int(f[i:i + 2], 16) + (1 - alpha) * int(b[i:i + 2], 16)):02x}"
+                         for i in (0, 2, 4))
+
+
+def _contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _stale_body_contrast(style: str) -> dict[str, float]:
+    """WCAG contrast of stale body text against the card, per scheme, from the tokens.
+
+    Any `opacity` a `.state-stale` rule applies to body content is blended in: dimming the
+    ink and then fading the element stacks, which is how this was measured at 2.8:1."""
+    split = style.index("prefers-color-scheme: dark")
+    schemes = {"light": style[:split], "dark": style[split:style.index("* { box-sizing")]}
+    alpha = 1.0
+    for sel, body in re.findall(r"(?m)^\s*([^\n{}]*\.state-stale[^\n{}]*)\{([^}]*)\}", style):
+        if ".warn" in sel and ":not" not in sel:
+            continue
+        for op in re.findall(r"(?<![-\w])opacity:\s*([\d.]+)", body):
+            alpha *= float(op)
+    out = {}
+    for name, block in schemes.items():
+        ink = re.search(r"--st-stale-ink:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        card = re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        assert ink, f"no --st-stale-ink in the {name} scheme"
+        card = card or re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", style)
+        assert card
+        out[name] = _contrast(_blend(ink.group(1), card.group(1), alpha), card.group(1))
+    return out
+
+
+def test_stale_body_text_meets_wcag_aa_in_both_schemes_and_stays_distinct_from_frozen():
+    """Stale text is body text: at least 4.5:1, with the opacity stacked in. And it is not
+    simply the frozen ink: it must be measurably dimmer than frozen, or the state is lost."""
+    style = _style()
+    got = _stale_body_contrast(style)
+    assert all(v >= 4.5 for v in got.values()), f"stale body contrast under 4.5:1: {got}"
+    split = style.index("prefers-color-scheme: dark")
+    for name, block in {"light": style[:split], "dark": style[split:]}.items():
+        fg = _token(block, "--fg")
+        card = _token(block, "--card")
+        assert _contrast(fg, card) > got[name] + 3, f"stale is not dimmer than frozen in {name}"
+
+
+def test_a_too_faint_stale_value_turns_the_contrast_test_red():
+    """The planted failure: the original values, and a stacked opacity, must both fail."""
+    style = _style()
+    faint = style.replace("--st-stale-ink: #5b6170", "--st-stale-ink: #9ca3af")
+    assert faint != style
+    assert min(_stale_body_contrast(faint).values()) < 4.5
+    stacked = style.replace(".state-stale { color", ".state-stale > :not(.warn) { opacity: 0.5; }\n  .state-stale { color")
+    assert stacked != style
+    assert min(_stale_body_contrast(stacked).values()) < 4.5
+
+
+def test_reduced_motion_still_stops_the_live_pulse():
+    style = _style()
+    assert "animation: pulse" in style
+    media = re.search(r"@media \(prefers-reduced-motion: reduce\) \{([^}]*)\}", style)
+    assert media and "animation: none" in media.group(1)
+    assert ".tag.live::before" in media.group(1)
+
+
 # --- the page's own guards, proved by deleting them (#61) --------------------
 #
 # `tests/contracts/test_guards_are_load_bearing.py` does this for the guards in
@@ -931,3 +1237,266 @@ def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
         f"it fires. It guards: {guard.why}\n"
         f"Either the tests assert the outcome rather than that the guard produced it, or the "
         f"guard is dead. ({got.why_not_evidence()})")
+
+
+# --- the grammar's planted failure (#347) ------------------------------------
+
+@parent_only
+def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
+    """The planted failure. A page that labels a stale panel frozen -- the mislabel the
+    grammar exists to stop -- must fail the stale test; so must one that drops the age; and
+    an unconfirmed note drawn as a plain warning must fail its own."""
+    text = PAGE.read_text()
+    stale_test = "test_a_stale_artifact_renders_in_the_stale_state_with_its_age"
+    for name, old, new, expected in [
+        ("frozen-for-stale", "cls: stale ? STATE.stale : STATE.frozen",
+         "cls: STATE.frozen", stale_test),
+        ("no-age", ' <span class="stamp">artifact ${esc(age)}</span>', "", stale_test),
+        ("plain-warning", '<p class="${STATE.unconfirmed}">These figures',
+         '<p class="warn">These figures',
+         "test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state"),
+        ("board-ignores-the-comparison", "const shows = boardShows(man);",
+         "const shows = true;", "test_the_board_panel_is_gated_on_the_comparison"),
+        ("board-retires-on-the-wrong-side", "Date.parse(a.generated_at) > built",
+         "Date.parse(a.generated_at) < built",
+         "test_the_board_retires_when_a_slate_is_newer_than_it"),
+    ]:
+        mutant = text.replace(old, new)
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- two zones: this week, and the record (#350) -----------------------------
+#
+# The page is ordered by when its data changes, not by which artifact a panel reads: zone one
+# (regenerated Wed & Sat, live Sun) holds the lineup, the survivor panel and the slate, in that
+# order; zone two (weekly, after scoring) holds the track record. `auto-fit` reflows panels
+# *within* a zone and no longer decides the ranking of the page.
+
+# The board leads zone one while it is shown (#348): in July it is that week's decision.
+WEEK_ZONE = ("p-board", "p-roster", "p-survivor", "p-slate")
+RECORD_ZONE = ("p-record",)
+
+
+def _layout(text: str) -> dict:
+    """Where every element with an id sits: its ancestors' ids and classes, and document order.
+
+    Parsed rather than regexed, so a panel moved into the wrong zone is seen by where it *is*
+    and not by where a pattern expected to find it."""
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack: list[tuple[str, str | None, list[str], bool]] = []
+            self.seen: list[dict] = []
+
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            node: tuple[str, str | None, list[str], bool] = (
+                tag, a.get("id"), str(a.get("class") or "").split(), "hidden" in a)
+            if a.get("id"):
+                self.seen.append({"id": a["id"], "tag": tag, "classes": node[2],
+                                  "in": [s[1] for s in self.stack if s[1]],
+                                  "in_classes": [c for s in self.stack for c in s[2]],
+                                  "hidden": any(s[3] for s in self.stack) or node[3]})
+            if tag not in {"meta", "link", "br", "img", "input", "hr"}:
+                self.stack.append(node)
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    break
+
+    parser = P()
+    body = text.split("</style>", 1)[1].split("<script>", 1)[0]
+    parser.feed(body)
+    return {s["id"]: dict(s, order=i) for i, s in enumerate(parser.seen)}
+
+
+def _panels_in(layout: dict, zone: str) -> list[str]:
+    return [i for i, s in sorted(layout.items(), key=lambda kv: kv[1]["order"])
+            if i.startswith("p-") and zone in s["in"]]
+
+
+def test_each_panel_sits_in_its_zone_in_the_agreed_order():
+    layout = _layout(PAGE.read_text())
+    assert _panels_in(layout, "z-week") == list(WEEK_ZONE)
+    assert _panels_in(layout, "z-record") == list(RECORD_ZONE)
+
+
+def test_the_page_reads_header_then_this_week_then_the_record():
+    layout = _layout(PAGE.read_text())
+    order = [layout[i]["order"] for i in ("subtitle", "z-week", *WEEK_ZONE, "z-record",
+                                          *RECORD_ZONE, "footer")]
+    assert order == sorted(order), "the page is no longer header, this week, the record, footer"
+
+
+def test_a_panel_belongs_to_exactly_one_zone_and_nothing_visible_is_outside_both():
+    layout = _layout(PAGE.read_text())
+    for panel in (i for i in layout if i.startswith("p-")):
+        zones = [z for z in ("z-week", "z-record") if z in layout[panel]["in"]]
+        assert len(zones) == 1 or layout[panel]["hidden"], (
+            f"{panel} is in {zones or 'no zone'} and is visible: every panel answers to one zone")
+
+
+def test_a_shown_board_appears_in_this_week_and_a_retired_one_stays_hidden(node):
+    """#348 decides whether the board shows; #350 decides where it sits when it does. In July
+    (no slate yet) `boardShows` is true and the section it unhides is the first panel of zone
+    one; the markup ships it hidden so a retired board costs no space."""
+    layout = _layout(PAGE.read_text())
+    board = layout["p-board"]
+    assert "z-week" in board["in"] and "z-record" not in board["in"]
+    assert _panels_in(layout, "z-week")[0] == "p-board"
+    assert board["hidden"], "the board must ship hidden; render() unhides it through boardShows"
+    assert _board_shows(node, JULY) is True
+    assert _board_shows(node, WEEK_2) is False
+
+
+def test_the_zones_do_not_share_a_column_track():
+    """A zone is its own full-width band. If either sat inside a `.grid` -- the thing that
+    ranks panels by column -- the two would be tracks of one grid again, which is the layout
+    this replaces."""
+    layout = _layout(PAGE.read_text())
+    for zone in ("z-week", "z-record"):
+        assert "grid" not in layout[zone]["in_classes"], f"{zone} sits inside a grid"
+        assert layout[zone]["in"] == [], f"{zone} is nested in {layout[zone]['in']}"
+
+
+def test_the_zones_are_named_for_when_their_data_changes():
+    text = PAGE.read_text()
+    assert re.search(r'id="zh-week">This week<', text)
+    assert re.search(r'id="zh-record">The record<', text)
+    assert "regenerated Wed &amp; Sat, live Sun" in text and "weekly, after scoring" in text
+
+
+def _bins_svg(node: str, bins: list[dict]) -> str:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const pct = v =>[^\n]*"),
+        _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
+    ])
+    return _run(node, f"{lifted}\nconsole.log(reliabilitySVG({json.dumps(bins)}));")
+
+
+def _ten_bins(filled: dict[int, int]) -> list[dict]:
+    return [{"bin": f"{i / 10:.1f}-{(i + 1) / 10:.1f}", "n": filled.get(i, 0),
+             "predicted": (i + 0.5) / 10 if i in filled else None,
+             "actual": 0.5 if i in filled else None} for i in range(10)]
+
+
+def test_an_empty_bin_produces_a_mark(node):
+    out = _bins_svg(node, _ten_bins({4: 5, 6: 9, 7: 4}))
+    assert out.count('class="bin-empty"') == 7, "the seven empty bins must each be drawn"
+    assert out.count('class="bin-filled"') == 3
+    assert "0.0-0.1: no games" in out and "0.9-1.0: no games" in out
+
+
+def test_an_all_empty_curve_is_still_ten_marks_not_nothing(node):
+    assert _bins_svg(node, _ten_bins({})).count('class="bin-empty"') == 10
+
+
+def test_an_empty_bin_sits_in_its_own_slot_by_its_label(node):
+    out = _bins_svg(node, _ten_bins({}))
+    xs = [float(x) for x in re.findall(r'class="bin-empty" cx="([0-9.]+)"', out)]
+    assert xs == sorted(set(xs)) and len(xs) == 10, "ten distinct slots, left to right"
+
+
+def test_a_bin_whose_label_cannot_be_read_is_slotted_by_index(node):
+    out = _bins_svg(node, [{"bin": "?", "n": 0}, {"bin": None, "n": 0}])
+    xs = re.findall(r'class="bin-empty" cx="([0-9.]+)"', out)
+    assert len(set(xs)) == 2
+
+
+def test_the_diagram_frame_is_larger_than_the_old_230px_maximum(node):
+    out = _bins_svg(node, _ten_bins({5: 3}))
+    got = re.search(r"max-width:(\d+)px", out)
+    assert got and int(got.group(1)) > 230
+
+
+def test_the_diagram_is_labelled_so_the_empty_bins_are_explained(node):
+    assert "held no games" in _bins_svg(node, _ten_bins({5: 3}))
+
+
+def test_a_hostile_bin_label_cannot_reach_the_diagram_markup(node):
+    out = _bins_svg(node, [{"bin": HOSTILE, "n": 0}])
+    assert "<script>" not in out and "&lt;script&gt;" in out
+
+
+def test_the_writer_publishes_the_empty_bins_the_page_now_draws():
+    """The artifact carries empty bins as `n: 0` with null `predicted` and `actual`, which is
+    what `_ten_bins` plants. If the writer ever dropped them, the diagram would quietly go back
+    to showing only the bins that held games."""
+    import polars as pl
+
+    from hub import publish
+    got = publish.reliability(pl.DataFrame({"home_win_prob": [0.55, 0.65],
+                                            "home_won": [1, 0]}), n_bins=10)
+    assert len(got) == 10 and sum(1 for b in got if b["n"] == 0) == 8
+
+
+# --- the zones' planted failures ---------------------------------------------
+
+SLATE_SECTION = ('<section id="p-slate" class="wide"><h3>Who wins this week '
+                 '<span class="age"></span></h3><div class="body"></div></section>\n')
+
+
+@parent_only
+@pytest.mark.parametrize("name,expected", [
+    ("slate-in-the-record-zone", "test_each_panel_sits_in_its_zone_in_the_agreed_order"),
+    ("zones-share-a-grid", "test_the_zones_do_not_share_a_column_track"),
+    ("empty-bins-omitted", "test_an_empty_bin_produces_a_mark"),
+])
+def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node, tmp_path):
+    text = PAGE.read_text()
+    if name == "slate-in-the-record-zone":
+        # The slate is lifted out of zone one and planted at the head of the record's grid.
+        assert SLATE_SECTION in text
+        mutant = text.replace("    " + SLATE_SECTION, "", 1).replace(
+            '<section id="p-record"', SLATE_SECTION + '<section id="p-record"', 1)
+    elif name == "zones-share-a-grid":
+        mutant = text.replace('<div class="zone" id="z-week"',
+                              '<div class="grid"><div class="zone" id="z-week"', 1)
+    else:
+        mutant = text.replace("if (!(b.n > 0)) {", 'if (!(b.n > 0)) { return "";', 1)
+    assert mutant != text, f"{name}: the mutation did not land"
+    assert _parses(node, _script(mutant)).returncode == 0
+    got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+    assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- a card never outgrows its container (#350 review) -----------------------
+
+PHONE = 375
+
+
+def _grid_minimum_fits(style: str, viewport: int = PHONE) -> bool:
+    """Whether `.grid`'s track minimum can exceed the content box at `viewport` px.
+
+    Fits when the minimum is wrapped in `min(..., 100%)`, which caps it at the container, or
+    when its literal px is no more than the viewport less the body's side padding."""
+    rule = re.search(r"\.grid\s*\{[^}]*grid-template-columns:[^;}]*minmax\(([^;]*?),\s*1fr\)",
+                     style)
+    assert rule, "`.grid` no longer declares a minmax track; this test is looking at nothing"
+    minimum = rule.group(1).strip()
+    if re.fullmatch(r"min\([^)]*100%\s*\)", minimum):
+        return True
+    px = re.fullmatch(r"([0-9.]+)px", minimum)
+    pad = re.search(r"body\s*\{[^}]*padding:\s*([0-9.]+)rem", style)
+    assert px and pad, f"cannot read the track minimum {minimum!r} or the body padding"
+    return float(px.group(1)) <= viewport - 2 * float(pad.group(1)) * 16
+
+
+def test_the_grid_track_minimum_cannot_exceed_the_content_width_at_375px():
+    assert _grid_minimum_fits(_style())
+
+
+def test_a_fixed_340px_track_minimum_is_caught():
+    """The planted failure: 340px against a 327px content box (375 less 2 x 24px padding)."""
+    planted = _style().replace("minmax(min(340px, 100%), 1fr)", "minmax(340px, 1fr)")
+    assert planted != _style(), "the plant did not land"
+    assert _grid_minimum_fits(planted) is False
+    assert _grid_minimum_fits(planted.replace("340px", "300px")) is True

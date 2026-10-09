@@ -558,7 +558,10 @@ def calibrate(g: pl.DataFrame, *, window: int | None = CAL_WINDOW,
 # sqrt(2) times the binomial standard error under p = 0.80, the form #310 pre-registered for a
 # group: the calibration draw's share of the variance equals the test binomial's. Printed
 # beside a group and decides nothing here -- whether a group may rule is #310's.
-_SIGMA_SCALE = math.sqrt(2.0)
+_SIGMA_SCALE = not_an_input(
+    math.sqrt(2.0),
+    "a printed scale that decides nothing here: sqrt(2) times the binomial standard error, "
+    "whose reading is #310's and not a prediction's")
 
 
 def _published_row(label: str, g: pl.DataFrame, position: str | None) -> dict[str, Any]:
@@ -1108,11 +1111,7 @@ SHAPE_ACTIONS = Actions(
 SHAPE_HARNESS = Harness(name="interval_shape", arm_a="skew-free", arm_b="deployed skew",
                         within=WITHIN, ceiling_arm=CEILING_ARM, actions=SHAPE_ACTIONS,
                         unit="CRPS points per player-week", places=4,
-                        arm_modules=("hub.models.base", "hub.models.components",
-                                     "hub.models.conformal", "hub.models.coverage",
-                                     "hub.models.margin", "hub.models.market",
-                                     "hub.models.predict", "hub.models.scoring_rules",
-                                     "hub.models.volume"))
+                        arm_roots=("hub.models.coverage",))
 
 
 def shape_scores(g: pl.DataFrame) -> pl.DataFrame:

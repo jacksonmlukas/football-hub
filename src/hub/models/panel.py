@@ -31,6 +31,22 @@ conditions -- the reading is taken at kickoff, inside the outcome window -- and 
 line and the injury report as a pre-kickoff fact, screened with a pre-registered negative sign.
 It is now `RECORDED`, a side that is neither a feature nor an outcome, and a game with no
 reading is no longer coded as calm. #170.
+
+**Three leakage surfaces the Panel does not close, named 2026-10-07 (#313, audit IV R11).**
+Disclosed, not fixable here; every figure that reads the Panel inherits the ones it touches.
+
+* *The expected-fantasy-point columns are not point-in-time.* `ff_opportunity`'s `_exp` values
+  are the output of a model nflverse fitted over its whole history, so a 2022 row reading 2021
+  values is reading numbers produced with sight of 2022 through 2025. The weeks averaged are
+  point-in-time (`expanding_weeks`); the values averaged are not. The direction is unmeasured:
+  it can inflate or deflate any feature built from them. Read only when `PanelSpec.expected`.
+* *The inner join on consensus is a collider.* With `consensus=True` a row survives only if the
+  player was ranked that week, which conditions on talent and opportunity jointly. Every screen
+  figure is conditional on being ranked, and a feature whose effect runs through *he became
+  relevant* is attenuated. A spec choice, never before named as a bias. The gate consumers
+  (`consensus=False`) do not take this join.
+* *The Friday scrape has seen Thursday night.* See `assign_weeks`: the direction there is
+  corrected below.
 """
 from __future__ import annotations
 
@@ -699,6 +715,12 @@ def assign_weeks(scrapes: pl.DataFrame, windows: pl.DataFrame,
     Thursday-night player the ranking is not strictly pre-kickoff. That hands the *incumbent*
     one game of hindsight a team-week, which biases against the arm being tested, so it is
     conservative rather than dangerous.
+
+    **Corrected 2026-10-07 (#313): conservative for the arm under test, not for the control.**
+    The same hindsight is in the consensus *control* of the screen, and a control with one game
+    of hindsight over-absorbs signal and biases every partial correlation toward zero. The
+    sentence above is true of the arm and says nothing about the screen's controls; prior text
+    kept.
     """
     out = (scrapes.sort("scrape_date")
                   .join_asof(windows.sort("last_kick"), left_on="scrape_date",

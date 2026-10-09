@@ -43,11 +43,11 @@ from typing import NamedTuple
 import polars as pl
 
 from hub.cli import unavailable
+from hub.closure import import_closure, module_digests
 from hub.config import FANTASY_WEEKS
 from hub.declare import decision, not_an_input
 from hub.fetch import consensus
 from hub.fetch.consensus import Capture
-from hub.ledger import import_closure, module_digests
 from hub.models.experiment import PLAYER_STATS_COLS, Actions, Ceiling, GateRun, gate
 from hub.season.weekly_gate import CEILING_ARM, WITHIN, void_condition
 
@@ -60,7 +60,7 @@ DESIGN = "docs/weekly-forward.md"
 
 # The arm the design pinned (#456): the first-party import closure of the code the forward
 # measurement runs, walked from the modules that define the arm (`ARM_ROOTS`) with the same
-# walker and the same exemptions as the ledger's code declaration (`hub.ledger.import_closure`,
+# walker and the same exemptions as the ledger's code declaration (`hub.closure.import_closure`,
 # `CLOSURE_EXEMPT`, #439), each module's source hashed. A reading taken on a closure that differs
 # in any module -- one edited, one added, one gone -- refuses, and the refusal names which. It
 # replaces #432's pin of the blob of `hub/exhibits/weekly_projection.py` alone, which could not
@@ -72,32 +72,32 @@ ARM_ROOTS = ("hub.season.weekly_gate_data", "hub.exhibits.weekly_projection")
 PINNED_ARM_MODULES: dict[str, str] = {
     "hub.draft.adp_history": "286f2d9c667d",
     "hub.draft.availability": "34b707bf7e75",
-    "hub.draft.board": "6e61e56ecac0",
+    "hub.draft.board": "65ae0104fb6c",
     "hub.draft.cohort": "5d6e03fc2cd5",
     "hub.draft.durability": "59fbe0402d35",
-    "hub.draft.optimize": "b5c2b10a2ec1",
+    "hub.draft.optimize": "314a78a8b5ef",
     "hub.draft.picks": "c695b87cc5e8",
     "hub.draft.playoff_sos": "42bc422f88eb",
     "hub.draft.prior_signal": "4b7421479470",
     "hub.draft.regression": "3ba22b3a649e",
     "hub.draft.report": "df1f8e20569e",
-    "hub.draft.season": "56b60168eb98",
+    "hub.draft.season": "55989706066a",
     "hub.draft.state": "ad958507df6a",
-    "hub.exhibits.weekly_projection": "d5b25ec6130b",
-    "hub.holdout": "a8d095db300c",
+    "hub.exhibits.weekly_projection": "372f7180071e",
+    "hub.holdout": "e74f918fab67",
     "hub.league": "1d50b1eaf7ef",
     "hub.models.base": "8c41cd5f26d1",
-    "hub.models.components": "c402b0c4856f",
-    "hub.models.conformal": "f98558ab2051",
-    "hub.models.coverage": "e036e1981cef",
-    "hub.models.margin": "9da0f4839e89",
+    "hub.models.components": "b23c5d7d0c49",
+    "hub.models.conformal": "79827e566bba",
+    "hub.models.coverage": "3c2d88cc6908",
+    "hub.models.margin": "8fd45168e983",
     "hub.models.market": "098baf487556",
-    "hub.models.panel": "2f9f2aad1946",
+    "hub.models.panel": "99d19fba99e0",
     "hub.models.predict": "ddf960a1dfe6",
     "hub.models.scoring_rules": "3c201f3a0d6f",
     "hub.models.volume": "31e5321b1e6d",
     "hub.names": "93e503040186",
-    "hub.season.weekly_gate": "211f84e4a564",
+    "hub.season.weekly_gate": "73cc434a55db",
     "hub.season.weekly_gate_data": "1823ccae01c3",
 }
 

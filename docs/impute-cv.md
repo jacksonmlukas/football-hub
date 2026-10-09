@@ -171,11 +171,55 @@ refit has one cluster fewer than the decision was taken on, with QB and TE poole
 decision rather than by the run. The reason carries the hold-out's own pooled number so the
 replay's run line shows what it did not use.
 
+> **Amended 2026-10-08 (#320, option B adopted by the maintainer; prior text above kept).**
+> The paragraph above is the state from #294 to this date and is no longer true of
+> `conf/holdout/`: **the hold-out now binds both constants.** Its reason, "a four-season refit
+> has one cluster fewer than the decision was taken on", disqualified every leave-one-season-out
+> fit by construction (a held-out fit always has one cluster fewer) and so could never rebind
+> anything; it left the rookie measurement in-sample on the hold-out draft path, which was half
+> of the width discrepancy `docs/gate-power.md`'s 2026-09-21 note chased (the 11.10 vs 10.40).
+>
+> `scripts/fit_impute_cv.py --exclude-season N --point-in-time --record` refits on the seasons
+> **strictly before N** (method.md rule 2), not on every season but N: a 2023 replay is not
+> handed the 2024-25 rookies. That is a different fit from the other four scripts' (they leave
+> one season out and keep the later ones), and it is said on the command each set records. It
+> costs clusters on the early seasons, which is why the table is read with its `k`:
+>
+> | replayed season | fit on | clusters | n | `IMPUTE_CV` | QB | RB | WR | TE |
+> |---|---|---|---|---|---|---|---|---|
+> | 2022 | 2021 | 1 | 15 | 0.187 | 0.187 | 0.187 | 0.187 | 0.187 |
+> | 2023 | 2021-22 | 2 | 32 | 0.248 | 0.248 | 0.248 | 0.248 | 0.248 |
+> | 2024 | 2021-23 | 3 | 51 | 0.287 | 0.287 | 0.287 | **0.273** | 0.287 |
+> | 2025 | 2021-24 | 4 | 70 | 0.317 | 0.317 | **0.379** | **0.279** | 0.317 |
+> | *shipped (2021-25)* | | *5* | *92* | *0.315* | *0.315* | *0.359* | *0.288* | *0.315* |
+>
+> `IMPUTE_CV` is the shipped statistic: the mean of the per-season pooled CVs against the
+> season's own xFP per game (on one fit season, that season's pooled CV). A position keeps its
+> own CV only with at least `MIN_POS_N` = 20 rookies and takes the refit pooled value
+> otherwise -- the shipped split (RB 36 and WR 42 own, QB 8 and TE 6 pooled) as a threshold,
+> fixed before the run. So the early seasons' by-position tables are the pooled value four
+> times: that is what 15 and 32 rookies can say, not a missing measurement. **What this
+> says about the constant:** 2021 was the quietest rookie class (0.187) and the number climbs
+> as seasons are added (0.187, 0.310, 0.365, 0.405 per season, 2021-24), so the replayed
+> 2022-23 seasons carry a rookie error well below the shipped 0.315 -- the in-sample value
+> flattered no one there and *over*-stated the error the replayer could have known. The
+> previously recorded leave-one-out pooled numbers (0.329, 0.314, 0.302, 0.327) are not
+> comparable: they were over players, from a fit that included later seasons.
+>
+> **A correction to "What moved" above.** It says the backtest's season simulator does not read
+> the `xfp_imputed` flag and that the exhibit is the only caller. The exhibit's `win_probability`
+> *is* arm B's scorer in `hub.draft.backtest`, and the board it is handed carries the flag, so
+> the draft gate reads `IMPUTE_CV_BY_POS` on every imputed row. The 2026-10-08 hold-out replay
+> confirms it moved (docs/gate-power.md): the #197 frozen-board pin is the fixture that carries
+> no flag, which is why it held. The weekly forward arm does not read it
+> (docs/weekly-forward.md, 2026-10-08).
+
 ## Reproduce
 
 ```bash
 uv run python scripts/fit_impute_cv.py
-uv run python scripts/fit_impute_cv.py --exclude-season 2024    # hold-out, #294
+uv run python scripts/fit_impute_cv.py --exclude-season 2024    # print only, leave-one-out
+uv run python scripts/fit_impute_cv.py --exclude-season 2024 --point-in-time --record  # #320
 ```
 
 Reads the archive through `board_as_of`, `expected_points` and `nflverse.load`; nothing is

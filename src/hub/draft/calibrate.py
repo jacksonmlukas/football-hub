@@ -58,7 +58,7 @@ from hub.declare import not_an_input
 # sd = k * sqrt(mu), fitted in docs/weekly-spread.md. This used to be an unfitted 0.55*mu,
 # which the per-game-played variant of this fit flagged by returning an implausible 0.041
 # for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
-from hub.draft.season import WEEKLY_K, WEEKLY_K_POOLED
+from hub.models import predict
 
 TEAM_GAMES = 17
 DRAFTED_THROUGH = 168          # 14 rounds x 12 teams: the roster the simulator holds
@@ -143,7 +143,7 @@ def _curve(sub: pl.DataFrame) -> np.ndarray:
 
 
 def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
-                     rng: np.random.Generator, k: float = WEEKLY_K_POOLED) -> np.ndarray:
+                     rng: np.random.Generator, k: float) -> np.ndarray:
     """Season totals under the model exactly as `hub.draft.season` writes it.
 
     Talent is multiplicative-normal and clipped at zero; weekly points are normal around
@@ -165,8 +165,9 @@ def simulate_seasons(mu: np.ndarray, cv: float, games: np.ndarray,
 def _k_of(positions: np.ndarray) -> float:
     """Weekly coefficient for a set of players, pooled when they are mixed."""
     uniq = {str(p) for p in positions}
-    return WEEKLY_K[uniq.pop()] if len(uniq) == 1 and next(iter(uniq), None) in WEEKLY_K \
-        else WEEKLY_K_POOLED
+    k = predict.WEEKLY_K
+    return k[uniq.pop()] if len(uniq) == 1 and next(iter(uniq), None) in k \
+        else predict.WEEKLY_K_POOLED
 
 
 def nominal_for(target: float, mu: np.ndarray, games: np.ndarray, picks: np.ndarray,
@@ -265,7 +266,7 @@ def ratio_and_noise(block: Block, idx: np.ndarray | None = None,
     total = block.total if idx is None else block.total[idx]
     g = block.games if idx is None else block.games[idx]
     pred = block.curve(idx)
-    kk = WEEKLY_K.get(block.pos, WEEKLY_K_POOLED)
+    kk = predict.WEEKLY_K.get(block.pos, predict.WEEKLY_K_POOLED)
     ppg = np.where(g > 0, total / np.maximum(g, 1), 0.0)
     nv = kk ** 2 * g * ppg / (TEAM_GAMES ** 2 * np.maximum(pred, 1e-6) ** 2)
     return real / pred, nv
@@ -530,8 +531,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as e:
         return unavailable("hub.draft.calibrate", "your league's past drafts", e)
     got = fit_talent_cv(df, debias=True)
-    from hub.draft.season import TALENT_CV, TALENT_CV_BY_POS
-
     print(f"  fitted on {got['n']} drafted player-seasons over {got['clusters']} players, "
           f"seasons {got['seasons']}, picks 1-{DRAFTED_THROUGH}")
     print("    resampled over the player, and the curve refitted inside each draw")
@@ -540,7 +539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"    dispersion net of it                 : {got['talent_cv']:.3f}  "
           f"95% CI [{got['ci95'][0]:.3f}, {got['ci95'][1]:.3f}]")
     print(f"    nominal, i.e. what the model needs   : {got['nominal']:.3f}   "
-          f"(in use: {TALENT_CV})")
+          f"(in use: {predict.TALENT_CV})")
     print(f"\n  {'pos':>4} {'raw':>7} {'se':>6} {'shrunk':>8} {'nominal':>8} "
           f"{'in use':>7} {'vs pool':>9}")
     for pos in DRAFTED_POSITIONS:
@@ -548,7 +547,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {pos:>4} {got['by_position'][pos]:>7.3f} {got['se_by_position'][pos]:>6.3f} "
               f"{got['by_position_shrunk'][pos]:>8.3f} "
               f"{got['nominal_by_position'][pos]:>8.3f} "
-              f"{TALENT_CV_BY_POS.get(pos, TALENT_CV):>7.2f} {d:>+8.1f}se")
+              f"{predict.TALENT_CV_BY_POS.get(pos, predict.TALENT_CV):>7.2f} {d:>+8.1f}se")
     # Which positions differ is a property of the data, not a sentence to hardcode: this
     # has to stay true when it is re-run next August with another season added.
     def _se_away(p: str) -> float:
