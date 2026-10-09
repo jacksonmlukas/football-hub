@@ -300,7 +300,7 @@ def test_the_retired_board_is_hidden_not_deleted():
     """Retirement is a render decision: the section stays in the markup, and the rule never
     touches the file or its manifest entry."""
     text = PAGE.read_text()
-    assert '<section id="p-board">' in text
+    assert re.search(r'<section id="p-board"[^>]*>', text)
     assert "section[hidden] { display: none; }" in text
     assert (DATA / "draft_board.json").exists()
     man = json.loads((DATA / "manifest.json").read_text())
@@ -1266,3 +1266,237 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
         assert _parses(node, _script(mutant)).returncode == 0
         got = _run_module_against(_mutant_site(tmp_path / name, mutant))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- two zones: this week, and the record (#350) -----------------------------
+#
+# The page is ordered by when its data changes, not by which artifact a panel reads: zone one
+# (regenerated Wed & Sat, live Sun) holds the lineup, the survivor panel and the slate, in that
+# order; zone two (weekly, after scoring) holds the track record. `auto-fit` reflows panels
+# *within* a zone and no longer decides the ranking of the page.
+
+# The board leads zone one while it is shown (#348): in July it is that week's decision.
+WEEK_ZONE = ("p-board", "p-roster", "p-survivor", "p-slate")
+RECORD_ZONE = ("p-record",)
+
+
+def _layout(text: str) -> dict:
+    """Where every element with an id sits: its ancestors' ids and classes, and document order.
+
+    Parsed rather than regexed, so a panel moved into the wrong zone is seen by where it *is*
+    and not by where a pattern expected to find it."""
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack: list[tuple[str, str | None, list[str], bool]] = []
+            self.seen: list[dict] = []
+
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            node: tuple[str, str | None, list[str], bool] = (
+                tag, a.get("id"), str(a.get("class") or "").split(), "hidden" in a)
+            if a.get("id"):
+                self.seen.append({"id": a["id"], "tag": tag, "classes": node[2],
+                                  "in": [s[1] for s in self.stack if s[1]],
+                                  "in_classes": [c for s in self.stack for c in s[2]],
+                                  "hidden": any(s[3] for s in self.stack) or node[3]})
+            if tag not in {"meta", "link", "br", "img", "input", "hr"}:
+                self.stack.append(node)
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    break
+
+    parser = P()
+    body = text.split("</style>", 1)[1].split("<script>", 1)[0]
+    parser.feed(body)
+    return {s["id"]: dict(s, order=i) for i, s in enumerate(parser.seen)}
+
+
+def _panels_in(layout: dict, zone: str) -> list[str]:
+    return [i for i, s in sorted(layout.items(), key=lambda kv: kv[1]["order"])
+            if i.startswith("p-") and zone in s["in"]]
+
+
+def test_each_panel_sits_in_its_zone_in_the_agreed_order():
+    layout = _layout(PAGE.read_text())
+    assert _panels_in(layout, "z-week") == list(WEEK_ZONE)
+    assert _panels_in(layout, "z-record") == list(RECORD_ZONE)
+
+
+def test_the_page_reads_header_then_this_week_then_the_record():
+    layout = _layout(PAGE.read_text())
+    order = [layout[i]["order"] for i in ("subtitle", "z-week", *WEEK_ZONE, "z-record",
+                                          *RECORD_ZONE, "footer")]
+    assert order == sorted(order), "the page is no longer header, this week, the record, footer"
+
+
+def test_a_panel_belongs_to_exactly_one_zone_and_nothing_visible_is_outside_both():
+    layout = _layout(PAGE.read_text())
+    for panel in (i for i in layout if i.startswith("p-")):
+        zones = [z for z in ("z-week", "z-record") if z in layout[panel]["in"]]
+        assert len(zones) == 1 or layout[panel]["hidden"], (
+            f"{panel} is in {zones or 'no zone'} and is visible: every panel answers to one zone")
+
+
+def test_a_shown_board_appears_in_this_week_and_a_retired_one_stays_hidden(node):
+    """#348 decides whether the board shows; #350 decides where it sits when it does. In July
+    (no slate yet) `boardShows` is true and the section it unhides is the first panel of zone
+    one; the markup ships it hidden so a retired board costs no space."""
+    layout = _layout(PAGE.read_text())
+    board = layout["p-board"]
+    assert "z-week" in board["in"] and "z-record" not in board["in"]
+    assert _panels_in(layout, "z-week")[0] == "p-board"
+    assert board["hidden"], "the board must ship hidden; render() unhides it through boardShows"
+    assert _board_shows(node, JULY) is True
+    assert _board_shows(node, WEEK_2) is False
+
+
+def test_the_zones_do_not_share_a_column_track():
+    """A zone is its own full-width band. If either sat inside a `.grid` -- the thing that
+    ranks panels by column -- the two would be tracks of one grid again, which is the layout
+    this replaces."""
+    layout = _layout(PAGE.read_text())
+    for zone in ("z-week", "z-record"):
+        assert "grid" not in layout[zone]["in_classes"], f"{zone} sits inside a grid"
+        assert layout[zone]["in"] == [], f"{zone} is nested in {layout[zone]['in']}"
+
+
+def test_the_zones_are_named_for_when_their_data_changes():
+    text = PAGE.read_text()
+    assert re.search(r'id="zh-week">This week<', text)
+    assert re.search(r'id="zh-record">The record<', text)
+    assert "regenerated Wed &amp; Sat, live Sun" in text and "weekly, after scoring" in text
+
+
+def _bins_svg(node: str, bins: list[dict]) -> str:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const pct = v =>[^\n]*"),
+        _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
+    ])
+    return _run(node, f"{lifted}\nconsole.log(reliabilitySVG({json.dumps(bins)}));")
+
+
+def _ten_bins(filled: dict[int, int]) -> list[dict]:
+    return [{"bin": f"{i / 10:.1f}-{(i + 1) / 10:.1f}", "n": filled.get(i, 0),
+             "predicted": (i + 0.5) / 10 if i in filled else None,
+             "actual": 0.5 if i in filled else None} for i in range(10)]
+
+
+def test_an_empty_bin_produces_a_mark(node):
+    out = _bins_svg(node, _ten_bins({4: 5, 6: 9, 7: 4}))
+    assert out.count('class="bin-empty"') == 7, "the seven empty bins must each be drawn"
+    assert out.count('class="bin-filled"') == 3
+    assert "0.0-0.1: no games" in out and "0.9-1.0: no games" in out
+
+
+def test_an_all_empty_curve_is_still_ten_marks_not_nothing(node):
+    assert _bins_svg(node, _ten_bins({})).count('class="bin-empty"') == 10
+
+
+def test_an_empty_bin_sits_in_its_own_slot_by_its_label(node):
+    out = _bins_svg(node, _ten_bins({}))
+    xs = [float(x) for x in re.findall(r'class="bin-empty" cx="([0-9.]+)"', out)]
+    assert xs == sorted(set(xs)) and len(xs) == 10, "ten distinct slots, left to right"
+
+
+def test_a_bin_whose_label_cannot_be_read_is_slotted_by_index(node):
+    out = _bins_svg(node, [{"bin": "?", "n": 0}, {"bin": None, "n": 0}])
+    xs = re.findall(r'class="bin-empty" cx="([0-9.]+)"', out)
+    assert len(set(xs)) == 2
+
+
+def test_the_diagram_frame_is_larger_than_the_old_230px_maximum(node):
+    out = _bins_svg(node, _ten_bins({5: 3}))
+    got = re.search(r"max-width:(\d+)px", out)
+    assert got and int(got.group(1)) > 230
+
+
+def test_the_diagram_is_labelled_so_the_empty_bins_are_explained(node):
+    assert "held no games" in _bins_svg(node, _ten_bins({5: 3}))
+
+
+def test_a_hostile_bin_label_cannot_reach_the_diagram_markup(node):
+    out = _bins_svg(node, [{"bin": HOSTILE, "n": 0}])
+    assert "<script>" not in out and "&lt;script&gt;" in out
+
+
+def test_the_writer_publishes_the_empty_bins_the_page_now_draws():
+    """The artifact carries empty bins as `n: 0` with null `predicted` and `actual`, which is
+    what `_ten_bins` plants. If the writer ever dropped them, the diagram would quietly go back
+    to showing only the bins that held games."""
+    import polars as pl
+
+    from hub import publish
+    got = publish.reliability(pl.DataFrame({"home_win_prob": [0.55, 0.65],
+                                            "home_won": [1, 0]}), n_bins=10)
+    assert len(got) == 10 and sum(1 for b in got if b["n"] == 0) == 8
+
+
+# --- the zones' planted failures ---------------------------------------------
+
+SLATE_SECTION = ('<section id="p-slate" class="wide"><h3>Who wins this week '
+                 '<span class="age"></span></h3><div class="body"></div></section>\n')
+
+
+@parent_only
+@pytest.mark.parametrize("name,expected", [
+    ("slate-in-the-record-zone", "test_each_panel_sits_in_its_zone_in_the_agreed_order"),
+    ("zones-share-a-grid", "test_the_zones_do_not_share_a_column_track"),
+    ("empty-bins-omitted", "test_an_empty_bin_produces_a_mark"),
+])
+def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node, tmp_path):
+    text = PAGE.read_text()
+    if name == "slate-in-the-record-zone":
+        # The slate is lifted out of zone one and planted at the head of the record's grid.
+        assert SLATE_SECTION in text
+        mutant = text.replace("    " + SLATE_SECTION, "", 1).replace(
+            '<section id="p-record"', SLATE_SECTION + '<section id="p-record"', 1)
+    elif name == "zones-share-a-grid":
+        mutant = text.replace('<div class="zone" id="z-week"',
+                              '<div class="grid"><div class="zone" id="z-week"', 1)
+    else:
+        mutant = text.replace("if (!(b.n > 0)) {", 'if (!(b.n > 0)) { return "";', 1)
+    assert mutant != text, f"{name}: the mutation did not land"
+    assert _parses(node, _script(mutant)).returncode == 0
+    got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+    assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- a card never outgrows its container (#350 review) -----------------------
+
+PHONE = 375
+
+
+def _grid_minimum_fits(style: str, viewport: int = PHONE) -> bool:
+    """Whether `.grid`'s track minimum can exceed the content box at `viewport` px.
+
+    Fits when the minimum is wrapped in `min(..., 100%)`, which caps it at the container, or
+    when its literal px is no more than the viewport less the body's side padding."""
+    rule = re.search(r"\.grid\s*\{[^}]*grid-template-columns:[^;}]*minmax\(([^;]*?),\s*1fr\)",
+                     style)
+    assert rule, "`.grid` no longer declares a minmax track; this test is looking at nothing"
+    minimum = rule.group(1).strip()
+    if re.fullmatch(r"min\([^)]*100%\s*\)", minimum):
+        return True
+    px = re.fullmatch(r"([0-9.]+)px", minimum)
+    pad = re.search(r"body\s*\{[^}]*padding:\s*([0-9.]+)rem", style)
+    assert px and pad, f"cannot read the track minimum {minimum!r} or the body padding"
+    return float(px.group(1)) <= viewport - 2 * float(pad.group(1)) * 16
+
+
+def test_the_grid_track_minimum_cannot_exceed_the_content_width_at_375px():
+    assert _grid_minimum_fits(_style())
+
+
+def test_a_fixed_340px_track_minimum_is_caught():
+    """The planted failure: 340px against a 327px content box (375 less 2 x 24px padding)."""
+    planted = _style().replace("minmax(min(340px, 100%), 1fr)", "minmax(340px, 1fr)")
+    assert planted != _style(), "the plant did not land"
+    assert _grid_minimum_fits(planted) is False
+    assert _grid_minimum_fits(planted.replace("340px", "300px")) is True
