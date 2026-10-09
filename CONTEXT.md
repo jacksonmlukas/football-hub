@@ -469,6 +469,18 @@ resting on a reader knowing that it cannot.
 _Avoid_: stale (which is what the manifest says about *all three* of those, and so cannot
 name this one), skipped, failed — a Kept producer did run.
 
+**Previous decision**:
+The roster artifact's `previous` field: the lock decision (`start`, `sit`, `withheld`) of the
+sync before the current one, with the `generated_at` it was made at, written by
+`hub.publish._previous_decision` and nothing else. It is the input to the lineup call's "what
+changed since the last regen" line (#355); the publisher owns which run was previous and the page
+only diffs the two. Previous means a different *sync* (the roster is dated from the parquet), so
+a re-run on the same sync carries the earlier `previous` forward rather than diffing a decision
+against itself. `null` on a first run or an unreadable prior file. The line reads **Kept** and
+stale as they already are: a stale or Kept roster renders it in the stale state with the stamp of
+the run it describes, and a prior more than five days before the current sync is said to be
+too old rather than diffed against.
+
 **Remaining plan**:
 A survivor plan over the weeks still ahead, against the teams not already spent, together
 with the scope that makes it readable: which weeks are behind it, which of the weeks left the
