@@ -278,10 +278,19 @@ MDEs at 0.5 and 1.5 (13.0, 13.8) are larger than at 1.0 (the paired differences 
 mechanism. Three scales on one axis, one seed:
 the table bounds the knob's effect at the grid points, it does not interpolate between them.
 
-Stamps, the same on all three rows: `cfg_digest` `96fee74f`, `board_digest` `fa974b0d`,
-`data_digest` printed as `unpinned` by the runner, commit
-`7aee8823`. No constant moved, so `config_digest` is unchanged.
+**The grid was fixed before the run (rule 1).** The three scales, 0.5 / 1.0 / 1.5, are
+`backtest.NOISE_SCALES` (a `not_an_input` declaration, "the axis the pick-noise sensitivity
+sweeps") and are the example in the #49 paragraph above (`--noise-scales 0.5,1.0,1.5`), both
+written when the runner was built and before any row existed. They were not chosen after
+seeing a result, and no other scale was run.
 
+Stamps, the same on all three rows: `cfg_digest` `96fee74f`, `board_digest` `fa974b0d`,
+`data_digest` printed as `unpinned` by the runner. The commit stamp `7aee8823` is this branch's
+HEAD when the runs started; the code that ran is `main` at the #405 merge (`15cad00`) plus
+#323's changes, none of which touch the draft gate. No constant moved, so `config_digest` is
+unchanged by this run.
+
+**From the #49 refit (earlier history, not this run's stamps; text kept).**
 `config_digest` moves from `281b7b7a` to `ab32cf62` and `fitted_digest` from `d5598b96` to
 `3d6fc111`. That is [ADR-0006](adr/0006-fitted-constants-live-with-their-provenance.md) working:
 a refit is supposed to move the model version. The prediction artifacts already committed under

@@ -1,6 +1,7 @@
 """The three frozen modules read nflverse through a different door and print the same numbers.
 
-#326 freezes `spread`, `injury` and `margin`: no number may move. #398 routes their reads through
+#326 froze `spread`, `injury` and `margin` (it is closed; the digests below are the record of
+what they printed): no number was to move. #398 routes their reads through
 `hub.fetch.nflverse.load`, which validates, caches and pins what it returns -- a change to *how*
 the bytes arrive that is allowed to change no number a reader sees. "I checked it by eye" is not
 a control for that, so this file is one, and it was written **before** the routing: the
@@ -222,7 +223,7 @@ def test_a_frozen_module_prints_the_numbers_it_printed_before_it_was_routed(modu
     got = _observed(main, argv, tmp_path / "out.parquet", cut)
     assert got == EXPECTED[module], (
         f"{module} printed a different thing from the same fixture ({got}). Under #326 no "
-        f"number may move; a routing change that moves one is a modelling change.")
+        f"number was to move; a routing change that moves one is a modelling change.")
 
 
 def test_the_unattributed_rows_the_loader_drops_were_already_invisible_to_injury():
