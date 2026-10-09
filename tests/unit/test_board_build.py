@@ -1091,6 +1091,36 @@ def test_the_report_survives_a_round_trip_through_pickle(offline):
     assert back.frame.equals(built.frame)
 
 
+def _durability_stage(monkeypatch, prior: pl.DataFrame) -> pl.DataFrame:
+    from hub.draft import durability
+    monkeypatch.setattr(durability, "prior_season", lambda season: prior)
+    monkeypatch.setattr(durability, "appearances",
+                        lambda season: pl.DataFrame({"player": NAMES[:3]}))
+    monkeypatch.setattr(board, "consensus", lambda *a, **k: pl.DataFrame({"player": []}))
+    ctx = board.BuildContext(season=2024, season_ahead=2025, league_size=12, live=False)
+    return board._run_durability(pl.DataFrame({"player": NAMES[:3]}), ctx)
+
+
+def test_a_prior_season_that_joins_to_nobody_is_said_not_priced_as_zero(monkeypatch, capsys):
+    """#467: a 2-row 2024 stats entry joined to no 2025 board player, `missed` was null for
+    all of them, and absence was priced at zero with nothing on any screen. The control
+    plants the failure -- an empty prior season -- and asks what would silence the warning."""
+    out = _durability_stage(monkeypatch, pl.DataFrame(
+        {"player": [], "pos": [], "g": [], "ppg": []},
+        schema={"player": pl.Utf8, "pos": pl.Utf8, "g": pl.UInt32, "ppg": pl.Float64}))
+    assert out["missed"].null_count() == out.height
+    err = capsys.readouterr().err
+    assert "WARNING durability" in err and "2024" in err and "2025" in err
+
+
+def test_a_prior_season_that_joins_is_not_warned_about(monkeypatch, capsys):
+    out = _durability_stage(monkeypatch, pl.DataFrame(
+        {"player": NAMES[:2], "pos": ["WR", "WR"], "g": pl.Series([10, 17], dtype=pl.UInt32),
+         "ppg": [12.0, 14.0]}))
+    assert out["missed"].null_count() < out.height
+    assert "WARNING" not in capsys.readouterr().err
+
+
 def test_report_for_is_gone():
     """The seam #199 opened -- `report_for(frame, report)` resolving a report from a frame
     and an optional report -- closed with the report on the Board (#295)."""

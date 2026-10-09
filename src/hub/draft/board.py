@@ -912,10 +912,18 @@ def _run_durability(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:
     # with no stats row at any position sat the season out, and is priced as such rather
     # than as a rookie (#86); the consensus is read as of that season's start, the same
     # archive `board_as_of` replays a past draft from.
-    return durability.attach(
+    out = durability.attach(
         b, durability.prior_season(ctx.season),
         sat_out=durability.sat_out(consensus(f"{ctx.season}-09-01"),
                                    durability.appearances(ctx.season)))
+    # GUARD durability-joins-nobody [unit/test_board_build.py]: a prior season that matched no
+    # player is said, not priced as "nobody misses games" (#467)
+    if out.height and out["missed"].null_count() == out.height:
+        print(f"    WARNING durability: the {ctx.season} season's stats joined to none of "
+              f"{out.height} board players; absence is NOT priced for {ctx.season_ahead}. "
+              f"Check the nflverse player_stats cache for {ctx.season}.", file=sys.stderr)
+    # /GUARD
+    return out
 
 
 def _run_bye(b: pl.DataFrame, ctx: BuildContext) -> pl.DataFrame:

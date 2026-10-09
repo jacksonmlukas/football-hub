@@ -4838,3 +4838,39 @@ read off the same frames. null is ADOPT at δ=0.
 - The harness reads (C) from `gate`'s own summary and seasons rather than from a `gate` that
   implements it, because `gate` was not to change before this section. The inclusion control and
   the `ship` column are what hold the harness's conjunction to the code that lands.
+
+## Amended 2026-10-09 (#467): the draft gate's 2025 season priced absence at zero; restated (prior text kept)
+
+Every draft-gate figure above that includes the 2025 season (the #376 / #381 / #429 restatements,
+`docs/pick-noise.md`'s table, ADR-0009 and ADR-0019's quotations) was computed while the cache entry
+`data/raw/nflverse/player_stats/2024-f5bfe0a4.parquet` held **2 rows** (2,419 bytes, written
+2026-08-23, week 1 only) where a fresh bulk fetch of the same read holds **18,961**, 18 regular-season
+weeks and 4 post-season ones. `hub.draft.durability.prior_season(2024)` read it, joined to no 2025
+board player, left `missed` null for all 491, and `next_season_absence` priced absence at zero. The
+2025 board's `missed` is non-null for **254** players (184 with `missed > 0`) once the entry is whole,
+against **0** before. The entry is local to the primary checkout's cache; a fresh fetch is whole.
+The 2022-2024 seasons were never affected (their prior-season entries are full).
+
+The same recipe, once, alone, on the fixed cache and on a tree that includes #315 item 1
+(`--seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling --workers 4`, `--seed 0`, 20 drafts
+x 4 seasons, 12 x 250 sims; optimizer 0.7% join failures of 1,120 drafted names):
+
+| | before (2025 unpriced; tree with #315 item 1, #464's run) | after (2025 priced) |
+|---|---|---|
+| optimizer - market | -12.58 | **-13.49** |
+| 95% CI, percentile | [-16.53, -8.62] | [-18.36, -8.62] |
+| 95% CI, t | [-19.41, -5.74] | [-21.32, -5.67] |
+| season-clustered MDE (80%) | 8.64 | 9.90 |
+| ceiling (perfect foresight) | +21.90 | +21.90 |
+| ceiling / MDE | 2.53x | 2.21x |
+| per season 2022 / 2023 / 2024 / 2025 | -18.72 / -7.30 / -9.95 / -14.34 | -18.72 / -7.30 / -9.95 / **-18.00** |
+| verdict | REMOVE (4 resolved of 4) | REMOVE (4 resolved of 4) |
+
+Only 2025 moves (-14.34 to -18.00, se 2.59); 2022-2024 reproduce to the cent, which is the control
+that the cache entry is the only thing that changed. The pre-#315 figure (-11.02 [-14.84, -7.20],
+MDE 7.84, 3 resolved of 4) stands above as the record of what was published; this table is
+today's. **The verdict word does not change (REMOVE), the ceiling does not change, stage 2 passes
+(ceiling / MDE 2.21 > 1).** The mean moves against arm B by 0.9 points, about a third of a typical
+per-season se (3.3); no mechanism for the direction was traced. Not acted on. The 0.5 and 1.5 rows of `docs/pick-noise.md` were not re-run and
+carry the same 2025 caveat. The ledger entry `state/gate-width.json` is not changed by this
+restatement; the run's `state/inputs` record was not kept (dirty tree, unpinned data).

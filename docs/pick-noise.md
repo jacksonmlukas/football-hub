@@ -267,6 +267,12 @@ power, and the ceiling is the perfect-foresight arm played in the same room.
 | **1.0 (the fitted law)** | **−11.02** | **[−14.84, −7.20]** | **+7.84** | **+21.90** | **REMOVE** |
 | 1.5 (room follows it half again as loosely) | −15.97 | [−22.43, −9.76] | +13.83 | +16.56 | REMOVE |
 
+> **Amended 2026-10-09 (#467; the table and paragraph below are kept as written).** The 2025
+> season in every row above was run with absence priced at zero (a truncated 2024 stats cache entry).
+> The 1.0 row re-run on the fixed cache is -13.49 [-18.36, -8.62], MDE 9.90, ceiling +21.90, REMOVE
+> (4 of 4 resolved); see `docs/gate-power.md`, *Amended 2026-10-09 (#467)*. The 0.5 and 1.5 rows
+> were not re-run.
+
 **What it says.** The 1.0 row reproduces the figure `docs/gate-power.md` restated on 2026-10-06
 (−11.02 [−14.84, −7.20], MDE 7.84, ceiling +21.90), to the digit. The optimizer loses to the market
 at every scale and every interval excludes zero on the losing side, so the verdict does not depend
