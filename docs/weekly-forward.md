@@ -865,3 +865,27 @@ No 2026 outcome has been read, and #430's identity test
 
 **The row now pinned.** `hub.draft.season` `8a4f096b219b` (was `55989706066a`); the other 28 rows
 are as in the latest table above. Closure digest **`625cf0d04f3404fe`** (was `060820bfc56a32db`).
+
+## Amended 2026-10-09: `hub.draft.board` re-pinned for #467's durability warning (prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; one row of the latest is superseded.
+
+**What changed.** #467: `hub.draft.board._run_durability` prints a warning to stderr when the
+prior season joined to none of the board's players (every `missed` null), where it used to price
+absence at zero without saying so. The edit is the one `if` and its `print` after the existing
+`durability.attach` call, and the stage returns the same frame it returned. It changes
+`hub.draft.board` and no other module of the closure: on this tree `arm_closure()` differs from
+the pin in that one module. The fetch-side half of #467 (a plausibility floor on a completed
+season's cached read) lives in `hub.fetch.nflverse`, which is in `CLOSURE_EXEMPT` and so is not
+in the pin.
+
+**Why the arm's figures are unchanged.** The new branch computes nothing and writes nothing but a
+line on stderr; it fires only when `missed` is null for every player, which no 2022-2025 board
+the weekly gate reads is once the 2024 stats cache entry is whole. `weekly_gate_data` reads the
+board for names and ranks, never `missed`. #430's identity test
+(`tests/unit/test_weekly_projection_move.py`) passes on this tree. No 2026 outcome has been read.
+
+**The row now pinned.** `hub.draft.board` `d6aa7628cdd2` (was `65ae0104fb6c`); the other 28 rows
+are as in the latest table above. Closure digest **`376fd23b022aa541`** (was
+`625cf0d04f3404fe`).

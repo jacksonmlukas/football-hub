@@ -306,3 +306,8 @@ accurate enough to beat following consensus and filling your starting slots.
 > **The run that stands is today's** (−11.02, t [−17.22, −4.82], MDE 7.84, replayed three times),
 > and the verdict word is the one stated above, REMOVE on 3 resolved of 4, 1 abstained. #376's
 > −12.40 / 11.01 stays as the record of what that run printed.
+
+> **Superseded figures, 2026-10-09.** The −11.02 / MDE 7.84 quoted above are restated in
+> [gate-power.md](../gate-power.md): first for #315 item 1 (−12.58, MDE 8.64), then for #467,
+> whose 2025 season had priced absence at zero (−13.49, MDE 9.90, 2025 −18.00). The verdict is
+> REMOVE, 4 resolved of 4, unchanged. The text above is kept as written.

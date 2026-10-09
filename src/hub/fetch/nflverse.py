@@ -251,6 +251,11 @@ class Source:
     `clean` drops the rows that belong to no player before the contract is applied, for the
     two sources that ship them. It runs on what the adapter returned, so it runs on a Replay
     as it runs on the network, and a recorded set cannot be cleaner than the wire was.
+
+    `season_floor` is the fewest rows a *completed* season of this source can plausibly have
+    (0 = not declared). It is far below any real season and far above a truncated write: a
+    2-row `player_stats` 2024 entry sat in the cache for six weeks and priced 2025 absence at
+    zero, because the contract checks shape and not size (#467). See `_short_by`.
     """
 
     name: str
@@ -260,6 +265,7 @@ class Source:
     arguments: tuple[tuple[str, Any], ...] = ()
     whole: bool = False
     clean: Callable[[pl.DataFrame], pl.DataFrame] | None = None
+    season_floor: int = 0
 
 
 class Adapter(Protocol):
@@ -292,11 +298,16 @@ class Network:
 
 
 SOURCES: dict[str, Source] = {s.name: s for s in (
-    Source("pbp", PBP, "pbp"),
+    # `season_floor` (#467), rows per completed season, measured 2026-10-09 from the cached
+    # entries (counts only): pbp 48,771-49,922 over 2021-2025 (floor 30,000 leaves 38% under
+    # the minimum); player_stats 17,341-19,400 over 2019-2025 (floor 5,000 leaves 71% under it).
+    # Seasons before 2019 were not measured; a floor is a truncation detector, not a count.
+    Source("pbp", PBP, "pbp", season_floor=30_000),
     Source("ff_opportunity", FF_OPPORTUNITY, "ff_opportunity",
            arguments=(("stat_type", "weekly"),), clean=_clean_ff_opportunity),
     Source("player_stats", PLAYER_STATS, "player_stats",
-           arguments=(("summary_level", "week"),), clean=_clean_player_stats),
+           arguments=(("summary_level", "week"),), clean=_clean_player_stats,
+           season_floor=5_000),
     Source("schedules", SCHEDULES, "schedules", whole=True),
     # The scheme layer. Neither is WIDE -- 26 and 29 columns -- so both come back whole.
     Source("participation", PARTICIPATION, "participation"),
@@ -572,6 +583,24 @@ def _cache_path(source: str, seasons: Sequence[int | str], cols: Sequence[str] |
     return root / source / f"{stamp}-{digest}{dated}.parquet"
 
 
+def _short_by(source: str, seasons: Sequence[int | str], rows: int) -> str | None:
+    """Why a read of this size cannot be the whole of what was asked, or None if it can.
+
+    Only a completed season has a floor to fail (the current one is still being played), and
+    only the network's rows are judged: a Replay is a recorded set the caller built, and a
+    fixture of six rows is its point. The floor is `Source.season_floor` per completed season
+    in the key, so a multi-season entry that lost a season fails too.
+    """
+    if not isinstance(_ADAPTER, Network):
+        return None
+    floor = SOURCES[source].season_floor
+    done = [int(s) for s in seasons if str(s).isdigit() and int(s) <= SEASON_COMPLETED]
+    if not floor or not done or rows >= floor * len(done):
+        return None
+    return (f"{source} {sorted(done)} has {rows:,} rows; a completed season has at least "
+            f"{floor:,} ({floor * len(done):,} for {len(done)})")
+
+
 def _pin_path(path: Path) -> Path:
     """The pin sits beside its cache entry, not in a registry of its own.
 
@@ -778,6 +807,7 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
     stamp = _as_of_date(as_of)
     iso = stamp.isoformat() if stamp is not None else None
     path = _cache_path(source, seasons, cols, cache, stamp)
+    suspect: pl.DataFrame | None = None
     if path.exists() and not refresh:
         # A cache hit is still a read, and the run has to be able to say what it read --
         # including when there is no pin beside the entry to say it with. An entry written
@@ -785,12 +815,31 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         # bytes this run cannot name, and `UnpinnedRead` is how it says that. Dropping it
         # instead left the digest short by one source and looking complete, which is the one
         # outcome the sentinel exists to prevent.
-        served = _pin_beside(path)
-        _remember(path, served if served is not None else UnpinnedRead(source, iso))
-        return pl.read_parquet(path)
+        cached = pl.read_parquet(path)
+        # GUARD cache-entry-plausible [unit/test_fetch_nflverse_floor.py]: a truncated entry is
+        # refetched, or served with a warning when the refetch fails, never used silently
+        short = _short_by(source, seasons, cached.height)
+        if short is None:
+            served = _pin_beside(path)
+            _remember(path, served if served is not None else UnpinnedRead(source, iso))
+            return cached
+        print(f"    WARNING cache entry {path.name} looks truncated: {short}. Refetching.",
+              file=sys.stderr)
+        suspect = cached
+        # /GUARD
 
     contract = SOURCES[source].contract
-    df = _read(SOURCES[source], seasons)
+    try:
+        df = _read(SOURCES[source], seasons)
+    except Exception as exc:
+        if suspect is None:
+            raise
+        # Last-good, loudly: the product degrades, it does not stop (CLAUDE.md).
+        print(f"    WARNING refetch of {source} {sorted(seasons)} failed ({exc!r}); serving "
+              f"the truncated cache entry {path.name}.", file=sys.stderr)
+        served = _pin_beside(path)
+        _remember(path, served if served is not None else UnpinnedRead(source, iso))
+        return suspect
 
     # The as-of filters content where the source allows it and only labels a snapshot where
     # it does not. `pinned_at` on the pin below is what says which of the two happened, so
@@ -825,6 +874,14 @@ def load(source: str, seasons: Sequence[int | str], cols: Sequence[str] | None =
         # and served them from cache forever after -- and the frame passed, so nothing said
         # so. Refusing used to keep such a frame out of the cache entirely.
         df = contract.validate(df)
+
+    short = _short_by(source, seasons, df.height)
+    if short is not None:
+        # The wire itself is short: hand back the larger of it and the entry, say so, and keep
+        # it out of the cache so the next call asks again instead of serving it for weeks.
+        print(f"    WARNING fetched {short}; not cached.", file=sys.stderr)
+        _remember(path, UnpinnedRead(source, iso))
+        return suspect if suspect is not None and suspect.height > df.height else df
 
     atomic.write_parquet(df, path)
     pin = Pin(
