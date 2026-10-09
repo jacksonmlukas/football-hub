@@ -84,10 +84,12 @@ the unit the veteran number quoted its own se on — over players — is se 0.02
 0.031 (vs PPG), which would read as 2.5 and 4.4 se; that is the unit that treats rows within a
 season as independent, and it is reported so the two can be read side by side, not as the
 interval. RB and WR carry the difference; QB and TE are eight and six players and say nothing
-on their own, which is why they ship at the pooled value. The curve also sits low for rookies
+on their own, which is why they ship at the pooled value. The curve also sits *high* for rookies
 — a median residual of −0.07 to −0.11 against the veterans' −0.03 — which is the direction
 the disposition predicted: a rookie's rank carries no production information, so the curve
-fitted on veterans is optimistic about him.
+fitted on veterans is optimistic about him. (Restated 2026-10-07, #315 and #462. Prior text:
+"The curve also sits low for rookies". The residual is `realised / imputed − 1`, so a negative
+median is a curve above the outcome. See "What moved".)
 
 **`≥ 8 games` conditions on the outcome.** A rookie who lost the job or was hurt by
 October has fewer than eight games and is dropped, and those are disproportionately the
@@ -99,6 +101,56 @@ rates on a handful of games, which is noise of a different kind, and the choice 
 rather than tuned.
 
 ## What moved
+
+> **Withdrawn 2026-10-07: item 3 of #315 did not land and `_impute_xfp` is unchanged.** The
+> maintainer moved it to #462, so nothing below shipped: the shipped curve is still the rolling
+> median followed by a running minimum, and `site/data/draft_board.json` is unaffected. The
+> text and measurements are kept as the record of the trial; read "now" and "is now" as "in the
+> trial". The one thing that stands is the sign correction in "The result" ("sits high").
+
+**2026-10-07 (#315, item 3, trial, not shipped — see #462): the curve.** `_impute_xfp` smoothed with a rolling median and
+then forced the curve non-increasing with a running minimum. That clamp lowers every point
+that follows a rise and never raises one, so it sat at or below the smoothed data wherever
+the data rose. It is now pool-adjacent-violators (`board._pava_decreasing`): the violating
+neighbours are replaced by their mean, which is the least-squares non-increasing fit and
+keeps the sum of the smoothed values (the residuals of the monotone fit average zero). The
+rolling median is kept, since it is what stops a single outlier setting a rookie's projection;
+only the clamp changed. Measured with `scripts/fit_impute_cv.py` on the same five boards,
+before → after (median residual, `sd(realised / imputed − 1)` against the season's own
+xFP/game):
+
+| | QB | RB | WR | TE | pooled |
+|---|---|---|---|---|---|
+| median residual, rookies | −0.11 → −0.11 | −0.08 → −0.10 | −0.08 → −0.10 | +0.21 → +0.21 | **−0.07 → −0.08** |
+| CV, rookies | 0.164 → 0.164 | 0.359 → 0.358 | 0.288 → 0.283 | 0.319 → 0.318 | 0.324 → 0.322 |
+| season-clustered mean CV | | | | | 0.315 → 0.314 (se 0.037 → 0.035) |
+
+**The median residual on rookies moved away from zero, not toward it, and the sentence above
+that read it as the curve sitting low had the sign backwards.** The residual is
+`realised / imputed − 1`, so a negative median is a curve that sits *high* for rookies —
+which is the explanation this page already gave (a rookie's rank carries no production
+information, so a curve fitted on veterans is optimistic about him). PAVA lifts the curve
+where the clamp lowered it, so a curve that was already high got slightly higher for RB and
+WR, and the rookie residual widened by about 0.01. The fix is to the veteran-side bias, and
+there it works: blanking the observed veterans inside the top 200 in ten rank-interleaved
+folds and re-imputing them (918 players over the same five boards), the mean residual is
++0.0057 under the clamp and +0.0017 under PAVA, the median is 0.000 under both, and the CV
+0.217 → 0.216. The size of the whole effect is small next to the rookie gap, which is the
+finding: the clamp's one-sided bias was real and tiny, and the rookie residual is a
+different thing (rank carries no information about a rookie) that no monotone fit removes.
+Pooling the raw values without the median (PAVA alone) was also measured: rookie pooled
+median −0.066, CV 0.322, veteran CV 0.231 — a noisier curve for no better residual, so not
+adopted.
+
+`IMPUTE_CV` / `IMPUTE_CV_BY_POS` are **not refitted**: the pooled value moved 0.315 → 0.314 and
+the per-position ones by at most 0.005 (WR 0.288 → 0.283), inside the se. A refit would move
+`config_digest` for a change smaller than the noise in the estimate; it stays a separate
+decision. On the published board (2026-09-04, 300 rows, 43 imputed) the imputed
+`xfp_per_game` rises by a mean of +0.20 per game (median +0.15, max +0.60; 27 of 43 rows
+change, none fall) — RB +0.24, WR +0.19, QB +0.23, TE +0.05, against imputed levels of 7 to 13.
+That figure is the artifact's rows re-imputed from the 300 published rows, not a re-run of
+`make draft`, so the published `site/data/draft_board.json` carries the old curve until the
+next build.
 
 **2026-09-16 (#298): the constants.** `IMPUTE_CV` 0.260 → 0.315 and `IMPUTE_CV_BY_POS`
 to the table at the top; `config_digest` `b1f69382` → `8dbae43a`, `fitted_digest` `04c2d997`

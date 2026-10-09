@@ -1693,8 +1693,22 @@ FROZEN_ARM_A = ["Christian McCaffrey", "Drake London", "Travis Etienne Jr.",
 # different constant: the same model on differently-paired noise, which is what the 0.31
 # run-to-run spread in gate-power.md is the size of at the published budget. The published
 # figure is re-run under ADR-0009's 2026-09-12 restatement, not here.
-FROZEN_ARM_B = ["Christian McCaffrey", "Jalen Hurts", "Kyren Williams", "Josh Jacobs",
-                "Ken Walker III", "Marquise Brown"]
+# Moved a fourth time under #315 item 1, and again it is the season half: `_absence_factor`
+# used to divide the whole weekly draw of a played week by the play fraction `f`, which scaled
+# the sd by `1/f`; a played week is now drawn at mean `mu/f` and sd `sd/sqrt(f)`. The means are
+# the same and every player with expected absence has a narrower weekly spread (about -10%
+# for a player expected to miss three of seventeen), so the same seeded noise is mapped to
+# different points and the roster the same objective draws at 10 season sims changed: Hurts,
+# Walker III and Brown out; Tank Dell, Calvin Ridley and Kirk Cousins in, with the room (arm A
+# above) unchanged. Not a different objective and not a different constant: the corrected
+# arithmetic on the same seeds, at a budget whose run-to-run spread is the size of the move.
+# ADR-0009's published figure is re-run by the draft gate, not here.
+# Re-captured on the merged tree 2026-10-09 and unchanged by it. #464 explained the move: arm B
+# changes here because of a tie reshuffle at this fixture's 2x10 budget (the candidates are
+# within noise of each other), not because the objective changed materially; the season-level
+# effect there is -1.56, within noise, and the verdict stays REMOVE.
+FROZEN_ARM_B = ["Christian McCaffrey", "Kyren Williams", "Josh Jacobs", "Tank Dell",
+                "Calvin Ridley", "Kirk Cousins"]
 
 
 def _frozen_board():

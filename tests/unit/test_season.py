@@ -626,6 +626,43 @@ def test_absence_is_mean_preserving():
     assert abs(with_.mean() - without.mean()) < 0.03 * without.mean()
 
 
+def test_the_absence_scale_on_the_sd_is_one_over_root_f_against_a_closed_form():
+    """#315 item 1. A played week is the draw at the per-game-played rate: the mean divides
+    by the play fraction `f` and the sd by `sqrt(f)`, because sd = k*sqrt(mu). The closed
+    form is computed here from `next_season_absence` directly, not read back from the code
+    under test, so the two cannot agree by sharing a mistake.
+
+    Rule 18, planted: with the sd scale set to `1/f` (the whole draw divided by `f`, which
+    is what shipped before) the end-to-end ratio below is 1.214 for the 3-of-17 player where
+    1.102 is asserted, and both assertions fail."""
+    from hub.draft.durability import TEAM_GAMES, next_season_absence
+    hist = np.asarray(ABSENCE_HIST, dtype=float)
+    mu_missed, _ = next_season_absence(hist)
+    f = np.maximum(1.0 - mu_missed / TEAM_GAMES, 1.0 / TEAM_GAMES)
+    ab = season._absence_factor(hist, 10, 14, np.random.default_rng(0))
+    assert np.allclose(ab.play_frac, f)
+    assert np.allclose(ab.mean_scale, 1.0 / f)
+    assert np.allclose(ab.sd_scale, 1.0 / np.sqrt(f))
+    # The audit's own worked case: three games of seventeen.
+    f3 = 14.0 / 17.0
+    assert abs(1.0 / np.sqrt(f3) - 1.102) < 1e-3 and abs(1.0 / f3 - 1.214) < 1e-3
+
+    # End to end: the sd of the weeks a player actually plays, with absence over without.
+    rosters, mu, sd, pos, _ = _one_team_per_player(ABSENCE_HIST)
+    mu, sd = np.full(mu.size, 40.0), np.full(sd.size, 3.0)      # nowhere near the zero clip
+    kw = {"n_sims": 3000, "weeks": 14, "talent_cv": 0.0}
+    base = simulate_weeks(rosters, mu, sd, pos, rng=np.random.default_rng(5), **kw)
+    got = simulate_weeks(rosters, mu, sd, pos, rng=np.random.default_rng(5), missed=hist, **kw)
+    assert got.shape == base.shape
+    checked = 0
+    for j in np.flatnonzero(f < 0.9):
+        wk = got[:, :, j][got[:, :, j] > 0.0]
+        assert abs(wk.std() / base[:, :, j].std() - 1.0 / np.sqrt(f[j])) < 0.03 / np.sqrt(f[j])
+        assert abs(wk.mean() / base[:, :, j].mean() - 1.0 / f[j]) < 0.02 / f[j]
+        checked += 1
+    assert checked >= 3, "the fixture has too few fragile players to show the difference"
+
+
 def test_no_history_means_not_modelled_and_never_reaches_the_absence_path(monkeypatch):
     """Graceful degradation, and the reason no seeded result in this suite was re-baselined.
 
