@@ -1546,6 +1546,8 @@ vm.runInContext('render()', ctx).then(() => {{
   for (const [id, e] of Object.entries(els)) {{
     if (id.startsWith('p-')) out.panels[id] = {{ body: e._c['.body']?.innerHTML ?? '',
       cls: e._c['.body']?.className ?? '', age: e._c['.age']?.textContent ?? '' }};
+    // A statement slot (#354) is its own element, not a panel's child: it carries the state class.
+    if (id.startsWith('st-')) out.panels[id] = {{ body: e.innerHTML, cls: e.className, age: '' }};
   }}
   console.log(JSON.stringify(out));
 }});
@@ -1899,3 +1901,231 @@ def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
     assert _parses(node, _script(mutant)).returncode == 0
     got = _run_module_against(_mutant_site(tmp_path / "unguarded", mutant))
     assert "test_a_status_record_that_throws_costs_the_footer_and_nothing_else" in _failed(got)
+
+
+# --- one page-level backtest statement, written to retire loudly (#354) ---------------------
+#
+# `backtestStatement` is lifted into node for the cases; `_render` runs the real page for where
+# it sits. Every figure in it is read off the track record artifact, so the tests plant figures
+# the committed artifact does not carry (123 scored, 7 pre-registered) and require them back.
+# Planted failures: a figure typed into the page that disagrees with the artifact, a statement
+# that ignores its window or the manifest's stale flag, one that stays `unconfirmed` once
+# pre-registration begins, one that does not escape, and an absent record that leaves the slot
+# empty.
+
+def _statement(node: str, tr: dict | None, art: dict | None = None) -> dict:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const cap = [^\n]*"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
+        _lift(r"const staleOf = [^\n]*"),
+        _lift(r"const failureWarn = [\s\S]*?: fallback;"),
+        _lift(r"const BACKTEST_WINDOW_DAYS = \d+;"),
+        _lift(r"function backtestStatement\(tr, art\) \{[\s\S]*?\n\}"),
+    ])
+    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify(backtestStatement("
+                                 f"{json.dumps(tr)}, {json.dumps(art)})));"))
+
+
+def _days_ago(days: float) -> str:
+    from datetime import UTC, datetime, timedelta
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+def _tr(**kw) -> dict:
+    """A track record written a minute ago, carrying figures the committed one does not."""
+    return {"name": "track_record", "generated_at": _days_ago(1 / 1440), "n_scored": 123,
+            "n_preregistered": 0, "shape": "summary", **kw}
+
+
+def test_the_statement_names_the_scored_count_and_zero_preregistered_unconfirmed(node):
+    got = _statement(node, _tr())
+    assert got["cls"] == STATE_CLASSES["unconfirmed"]
+    assert ("<b>123 predictions scored retrospectively, 0 pre-registered &mdash; "
+            "a backtest, not a record.</b>") in got["html"]
+    assert "As of " in got["html"] and "goes stale 9 days after" in got["html"]
+    assert "commit predates its kickoff" in got["html"], "the condition that ends it"
+    assert "Stale:" not in got["html"]
+
+
+def test_the_statement_flips_from_unconfirmed_to_frozen_when_pre_registration_begins(node):
+    """The loud retirement. The same slot, not an absent one: the state changes and the
+    sentence now states both counts, with the remainder named as the backtest it still is."""
+    before = _statement(node, _tr(n_preregistered=0))
+    after = _statement(node, _tr(n_preregistered=7))
+    assert before["cls"] == STATE_CLASSES["unconfirmed"]
+    assert after["cls"] == STATE_CLASSES["frozen"]
+    assert "<b>7 pre-registered, 123 scored.</b>" in after["html"]
+    assert "The other 116 were scored after the fact: a backtest, not a record." in after["html"]
+    assert after["html"] != before["html"]
+    whole = _statement(node, _tr(n_preregistered=123))
+    assert whole["cls"] == STATE_CLASSES["frozen"] and "The other" not in whole["html"]
+
+
+def test_a_preregistered_count_that_could_not_be_read_is_never_stated_as_zero(node):
+    got = _statement(node, _tr(n_preregistered=None))
+    assert got["cls"] == STATE_CLASSES["unconfirmed"]
+    assert "could not be counted" in got["html"] and "0 pre-registered" not in got["html"]
+
+
+def test_the_statements_figures_are_the_artifacts_and_only_the_artifacts(node):
+    """Planted: figures nothing on the page types. Both come back; the committed artifact's own
+    64 and 80 do not, because this artifact does not say them."""
+    got = _statement(node, _tr(n_scored=123, n_preregistered=7))["html"]
+    assert "123" in got and "<b>7 pre-registered" in got
+    assert "80" not in got and "64" not in got
+
+
+def test_the_statement_builder_types_no_figure_of_its_own():
+    """Read off the page: apart from a zero compared against and the date slice (0, 10), the
+    builder holds no numeral outside the window constant, so a count typed into the sentence
+    has nowhere to be."""
+    body = _lift(r"function backtestStatement\(tr, art\) \{[\s\S]*?\n\}")
+    prose = re.sub(r"//[^\n]*", "", re.sub(r"\$\{[^}]*\}", "", body))
+    assert set(re.findall(r"\b\d+(?:\.\d+)?\b", prose)) <= {"0", "10"}, prose
+    assert re.search(r"const BACKTEST_WINDOW_DAYS = \d+;", PAGE.read_text())
+
+
+def test_an_absent_record_fills_the_slot_with_a_standing_reason(node):
+    got = _statement(node, None)
+    assert got["cls"] == STATE_CLASSES["unconfirmed"]
+    assert re.search(r"<p>[^<]+</p>", got["html"]) and "No track record" in got["html"]
+    why = _statement(node, None, {"name": "track_record", "present": False,
+                                  "stale": True, "reason": "slate build failed"})
+    assert "Slate build failed." in why["html"], "the manifest's own reason, where it has one"
+
+
+def test_a_statement_whose_record_the_manifest_marks_stale_renders_stale_with_its_age(node):
+    """Planted: the record is three days old and the manifest marks it stale. The statement
+    keeps its figures, dims into the stale state and carries the age -- never a current claim."""
+    art = {"name": "track_record", "stale": True, "reason": "ESPN unreachable",
+           "generated_at": _days_ago(3)}
+    got = _statement(node, _tr(generated_at=art["generated_at"]), art)
+    assert got["cls"] == STATE_CLASSES["stale"]
+    assert "Stale: ESPN unreachable" in got["html"] and "artifact 3d ago" in got["html"]
+    assert "123 predictions scored retrospectively" in got["html"]
+
+
+def test_a_statement_older_than_its_window_renders_stale_though_the_manifest_is_silent(node):
+    """The retirement the manifest cannot signal: a record nobody re-wrote. Ten days is past
+    the nine-day window; the control, eight days, is inside it and carries no stale label."""
+    old = _statement(node, _tr(generated_at=_days_ago(10)),
+                     {"name": "track_record", "stale": False})
+    assert old["cls"] == STATE_CLASSES["stale"]
+    assert "older than its 9-day window" in old["html"] and "artifact 10d ago" in old["html"]
+    inside = _statement(node, _tr(generated_at=_days_ago(8)),
+                        {"name": "track_record", "stale": False})
+    assert inside["cls"] == STATE_CLASSES["unconfirmed"] and "Stale:" not in inside["html"]
+
+
+def test_a_frozen_statement_goes_stale_too(node):
+    got = _statement(node, _tr(n_preregistered=7, generated_at=_days_ago(12)))
+    assert got["cls"] == STATE_CLASSES["stale"] and "7 pre-registered" in got["html"]
+
+
+def test_a_record_that_cannot_say_when_it_was_written_is_stale_with_an_unknown_age(node):
+    got = _statement(node, _tr(generated_at=None))
+    assert got["cls"] == STATE_CLASSES["stale"]
+    assert "no usable date" in got["html"] and "artifact age unknown" in got["html"]
+    assert "As of an unknown date." in got["html"]
+
+
+def test_a_hostile_figure_or_reason_in_the_statement_is_escaped(node):
+    for tr, art in [
+        (_tr(n_scored=HOSTILE, n_preregistered=0), None),
+        (_tr(n_preregistered=HOSTILE), None),
+        (_tr(), {"name": "track_record", "stale": True, "reason": HOSTILE}),
+        (None, {"name": "track_record", "present": False, "stale": True, "reason": HOSTILE}),
+    ]:
+        got = _statement(node, tr, art)["html"]
+        assert "<script>" not in got and "&lt;script&gt;" in got, (tr, art)
+
+
+def _fresh_record(**kw) -> dict:
+    committed = json.loads((PAGE.parent / "data" / "track_record.json").read_text())
+    return {**committed, "generated_at": _days_ago(1 / 1440), **kw}
+
+
+def test_the_page_renders_the_statement_once_under_the_header_before_every_zone():
+    layout = _layout(PAGE.read_text())
+    slot = layout["st-backtest"]
+    assert slot["in"] == [] and not slot["hidden"], "outside every zone and panel, never hidden"
+    assert layout["subtitle"]["order"] < slot["order"] < layout["z-week"]["order"]
+    assert len([i for i in layout if i.startswith("st-")]) == 1
+
+
+def test_the_committed_record_renders_a_frozen_statement_of_both_counts(node):
+    """The committed artifact carries a pre-registered count above zero (#422), so the live
+    page is on the far side of the flip. Its figures are read back off the file."""
+    tr = _fresh_record()
+    got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
+    assert tr["n_preregistered"] > 0
+    assert STATE_CLASSES["frozen"] in got["cls"].split()
+    assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+
+
+def test_the_rendered_statement_is_unconfirmed_while_nothing_is_preregistered(node):
+    got = _render(node, {"track_record": _fresh_record(n_preregistered=0)})["panels"]["st-backtest"]
+    assert STATE_CLASSES["unconfirmed"] in got["cls"].split()
+    assert "0 pre-registered &mdash; a backtest, not a record." in got["body"]
+
+
+def test_with_no_track_record_the_slot_holds_a_standing_reason_not_nothing(node):
+    got = _render(node, {"track_record": None})["panels"]["st-backtest"]
+    assert got["body"].strip() and "No track record" in got["body"]
+
+
+def test_a_stale_manifest_entry_turns_the_rendered_statement_stale(node):
+    man = _with_artifact("track_record", stale=True, reason="scoring failed")
+    got = _render(node, {"manifest": man, "track_record": _fresh_record()})["panels"]["st-backtest"]
+    assert STATE_CLASSES["stale"] in got["cls"].split()
+    assert "Stale: scoring failed" in got["body"]
+
+
+def test_a_record_past_its_window_renders_the_page_statement_stale(node):
+    got = _render(node, {"track_record": _fresh_record(generated_at=_days_ago(30))})
+    assert STATE_CLASSES["stale"] in got["panels"]["st-backtest"]["cls"].split()
+    assert "artifact 30d ago" in got["panels"]["st-backtest"]["body"]
+
+
+def test_no_other_panel_carries_a_backtest_chip_beside_the_page_statement(node):
+    """The caveat is said once. The record panel's own lede keeps its framing sentence; every
+    other panel is silent on it, and no panel draws a chip for it."""
+    got = _render(node, {"track_record": _fresh_record()})["panels"]
+    for pid, p in got.items():
+        if pid in ("st-backtest", "p-record"):
+            continue
+        assert "backtest" not in p["body"].lower(), f"{pid} carries its own backtest caveat"
+    assert not re.search(r'class="tag[^"]*backtest', PAGE.read_text())
+
+
+@parent_only
+def test_a_page_that_types_a_figure_or_ignores_the_window_turns_the_statement_red(node, tmp_path):
+    text = PAGE.read_text()
+    for name, old, new, expected in [
+        ("typed-figure", 'const scored = n === null ? "An unknown number of" : esc(n);',
+         'const scored = "80";',
+         "test_the_statements_figures_are_the_artifacts_and_only_the_artifacts"),
+        ("no-window",
+         "const aged = !Number.isFinite(at) || (Date.now() - at) / 864e5 > BACKTEST_WINDOW_DAYS;",
+         "const aged = false;",
+         "test_a_statement_older_than_its_window_renders_stale_though_the_manifest_is_silent"),
+        ("never-flips", "pre === 0 || pre === null ? STATE.unconfirmed : STATE.frozen",
+         "STATE.unconfirmed",
+         "test_the_statement_flips_from_unconfirmed_to_frozen_when_pre_registration_begins"),
+        ("manifest-stale-ignored", "const stale = staleOf(art) ?? (aged",
+         "const stale = (aged",
+         "test_a_statement_whose_record_the_manifest_marks_stale_renders_stale_with_its_age"),
+        ("unescaped", "<b>${esc(pre)} pre-registered, ${scored} scored.</b>",
+         "<b>${pre} pre-registered, ${scored} scored.</b>",
+         "test_a_hostile_figure_or_reason_in_the_statement_is_escaped"),
+        ("empty-when-absent", "html: `<p>${esc(failureWarn(art,", "html: `${esc(failureWarn(art,",
+         "test_an_absent_record_fills_the_slot_with_a_standing_reason"),
+    ]:
+        mutant = text.replace(old, new)
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0, name
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
