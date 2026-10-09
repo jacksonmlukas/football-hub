@@ -1832,6 +1832,85 @@ def test_the_roster_panel_is_dated_from_the_parquet_not_from_the_run(site, tmp_p
     assert entry["generated_at"] == jsonio.file_stamp(src)
 
 
+# --- "what changed since the last regen" needs the previous decision (#355) -----------------
+#
+# The publisher keeps the prior sync's lock decision and its stamp beside the current one, so the
+# page diffs two things it was handed and owns nothing it could get wrong about which run came
+# first. Prior is the *prior run's*, not this run's: two consecutive publishes on different syncs
+# are asserted to carry A's decision in B's `previous`, and a re-run on B's own sync leaves it be.
+
+def _synced(src, day: int, rows):
+    """Write a roster parquet and date it `day` of October 2026, as a sync that day would.
+    The first eight of `rows` are the set lineup (QB1/RB2/WR3/TE1/FLEX1); any after are bench."""
+    import os
+
+    sets = {r[0] for r in rows[:8]}
+    _roster_frame(rows).with_columns(starting=pl.col("player").is_in(sets)).write_parquet(src)
+    t = dt.datetime(2026, 10, day, 12, tzinfo=dt.UTC).timestamp()
+    os.utime(src, (t, t))
+
+
+# Sync A: Brooks is set at flex while a better WR sits on the bench, so the lock names one swap.
+_SYNC_A = [("Love", "QB", 14.9), ("Jacobs", "RB", 15.5), ("Tuten", "RB", 8.8),
+           ("Chase", "WR", 19.7), ("Rice", "WR", 14.9), ("Collins", "WR", 14.4),
+           ("Andrews", "TE", 9.2), ("Brooks", "RB", 7.0), ("Bench", "WR", 12.0)]
+# Sync B reverses who is better, so its decision is a different swap.
+_SYNC_B = [(n, p, {"Tuten": 1.0, "Brooks": 30.0, "Bench": 2.0}.get(n, m)) for n, p, m in _SYNC_A]
+
+
+def test_the_previous_decision_is_the_prior_runs_not_this_runs(site, tmp_path):
+    src = tmp_path / "roster.parquet"
+    _synced(src, 3, _SYNC_A)
+    first = publish.roster(out=site, path=src)
+    assert isinstance(first, dict)
+    assert first["previous"] is None, "nothing was published before the first run"
+
+    _synced(src, 7, _SYNC_B)
+    second = publish.roster(out=site, path=src)
+    assert isinstance(second, dict)
+    assert second["previous"] == {"generated_at": first["generated_at"], "start": first["start"],
+                                  "sit": first["sit"], "withheld": first["withheld"]}
+    assert (second["start"], second["sit"]) != (first["start"], first["sit"]), "the control"
+    assert second["previous"]["generated_at"] < second["generated_at"]
+    on_disk = json.loads((site / "roster.json").read_text())
+    assert on_disk["previous"] == second["previous"], "what is published is what was returned"
+
+    # A third sync's previous is the second's decision -- one deep, never a growing chain.
+    _synced(src, 10, _SYNC_A)
+    third = publish.roster(out=site, path=src)
+    assert isinstance(third, dict)
+    assert third["previous"]["generated_at"] == second["generated_at"]
+    assert third["previous"]["start"] == second["start"]
+    assert "previous" not in third["previous"]
+
+
+def test_a_rerun_on_the_same_sync_does_not_diff_a_decision_against_itself(site, tmp_path):
+    src = tmp_path / "roster.parquet"
+    _synced(src, 3, _SYNC_A)
+    publish.roster(out=site, path=src)
+    _synced(src, 7, _SYNC_B)
+    second = publish.roster(out=site, path=src)
+    assert isinstance(second, dict) and second["previous"]["generated_at"].startswith("2026-10-03")
+    again = publish.roster(out=site, path=src)           # the same parquet, the same stamp
+    assert isinstance(again, dict)
+    assert again["previous"] == second["previous"], "the earlier sync's decision is still previous"
+
+
+def test_an_unreadable_published_roster_gives_no_previous_rather_than_failing(site, tmp_path):
+    src = tmp_path / "roster.parquet"
+    _synced(src, 7, _SYNC_A)
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "roster.json").write_text("{not json")
+    got = publish.roster(out=site, path=src)
+    assert isinstance(got, dict) and got["previous"] is None
+    (site / "roster.json").write_text("[]")
+    got = publish.roster(out=site, path=src)
+    assert isinstance(got, dict) and got["previous"] is None
+    (site / "roster.json").write_text(json.dumps({"rows": []}))        # no stamp to carry
+    got = publish.roster(out=site, path=src)
+    assert isinstance(got, dict) and got["previous"] is None
+
+
 # --- the best-XI tick, which is the lock's answer and not the panel's ------
 #
 # `roster` used to rebuild the best lineup out of the lock's two deltas -- the set starters,

@@ -734,6 +734,39 @@ def live(out: Path | None = None, league: str = "nfl") -> dict[str, Any] | None:
 
 # --- the roster, and the lineup it implies --------------------------------
 
+def _previous_decision(dest: Path, stamp: str) -> dict[str, Any] | None:
+    """The lock decision of the run before this one, for the page's "what changed" line (#355).
+
+    **The publisher owns the diff's inputs; the page owns nothing it could get wrong about which
+    run was previous.** What is on disk before this write *is* the previous publish, so its
+    decision (`start`, `sit`, `withheld`) and the stamp it was made at become `previous` beside
+    the current one. Read before `_publish` overwrites it, never after.
+
+    **Previous means a different sync, not a different publish.** The roster is dated from the
+    parquet (#122), so a re-run on the same sync carries the same `generated_at`; taking the
+    file on disk as "previous" there would diff a decision against itself and report "no change"
+    about two runs that were never two decisions. So when the stamp has not moved, the
+    `previous` already published is carried forward untouched.
+
+    None when nothing usable is published (a first run, an unreadable file): the page reads
+    that as "no earlier decision to compare", never as an empty diff.
+    """
+    try:
+        old = json.loads((dest / "roster.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(old, dict):
+        return None
+    if old.get("generated_at") == stamp:
+        carried = old.get("previous")
+        return carried if isinstance(carried, dict) else None
+    at = old.get("generated_at")
+    if not isinstance(at, str):
+        return None
+    return {"generated_at": at,
+            **{k: list(old.get(k) or []) for k in ("start", "sit", "withheld")}}
+
+
 def roster(out: Path | None = None,
            path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
@@ -787,10 +820,14 @@ def roster(out: Path | None = None,
     # sync -- and the page ages the panel from `generated_at`. Stamping now instead is how
     # last week's starters, withheld list and add/drops published as this week's, every
     # Sunday, on the one panel about the operator's own team (issue #122).
+    stamp = jsonio.file_stamp(src)
     payload = jsonio.artifact("roster", "roster.parquet", rows,
-                        as_of=jsonio.file_stamp(src),
+                        as_of=stamp,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
-                        withheld=lk.withheld, start=lk.start, sit=lk.bench)
+                        withheld=lk.withheld, start=lk.start, sit=lk.bench,
+                        # The prior sync's decision and the stamp it was made at (#355): the
+                        # page's "what changed since the last regen" reads this and nothing else.
+                        previous=_previous_decision(out or SITE, stamp))
     if bad:
         # A call the lock could not stand behind is stale, with the reason, and last-good stays
         # where it is (issue #419). What is withheld is `lock`'s refusal and stays; what was
