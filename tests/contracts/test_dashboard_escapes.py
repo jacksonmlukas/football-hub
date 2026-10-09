@@ -813,6 +813,87 @@ def test_the_slates_live_group_is_an_alias_of_the_live_state_not_a_second_rule()
         f"`.grp-live` must be defined once, sharing `.state-live`'s rule; found {defs}")
 
 
+def _token(block: str, name: str) -> str:
+    got = re.search(rf"{re.escape(name)}:\s*(#[0-9a-fA-F]{{3,6}})\b", block)
+    assert got, f"no {name} colour in that scheme"
+    return got.group(1)
+
+
+def _linear(c: float) -> float:
+    c /= 255
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _full(hex_: str) -> str:
+    h = hex_.lstrip("#")
+    return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h)
+
+
+def _luminance(hex_: str) -> float:
+    h = _full(hex_).lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * _linear(r) + 0.7152 * _linear(g) + 0.0722 * _linear(b)
+
+
+def _blend(fg: str, bg: str, alpha: float) -> str:
+    f, b = _full(fg).lstrip("#"), _full(bg).lstrip("#")
+    return "#" + "".join(f"{round(alpha * int(f[i:i + 2], 16) + (1 - alpha) * int(b[i:i + 2], 16)):02x}"
+                         for i in (0, 2, 4))
+
+
+def _contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _stale_body_contrast(style: str) -> dict[str, float]:
+    """WCAG contrast of stale body text against the card, per scheme, from the tokens.
+
+    Any `opacity` a `.state-stale` rule applies to body content is blended in: dimming the
+    ink and then fading the element stacks, which is how this was measured at 2.8:1."""
+    split = style.index("prefers-color-scheme: dark")
+    schemes = {"light": style[:split], "dark": style[split:style.index("* { box-sizing")]}
+    alpha = 1.0
+    for sel, body in re.findall(r"(?m)^\s*([^\n{}]*\.state-stale[^\n{}]*)\{([^}]*)\}", style):
+        if ".warn" in sel and ":not" not in sel:
+            continue
+        for op in re.findall(r"(?<![-\w])opacity:\s*([\d.]+)", body):
+            alpha *= float(op)
+    out = {}
+    for name, block in schemes.items():
+        ink = re.search(r"--st-stale-ink:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        card = re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        assert ink, f"no --st-stale-ink in the {name} scheme"
+        card = card or re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", style)
+        assert card
+        out[name] = _contrast(_blend(ink.group(1), card.group(1), alpha), card.group(1))
+    return out
+
+
+def test_stale_body_text_meets_wcag_aa_in_both_schemes_and_stays_distinct_from_frozen():
+    """Stale text is body text: at least 4.5:1, with the opacity stacked in. And it is not
+    simply the frozen ink: it must be measurably dimmer than frozen, or the state is lost."""
+    style = _style()
+    got = _stale_body_contrast(style)
+    assert all(v >= 4.5 for v in got.values()), f"stale body contrast under 4.5:1: {got}"
+    split = style.index("prefers-color-scheme: dark")
+    for name, block in {"light": style[:split], "dark": style[split:]}.items():
+        fg = _token(block, "--fg")
+        card = _token(block, "--card")
+        assert _contrast(fg, card) > got[name] + 3, f"stale is not dimmer than frozen in {name}"
+
+
+def test_a_too_faint_stale_value_turns_the_contrast_test_red():
+    """The planted failure: the original values, and a stacked opacity, must both fail."""
+    style = _style()
+    faint = style.replace("--st-stale-ink: #5b6170", "--st-stale-ink: #9ca3af")
+    assert faint != style
+    assert min(_stale_body_contrast(faint).values()) < 4.5
+    stacked = style.replace(".state-stale { color", ".state-stale > :not(.warn) { opacity: 0.5; }\n  .state-stale { color")
+    assert stacked != style
+    assert min(_stale_body_contrast(stacked).values()) < 4.5
+
+
 def test_reduced_motion_still_stops_the_live_pulse():
     style = _style()
     assert "animation: pulse" in style

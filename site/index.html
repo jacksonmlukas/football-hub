@@ -22,7 +22,7 @@
     /* The confidence grammar (#347): one token set, four states. See "Confidence grammar". */
     --st-frozen-rule: #374151;
     --st-live-tint: color-mix(in srgb, var(--accent) 9%, transparent);
-    --st-stale-ink: #6f7480; --st-stale-rule: #9ca3af;
+    --st-stale-ink: #5b6170; --st-stale-rule: #9ca3af;
     --st-unc-ink: #6d28d9; --st-unc-hatch: rgba(109, 40, 217, 0.22);
   }
   @media (prefers-color-scheme: dark) {
@@ -32,7 +32,7 @@
       --good: #4ade80; --bad: #f87171; --accent: #60a5fa;
       --st-frozen-rule: #d1d5db;
       --st-live-tint: color-mix(in srgb, var(--accent) 14%, transparent);
-      --st-stale-ink: #8b92a0; --st-stale-rule: #5b6270;
+      --st-stale-ink: #a3aab8; --st-stale-rule: #5b6270;
       --st-unc-ink: #c4b5fd; --st-unc-hatch: rgba(196, 181, 253, 0.28);
     }
   }
@@ -83,7 +83,6 @@
   .grp-frozen { opacity: 0.95; }
   .state-stale { color: var(--st-stale-ink); border-left: 3px dotted var(--st-stale-rule);
                  padding-left: 0.6rem; }
-  .state-stale > :not(.warn) { opacity: 0.72; }
   .warn.state-stale { color: var(--warn-fg); }
   .stamp { font-weight: 600; white-space: nowrap; }
   .state-unconfirmed { color: var(--fg); font-size: 0.82rem; margin: 0.6rem 0 0;
