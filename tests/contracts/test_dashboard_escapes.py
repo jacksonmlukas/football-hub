@@ -1754,7 +1754,7 @@ def test_every_swapped_name_carries_its_position_and_team(node):
         row = next(r for r in SWAP_ROSTER["rows"] if r["player"] == name)
         assert _who(name, row["pos"], row["nfl_team"]) in out, f"{name} is bare in the headline"
     assert out.count("<li>") == 3, "one out -> in row per position"
-    for out_n, in_n in zip(SWAP_ROSTER["sit"], SWAP_ROSTER["start"]):
+    for out_n, in_n in zip(SWAP_ROSTER["sit"], SWAP_ROSTER["start"], strict=True):
         assert out.index(out_n) < out.index("&rarr;", out.index(out_n)) < out.index(in_n)
 
 
@@ -1820,7 +1820,7 @@ def test_the_roster_table_shows_nfl_team_on_every_row(node):
     assert "team" in heads and heads.index("team") == heads.index("pos") + 1
     rows = re.findall(r"<tr>((?:<td[^>]*>[^<]*</td>)+)</tr>", body)
     assert len(rows) == len(ros["rows"])
-    for cells, row in zip(rows, ros["rows"]):
+    for cells, row in zip(rows, ros["rows"], strict=True):
         tds = re.findall(r"<td[^>]*>([^<]*)</td>", cells)
         assert tds[heads.index("team")] == row["nfl_team"], row["player"]
 
