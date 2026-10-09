@@ -149,11 +149,14 @@ LIMITATIONS = (
     "conf/holdout/<season>.json and says on its run line which of these eight, and of the "
     "three companions read with them (IMPUTE_CV_BY_POS, WEEKLY_K_POOLED, "
     "WEEKLY_SKEW_POOLED; eleven keys in hub.holdout.HELD_OUT), that set refits -- the "
-    "weekly law and the teammate correlation, as of 2026-09-13 -- and which it still reads "
-    "shipped, and why. The imputation error (predict.IMPUTE_CV; rookies on the 2021-25 "
-    "boards, #298) is in HELD_OUT for completeness and is NOT one of the simulator's: arm "
-    "B's season sims draw every row at the observed spread and never read the imputed "
-    "flag; its one reader is the championship-equity exhibit",
+    "weekly law and the teammate correlation, as of 2026-09-13, and the imputation error "
+    "(predict.IMPUTE_CV, IMPUTE_CV_BY_POS) refitted on the seasons strictly before each, "
+    "as of 2026-10-08 (#320) -- and which it still reads shipped, and why. The imputation "
+    "error (rookies on the 2021-25 boards, #298) IS read by arm B: `win_probability` hands "
+    "each row's `xfp_imputed` flag to `talent_cv_for`, which adds the error in quadrature "
+    "to the talent spread of every imputed player, and it moved the hold-out replay "
+    "(docs/gate-power.md, 2026-10-08). The 2026-09-13 text here said it was not a "
+    "simulator constant; that was wrong",
 )
 
 def score_roster(names: Sequence[str], pos: Sequence[str], realised: pl.DataFrame,
