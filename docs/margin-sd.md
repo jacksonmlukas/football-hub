@@ -408,3 +408,47 @@ the real walk-forward is run**, by simulation on the real spreads with outcomes 
 Nothing that prices a game. `MARGIN_SD`, `hub.models.margin` and `hub.models.market` are not
 edited, so the weekly arm's pinned closure is untouched (#430's identity test is run to show it).
 The new module is not in `FITTED_MODULES` and nothing reads it.
+
+## Power and MDE before the run: computed 2026-10-09, before the real walk-forward was run (#465)
+
+The design above, run as written: real `spread_line` for every game (2004-2025 scored, k = 22
+held-out seasons), outcomes **simulated** (no real outcome was read by this step), 200 trials
+each, seeds `SeedSequence([465, trial])`, `HARNESS.decide` with a 500-draw bootstrap (the real run
+uses 4,000). The simulation is a scratch script outside the repo that calls only the module's
+public functions (`walk_forward`, `HARNESS`); it is not committed, and the numbers are.
+
+| truth | ADOPT | REMOVE | SHOW | NOT-RUNNABLE | mean gain | season-mean se | MDE (mean, range) | ceiling (simulated) | seasons won |
+|---|---|---|---|---|---|---|---|---|---|
+| null (the incumbent price) | 0/200 | 0/200 | 118 | 82 | -0.00070 | 0.00049 | 0.00139 (0.00057-0.00326) | +0.00153 | 8.4 of 22 |
+| planted (screen-sized shift) | 0/200 | 0/200 | 148 | 52 | +0.00059 | 0.00077 | 0.00219 (0.00104-0.00374) | +0.00281 | 12.9 of 22 |
+
+The planted shift is `delta = (-1.5, 0, +0.8, +0.9, 0)`, the screen's published residuals.
+
+**What it says, before the run.**
+
+1. **The design's MDE is about 0.0014 to 0.0022 nats a game**, against the published trailing-ten
+   ceiling of 0.0056. If the real pooled-oracle ceiling is anywhere near that figure the gate
+   *can run*, and a SHOW would be a real reading, not an exemption. If it lands near the
+   simulated ceilings above (0.0015-0.0028, which under a null is pure in-sample overfit) the
+   MDE is at or above it and NOT-RUNNABLE is the expected verdict, in 41% (null) to 26%
+   (planted) of simulated frames. Which of the two the real ceiling gives is not known before the
+   run and is not guessed here.
+2. **ADOPT is not reachable at the screen's own effect size, and is named an exemption there
+   (rule 16).** The expected gain from a correction of the size the screen reports is +0.0006 a
+   game, a quarter of the MDE and well inside the season-to-season noise; ADOPT fired in 0 of 200
+   planted trials (upper 95% bound 1.5%). Probing the unit-test fixtures (synthetic, 27 seasons of 270 games), a shift of
+   `(-6, -2, 4, 5, 0)` gains 0.025-0.03 a game and still reads SHOW, because one early season,
+   fitted on five seasons of history, goes the other way; ADOPT first appears at
+   `(-8, -3, 5, 6, 0)`, a gain near 0.05 a game and a win in all 22 seasons, about eighty times
+   the screen's. So at the effect the screen claims the
+   branches this gate can actually reach are **SHOW** and **NOT-RUNNABLE**, and ADOPT and REMOVE
+   are bars only for effects far above it. A SHOW here is not evidence of equivalence.
+3. **Null size is 0 of 200 for ADOPT and for REMOVE**, below the 0.05 the rule is held to.
+4. **Joint fitting works, and it is weakly identified.** On a binary outcome the shifts and the
+   sd are close to collinear: on a 40,000-game fixture the penalised likelihood at the planted
+   parameters and at the fitted ones differ by about a nat while the parameters differ by
+   several points. The fitted *price* matches the planted price to 0.02 (a unit test holds that),
+   and the ridge picks the smaller-norm point on the flat valley. Reported shifts are therefore
+   descriptive and are not read as estimates of the market's bias; the gate scores prices.
+
+Nothing above was tuned after seeing it; the design in the preceding section is unchanged.
