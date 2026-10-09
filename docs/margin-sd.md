@@ -452,3 +452,57 @@ The planted shift is `delta = (-1.5, 0, +0.8, +0.9, 0)`, the screen's published 
    descriptive and are not read as estimates of the market's bias; the gate scores prices.
 
 Nothing above was tuned after seeing it; the design in the preceding section is unchanged.
+
+## Result: the gate ran once, 2026-10-09 (#465)
+
+`uv run python -m hub.models.favourite_longshot --run`, one run, one ledger entry
+(`favourite_longshot`, code digest `248c040f`, data digest `a7b56ffe`), at the tree committed as
+`2419be0`. 22 held-out seasons, 2004-2025; 2026 is in progress and below `MIN_SCORED_GAMES`.
+
+**The verdict line, verbatim:**
+
+> SHOW: keep as a measurement, no consumer. 22 resolved of 22, 0 abstained (won 14, tied 0, lost 8 of 22 seasons) and the interval contains zero -- absence of evidence, not evidence of equivalence.
+
+| | |
+|---|---|
+| mean gain, shifted over `normal_cdf(s / MARGIN_SD)` | **-0.00007** nats a game |
+| 95% interval (bootstrap) | [-0.00136, +0.00107] |
+| MDE at 80% power | **+0.00184** |
+| ceiling (a perfect P(win \| spread), pooled over every held-out game) | **+0.00298** |
+| seasons | won 14, lost 8, 22 resolved, 0 abstained |
+| P(location-shifted price better) | 47.7% |
+
+**It could run, and it did not resolve a gain.** The MDE (0.00184) is below the ceiling
+(0.00298), so NOT-RUNNABLE did not fire and this is a verdict, not an exemption. The interval
+excludes any gain above about 0.0011 nats a game, which is about 36% of the ceiling. The rule-16
+expectation stood: SHOW was the reachable reading at the screen's effect size, and ADOPT was not
+reachable there.
+
+**What it means for #367.**
+
+* **ADR-0014 is not available for this correction.** Criterion 2 ("no gate can run at available
+  n") is false: the gate ran. ADR-0014's table is unchanged and still has one eligible entry.
+* **No consumer is wired, and this is not a licence to wire one.** SHOW keeps it as a
+  measurement. Option B (a survivor and pool correction in `grid_from_schedule`) has no
+  out-of-sample support from this gate: the shifted price is not better than the incumbent
+  (-0.00007), and it is worse in 8 of 22 seasons. Option B stays held behind #379 and #204, and
+  re-opening it is the maintainer's call, on this result.
+* **The screen's size is not a reason to doubt the screen's arithmetic**, only to read it as in
+  sample. The bucket residuals in the section above are real in the 2017-2026 sample; fitted on
+  the ten seasons before each year they do not price the next year better. The last fit
+  (2016-2025), descriptive only, has shifts of -0.94, -0.42, +0.65, +0.72, -0.38 by bucket
+  (0, 3, 6, 9, 14) with an sd of 11.26, the same sign pattern as the screen.
+
+**Descriptive, outside the gate, post hoc, not to be acted on.** The table the run prints has a
+`scale_only` column: the incumbent against the same fit with every shift pinned at zero and only
+the sd refitted. Its mean gain is about +0.0006 a game (14 of 22 seasons positive), against
+-0.00007 for the shifts. So whatever the sd-and-shift fit gains over the incumbent is in the sd
+(the fitted sd is 10.2-13.4, below the 12.741 constant, which was fitted to margins and not to
+win probabilities) and none is in the location. That is a post hoc comparison of two arms the
+gate did not rank, and the width of `MARGIN_SD` is gated by `margin.verdict` under its own bar;
+it is recorded because it bears on #367's "location, not shape" diagnosis, which this
+out-of-sample reading does not support.
+
+**Forward pin (#456).** `hub.models.margin`, `hub.models.market` and `hub.season.weekly_forward`
+are unedited; the new module is not in the weekly arm's closure, and the pinned digest is still
+`376fd23b022aa541`.

@@ -46,6 +46,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.declare import not_an_input
+from hub.ledger import recipe as _recipe
 from hub.models.experiment import Actions, Harness, expanding_seasons
 
 # Imported rather than restated, so the incumbent and the live price cannot drift apart.
@@ -288,18 +289,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {r['season']:>6} {r['n']:>4} {r['sd']:>7.3f} {r['ll_incumbent']:>13.5f} "
               f"{r['ll_shifted']:>11.5f} {r['diff']:>+10.5f} "
               f"{r['ll_incumbent'] - r['ll_scale_only']:>+11.5f} {r['ceiling_diff']:>+9.5f}")
-    latest = int(resid["season"].to_numpy().max())
-    last = resid.filter((pl.col("season") >= latest - TRAILING) & (pl.col("season") < latest))
+    complete = (resid.group_by("season").len().filter(pl.col("len") >= MIN_SCORED_GAMES)
+                     .sort("season")["season"].to_list())
+    window = complete[-TRAILING:]
+    last = resid.filter(pl.col("season").is_in(window))
     final = fit_shift(last["spread_line"].to_numpy().astype(float),
                       last["home_won"].to_numpy().astype(float))
-    print(f"\n  Last fit (seasons {latest - TRAILING}-{latest - 1}), descriptive: sd "
+    print(f"\n  Last fit (seasons {window[0]}-{window[-1]}), descriptive: sd "
           f"{final.sd:.3f}, shifts by bucket {EDGES} "
           + ", ".join(f"{d:+.2f}" for d in final.delta))
-    run = HARNESS.run(paired[["season", "diff", "ceiling_diff"]])
+    run = HARNESS.run(paired[["season", "diff", "ceiling_diff"]],
+                      recipe=_recipe(edges=EDGES, min_games=MIN_SCORED_GAMES,
+                                     min_past=MIN_PAST_SEASONS, prior_sd=SHIFT_PRIOR_SD,
+                                     trailing=TRAILING))
     print()
     for line in run.lines:
         print(line)
-    print(f"\n  {run.verdict[0]}: {run.verdict[1]}")
+    print(f"\n  {run.verdict[1]}")
     print(f"  resolved {run.resolved}, abstained {run.abstained}; "
           f"MDE {run.summary.get('mde', float('nan')):+.5f} against ceiling "
           f"{run.summary.get('ceiling', float('nan')):+.5f}")
