@@ -323,6 +323,7 @@ function pairSwaps(sit, start, byName) {
 // the threshold and a null gain each say so in the same slot -- the headline never blanks.
 function lineupHeadline(ros) {
   const rows = Array.isArray(ros?.rows) ? ros.rows : [];
+  // Keyed on player name: two rostered players sharing a name would collide here.
   const byName = new Map(rows.map(r => [r.player, r]));
   const gain = ros?.gain;
   const totals = (gain != null && ros.set_total != null && ros.optimal_total != null)

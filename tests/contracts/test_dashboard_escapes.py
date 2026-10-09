@@ -1785,6 +1785,23 @@ def test_a_name_the_rows_do_not_carry_shows_the_gap_rather_than_a_bare_name(node
     assert _who("Ghost", "?", "?") in out
 
 
+FLEX_ROSTER = dict(
+    SWAP_ROSTER, withheld=[], sit=["Slow WR", "Weak RB"], start=["Strong RB", "Young TE"],
+    rows=[_row("Slow WR", "WR", "CIN"), _row("Weak RB", "RB", "NYJ"),
+          _row("Strong RB", "RB", "SF"), _row("Young TE", "TE", "DET")])
+
+
+def test_swaps_pair_by_position_first_and_the_leftover_goes_to_flex(node):
+    """`start` lists the names in a different order from `sit`, so pairing by index would put
+    the WR against the RB. By position the RBs pair, and the WR's leftover is the flex TE."""
+    out = _headline(node, FLEX_ROSTER)
+    rows = re.findall(r"<li>(.*?)</li>", out)
+    assert len(rows) == 2
+    pairs = [tuple(re.findall(r"<b>([^<]*)</b>", row)) for row in rows]
+    assert pairs[0] == ("Weak RB", "Strong RB"), "same position pairs first"
+    assert pairs[1] == ("Slow WR", "Young TE"), "the leftover is the flex swap"
+
+
 def test_a_hostile_name_in_the_headline_is_escaped(node):
     hostile = dict(SWAP_ROSTER, sit=[HOSTILE], start=[HOSTILE + "2"], withheld=[HOSTILE + "3"],
                    rows=[_row(HOSTILE, HOSTILE, HOSTILE), _row(HOSTILE + "2", "WR", "KC")])
@@ -1840,6 +1857,10 @@ def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_r
         ("bare-name", text.replace(
             '<span class="thin">${esc(r?.pos ?? "?")} &middot; ${esc(r?.nfl_team ?? "?")}</span>', ""),
          "test_every_swapped_name_carries_its_position_and_team"),
+        ("pairs-by-index", text.replace(
+            "const i = posOf(out) ? ins.findIndex(n => posOf(n) === posOf(out)) : -1;",
+            "const i = ins.length ? 0 : -1;"),
+         "test_swaps_pair_by_position_first_and_the_leftover_goes_to_flex"),
         ("unescaped-name", text.replace("<b>${esc(name)}</b>", "<b>${name}</b>"),
          "test_a_hostile_name_in_the_headline_is_escaped"),
         ("no-team-column", text.replace(
