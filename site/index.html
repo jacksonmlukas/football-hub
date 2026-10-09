@@ -438,7 +438,7 @@ function reliabilitySVG(bins) {
 // marks the record stale or the record is older than the window. A missing artifact still fills
 // the slot, with the standing reason. Returns `{cls, html}`; the page owns the DOM.
 // GUARD backtest-statement-is-sourced-and-retires [contracts/test_dashboard_escapes.py::test_the_statement_flips_from_unconfirmed_to_frozen_when_pre_registration_begins]: the statement reads its counts off the artifact and flips state when the pre-registered count rises above zero.
-const BACKTEST_WINDOW_DAYS = 9;
+const BACKTEST_WINDOW_DAYS = 9;  // a week of the Wed & Sat regen cadence plus two days' slack (chosen, not fitted; #354)
 function backtestStatement(tr, art) {
   if (!tr) {
     return { cls: STATE.unconfirmed,
