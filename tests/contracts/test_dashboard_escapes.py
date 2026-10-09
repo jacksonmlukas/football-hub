@@ -848,7 +848,7 @@ def test_every_stale_warning_goes_through_the_one_stale_note():
     text = PAGE.read_text()
     assert len(re.findall(r"`[^`]*Stale:", text)) == 1
     sites = re.findall(r"stale: staleOf\(", text)
-    assert len(sites) == 6, f"expected the six panel exits that can be stale, got {len(sites)}"
+    assert len(sites) == 7, f"expected the seven panel exits that can be stale, got {len(sites)}"
 
 
 def _style() -> str:
@@ -1276,7 +1276,7 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
 # *within* a zone and no longer decides the ranking of the page.
 
 # The board leads zone one while it is shown (#348): in July it is that week's decision.
-WEEK_ZONE = ("p-board", "p-roster", "p-survivor", "p-slate")
+WEEK_ZONE = ("p-lineup", "p-board", "p-roster", "p-survivor", "p-slate")
 RECORD_ZONE = ("p-record",)
 
 
@@ -1350,7 +1350,9 @@ def test_a_shown_board_appears_in_this_week_and_a_retired_one_stays_hidden(node)
     layout = _layout(PAGE.read_text())
     board = layout["p-board"]
     assert "z-week" in board["in"] and "z-record" not in board["in"]
-    assert _panels_in(layout, "z-week")[0] == "p-board"
+    # The lineup call (#352) is first in the markup but stays hidden until a roster exists,
+    # and in July there is none, so the board leads what is on screen.
+    assert _panels_in(layout, "z-week")[:2] == ["p-lineup", "p-board"]
     assert board["hidden"], "the board must ship hidden; render() unhides it through boardShows"
     assert _board_shows(node, JULY) is True
     assert _board_shows(node, WEEK_2) is False
@@ -1551,6 +1553,12 @@ vm.runInContext('render()', ctx).then(() => {{
     return json.loads(_run(node, body))
 
 
+def _footer_names(footer: str) -> list[str]:
+    """The artifact each footer entry names, whole: the first word of each span's text, so a
+    name that is only a substring of another (`roster` inside `roster_x`) is not found."""
+    return [m.group(1) for m in re.finditer(r"<span class=\"[^\"]*\">(\S+) ", footer)]
+
+
 def _committed_manifest() -> dict:
     return json.loads((PAGE.parent / "data" / "manifest.json").read_text())
 
@@ -1594,10 +1602,10 @@ def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
 
 def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line(node):
     got = _render(node)["footer"]
-    for name in MANIFEST_NAMES:
-        assert name in got, f"{name} is missing from the footer"
+    names = _footer_names(got)
+    for name in (*MANIFEST_NAMES, "bigten", "cfbd"):
+        assert name in names, f"{name} is missing from the footer: {names}"
     assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
-    assert "bigten" in got and "cfbd" in got
     cfbd = json.loads((PAGE.parent / "data" / "cfbd.json").read_text())
     assert cfbd["fetched"] is False
     assert "nothing was fetched" in got, "cfbd's own reason is not on the line"
@@ -1615,7 +1623,8 @@ def test_a_healthy_artifact_adds_no_reason_to_the_line(node):
 def test_a_stale_artifact_is_named_in_the_footer_and_bannered_at_its_panel(node):
     man = _with_artifact("survivor", stale=True, reason="CFBD quota exhausted")
     got = _render(node, {"manifest": man})
-    assert "survivor" in got["footer"] and "CFBD quota exhausted" in got["footer"]
+    assert "survivor" in _footer_names(got["footer"])
+    assert "CFBD quota exhausted" in got["footer"]
     panel = got["panels"]["p-survivor"]
     assert STATE_CLASSES["stale"] in panel["cls"].split()
     assert f'class="warn {STATE_CLASSES["stale"]}"' in panel["body"]
@@ -1654,13 +1663,14 @@ def test_stale_live_scores_are_reported_at_the_slate(node):
 def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node):
     got = _render(node, {"bigten": None})["footer"]
     assert "bigten never" in got and "not fetched" in got
-    for name in (*MANIFEST_NAMES, "cfbd"):
-        assert name in got
+    names = _footer_names(got)
+    for name in (*MANIFEST_NAMES, "bigten", "cfbd"):
+        assert name in names, f"{name} is missing from the footer: {names}"
 
 
 def test_no_manifest_still_leaves_a_footer_naming_the_two_non_fetches(node):
     got = _render(node, {"manifest": None})["footer"]
-    assert "bigten" in got and "cfbd" in got
+    assert {"bigten", "cfbd"} <= set(_footer_names(got))
 
 
 def test_nothing_in_the_footer_or_a_banner_reaches_the_page_unescaped(node):
@@ -1695,3 +1705,176 @@ def test_a_page_that_drops_an_artifact_or_hides_a_failure_turns_the_status_line_
         assert _parses(node, _script(mutant)).returncode == 0, name
         got = _run_module_against(_mutant_site(tmp_path / name, mutant))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- the lineup call is the headline, and every name carries pos and team (#352) -----------
+#
+# `lineupHeadline` is lifted into node for the three gain cases; `_render` runs the real page
+# for where it sits and what the roster table shows. Planted failures: a page where the call
+# is not first, a name rendered bare, a name left unescaped, a table without the team column.
+
+def _row(player: str, pos: str, team: str, **kw) -> dict:
+    return {"player": player, "pos": pos, "nfl_team": team, "mu": 10.0, "sd": 5.0,
+            "projected": True, "starting": False, "best_start": False,
+            "injury_status": "ACTIVE", "available": True, "can_start": True,
+            "missing_games": 0, **kw}
+
+
+SWAP_ROSTER = {
+    "name": "roster", "shape": "rows", "n": 7, "generated_at": "2026-10-07T17:40:07+00:00",
+    "set_total": 80.0, "optimal_total": 91.5, "gain": 11.5,
+    "withheld": ["Hurt Back"],
+    "sit": ["Slow WR", "Weak RB", "Old TE"], "start": ["Fast WR", "Strong RB", "Young TE"],
+    "rows": [_row("Slow WR", "WR", "CIN"), _row("Fast WR", "WR", "KC"),
+             _row("Weak RB", "RB", "NYJ"), _row("Strong RB", "RB", "SF"),
+             _row("Old TE", "TE", "DAL"), _row("Young TE", "TE", "DET"),
+             _row("Hurt Back", "RB", "MIA", available=False, missing_games=3)],
+}
+
+
+def _headline(node: str, ros: dict) -> str:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const fmt = [^\n]*"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function whoIs\(name, byName\) \{[\s\S]*?\n\}"),
+        _lift(r"function pairSwaps\(sit, start, byName\) \{[\s\S]*?\n\}"),
+        _lift(r"function lineupHeadline\(ros\) \{[\s\S]*?\n\}"),
+    ])
+    return _run(node, f"{lifted}\nconsole.log(lineupHeadline({json.dumps(ros)}));")
+
+
+def _who(name: str, pos: str, team: str) -> str:
+    return f'<b>{name}</b> <span class="thin">{pos} &middot; {team}</span>'
+
+
+def test_every_swapped_name_carries_its_position_and_team(node):
+    out = _headline(node, SWAP_ROSTER)
+    for name in (*SWAP_ROSTER["sit"], *SWAP_ROSTER["start"], *SWAP_ROSTER["withheld"]):
+        row = next(r for r in SWAP_ROSTER["rows"] if r["player"] == name)
+        assert _who(name, row["pos"], row["nfl_team"]) in out, f"{name} is bare in the headline"
+    assert out.count("<li>") == 3, "one out -> in row per position"
+    for out_n, in_n in zip(SWAP_ROSTER["sit"], SWAP_ROSTER["start"]):
+        assert out.index(out_n) < out.index("&rarr;", out.index(out_n)) < out.index(in_n)
+
+
+def test_the_headline_leads_with_the_gain_then_its_totals_then_who_was_taken_out(node):
+    out = _headline(node, SWAP_ROSTER)
+    assert out.startswith('<div class="lineup-gain">+11.5')
+    order = [out.index(s) for s in ("lineup-gain", "set lineup 80.0 &rarr; best available 91.5",
+                                    "Withheld as unavailable", 'class="swaps"', "season-long")]
+    assert order == sorted(order), order
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">Withheld as unavailable:' in out
+    assert "Not startable" in out
+
+
+def test_a_gain_under_threshold_says_so_in_the_headline_slot(node):
+    out = _headline(node, dict(SWAP_ROSTER, gain=0.0, optimal_total=80.0, withheld=[]))
+    assert out.startswith('<p class="lineup-call">The set lineup is already the best available one.')
+    assert "lineup-gain" not in out and "<li>" not in out
+
+
+def test_a_null_gain_says_so_in_the_headline_slot_and_still_names_who_was_withheld(node):
+    out = _headline(node, dict(SWAP_ROSTER, gain=None, set_total=None, optimal_total=None))
+    assert out.startswith('<p class="lineup-call empty">No lineup could be filled')
+    assert _who("Hurt Back", "RB", "MIA") in out
+
+
+def test_a_name_the_rows_do_not_carry_shows_the_gap_rather_than_a_bare_name(node):
+    out = _headline(node, dict(SWAP_ROSTER, start=["Ghost"], sit=["Slow WR"], rows=[]))
+    assert _who("Ghost", "?", "?") in out
+
+
+def test_a_hostile_name_in_the_headline_is_escaped(node):
+    hostile = dict(SWAP_ROSTER, sit=[HOSTILE], start=[HOSTILE + "2"], withheld=[HOSTILE + "3"],
+                   rows=[_row(HOSTILE, HOSTILE, HOSTILE), _row(HOSTILE + "2", "WR", "KC")])
+    out = _headline(node, hostile)
+    assert "<script>" not in out and out.count("&lt;script&gt;") >= 5
+
+
+def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
+    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    body = _render(node)["panels"]["p-lineup"]["body"]
+    assert body.startswith('<div class="lineup-gain">+'), body[:120]
+    for name in ros["start"] + ros["sit"] + ros["withheld"]:
+        row = next(r for r in ros["rows"] if r["player"] == name)
+        assert _who(name.replace("'", "&#39;"), row["pos"], row["nfl_team"]) in body
+
+
+def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else():
+    layout = _layout(PAGE.read_text())
+    assert _panels_in(layout, "z-week")[0] == "p-lineup"
+    assert layout["p-lineup"]["hidden"], "hidden until render() has a roster to call from"
+
+
+def test_without_a_roster_the_call_stays_hidden_and_the_roster_panel_says_why(node):
+    got = _render(node, {"roster": None})
+    assert "No roster yet" in got["panels"]["p-roster"]["body"]
+    assert got["panels"]["p-lineup"]["body"] == ""
+
+
+def test_the_roster_table_shows_nfl_team_on_every_row(node):
+    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    body = _render(node)["panels"]["p-roster"]["body"]
+    heads = re.findall(r"<th>([^<]*)</th>", body)
+    assert "team" in heads and heads.index("team") == heads.index("pos") + 1
+    rows = re.findall(r"<tr>((?:<td[^>]*>[^<]*</td>)+)</tr>", body)
+    assert len(rows) == len(ros["rows"])
+    for cells, row in zip(rows, ros["rows"]):
+        tds = re.findall(r"<td[^>]*>([^<]*)</td>", cells)
+        assert tds[heads.index("team")] == row["nfl_team"], row["player"]
+
+
+@parent_only
+def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_red(node, tmp_path):
+    text = PAGE.read_text()
+    section = re.search(r' *<section id="p-lineup"[^\n]*\n', text)
+    assert section
+    moved = text.replace(section.group(0), "", 1)
+    anchor = '    <section id="p-survivor"'
+    assert anchor in moved
+    moved = moved.replace(anchor, section.group(0) + anchor, 1)
+    for name, mutant, expected in [
+        ("call-not-first", moved,
+         "test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else"),
+        ("bare-name", text.replace(
+            '<span class="thin">${esc(r?.pos ?? "?")} &middot; ${esc(r?.nfl_team ?? "?")}</span>', ""),
+         "test_every_swapped_name_carries_its_position_and_team"),
+        ("unescaped-name", text.replace("<b>${esc(name)}</b>", "<b>${name}</b>"),
+         "test_a_hostile_name_in_the_headline_is_escaped"),
+        ("no-team-column", text.replace(
+            '        { label: "team", get: r => r.nfl_team ?? "" },\n', ""),
+         "test_the_roster_table_shows_nfl_team_on_every_row"),
+    ]:
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0, name
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- a throwing status record cannot stop the panels (#352, from #351's review) ---------------
+
+def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
+    """Planted: a `reason` whose `String()` throws. `statusLine` escapes it, and nothing else on
+    the page reads `bigten`, so before the guard `render()` rejected here and no panel drew."""
+    got = _render(node, {"bigten": {"name": "bigten", "fetched": False, "generated_at": None,
+                                    "reason": {"toString": 1}}})
+    assert "status line unavailable" in got["footer"]
+    assert got["panels"]["p-lineup"]["body"].startswith('<div class="lineup-gain">')
+    assert "<table" in got["panels"]["p-roster"]["body"]
+    assert "<table" in got["panels"]["p-survivor"]["body"]
+    assert got["panels"]["p-record"]["body"], "the panels after the footer still draw"
+
+
+@parent_only
+def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
+    text = PAGE.read_text()
+    start = text.index("  try {\n    document.getElementById(\"footer\")")
+    end = text.index("  }\n", text.index("} catch {", start)) + len("  }\n")
+    block = text[start:end]
+    inner = "    document.getElementById(\"footer\").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));\n"
+    assert inner in block
+    mutant = text[:start] + inner + text[end:]
+    assert _parses(node, _script(mutant)).returncode == 0
+    got = _run_module_against(_mutant_site(tmp_path / "unguarded", mutant))
+    assert "test_a_status_record_that_throws_costs_the_footer_and_nothing_else" in _failed(got)
