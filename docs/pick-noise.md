@@ -227,7 +227,7 @@ docstring gives. `MIN_SIGMA` is unchanged at 1.0 — what changed is that the sh
 no longer sitting on it. `evaluate.OPP_NOISE` stays 1.0, a scale over this base rather than an
 absolute sigma, so the three readers still resolve to one dispersion.
 
-## The room's scale, as a sensitivity (#49) — built, not yet run
+## The room's scale, as a sensitivity (#49) — built; run 2026-10-08, see below
 
 The simulated room draws each opponent's perceived pick as `mu_pick + N(0, scale × sigma)`,
 with `sigma` the fitted law above. `scale` is a **multiplier on that fitted sigma**, never an
@@ -251,6 +251,36 @@ that two scales give different paired means on one seed and the same scale repro
 exactly. No table is published here until a run produces one, and the published draft-gate
 figures in [gate-power.md](gate-power.md) are the `scale = 1.0` row of a table whose other
 two rows do not yet exist.
+
+### The table, run 2026-10-08 (#323; the paragraph above is kept as the record of before)
+
+`uv run python -m hub.draft.backtest --seasons 2022,2023,2024,2025 --drafts 20 --seed 0 --ceiling
+--noise-scales S --workers 4`, once per scale (S = 0.5, 1.0, 1.5; each run is the same boards and
+the same seed, so a row is what the in-one-command sweep prints), on `main` at the merge of #405.
+Points per team game, optimizer minus market, paired over 80 drafts in 4 held-out seasons; the
+interval is the percentile bootstrap clustered on the season, the MDE is season-clustered at 80%
+power, and the ceiling is the perfect-foresight arm played in the same room.
+
+| room scale | optimizer − market | 95% CI | MDE | ceiling | verdict |
+|---|---|---|---|---|---|
+| 0.5 (room follows consensus twice as closely) | −16.19 | [−21.72, −9.58] | +12.98 | +25.12 | REMOVE |
+| **1.0 (the fitted law)** | **−11.02** | **[−14.84, −7.20]** | **+7.84** | **+21.90** | **REMOVE** |
+| 1.5 (room follows it half again as loosely) | −15.97 | [−22.43, −9.76] | +13.83 | +16.56 | REMOVE |
+
+**What it says.** The 1.0 row reproduces the figure `docs/gate-power.md` restated on 2026-10-06
+(−11.02 [−14.84, −7.20], MDE 7.84, ceiling +21.90), to the digit. The optimizer loses to the market
+at every scale and every interval excludes zero on the losing side, so the verdict does not depend
+on the room's noise: the sensitivity the code comment on `simulate_remaining_draft` asked for
+changes no verdict. The mean is *not* monotone in the scale (the fitted law is the best of the
+three, not the worst or a bound), so the table does not say "less noise, less loss"; each
+off-1.0 row is a worse room for the greedy than the one it was fitted in, in both directions. The
+MDEs at 0.5 and 1.5 (13.0, 13.8) are larger than at 1.0 (the paired differences are wider there); the ceiling shrinks as the room loosens (25.1, 21.9, 16.6), which is a reading and not a tested
+mechanism. Three scales on one axis, one seed:
+the table bounds the knob's effect at the grid points, it does not interpolate between them.
+
+Stamps, the same on all three rows: `cfg_digest` `96fee74f`, `board_digest` `fa974b0d`,
+`data_digest` printed as `unpinned` by the runner, commit
+`7aee8823`. No constant moved, so `config_digest` is unchanged.
 
 `config_digest` moves from `281b7b7a` to `ab32cf62` and `fitted_digest` from `d5598b96` to
 `3d6fc111`. That is [ADR-0006](adr/0006-fitted-constants-live-with-their-provenance.md) working:
