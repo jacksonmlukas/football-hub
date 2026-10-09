@@ -187,6 +187,15 @@ one that would have promoted equity back to the headline.
 > clusters and the t interval is shown beside it. **What this ADR rests on has now held on
 > constants the replayed seasons did not fit**: worse in 4 of 4, an interval excluding
 > zero, `P(optimizer better)` 0.0%. Paired rows: `data/processed/gate/p290_holdout_seed0.txt`.
+>
+> **Restated 2026-10-08 (#320; the paragraphs above kept).** Two statements in the hold-out
+> paragraph are superseded. `IMPUTE_CV` *is* read by arm B (its scorer hands each row's imputed
+> flag to `talent_cv_for`), and the hold-out now refits it and `IMPUTE_CV_BY_POS` on the seasons
+> before each replayed one. Re-measured on today's code, board `fa974b0d` and the same recipe
+> (`--holdout --workers 4`, seed 0, 20 drafts x 4 seasons), old sets then new: optimizer minus
+> market -11.90 -> -10.19, t CI [-18.82, -4.97] -> [-16.71, -3.67], worse in the pooled
+> estimate and in every season by point estimate in both. The conclusion the ADR rests on
+> holds on either set; the numbers are in docs/gate-power.md.
 
 ## Why this is surprising, which is why it is written down
 

@@ -33,14 +33,35 @@ imputes and the one the veteran measurement compared against). Both CVs are prin
 first is what the ticket asked for, the second is the like-for-like beside the shipped
 number.
 
-Nothing here writes a constant. The decision that moved the values to this measurement was
-#298 (2026-09-16), taken on the five-season run; a re-run prints the numbers beside the
-shipped ones and, under `--exclude-season N --record`, records the constant as *not
-refitted* with the hold-out's own number in the reason (`main`).
+Nothing here writes a shipped constant. The decision that moved the values to this
+measurement was #298 (2026-09-16), taken on the five-season run; a re-run prints the numbers
+beside the shipped ones.
+
+**The hold-out binds both constants (#320, option B, adopted 2026-10-08).** Until then a
+season's set recorded `IMPUTE_CV` and `IMPUTE_CV_BY_POS` as *not refitted*, which left the
+rookie measurement in-sample on the hold-out draft path -- the half of the #376 width
+discrepancy the maintainer's 2026-09-21 comment names. `--exclude-season N --point-in-time
+--record` now refits them on the seasons **strictly before N** (method.md rule 2) and records
+the values:
+
+* `predict.IMPUTE_CV` is the shipped statistic on the fit seasons: the mean of the per-season
+  pooled CVs against the season's own xFP (the season-clustered estimate, what #298 adopted);
+  on a single fit season (2022's, which has only 2021) that mean is the one season's pooled CV.
+* `predict.IMPUTE_CV_BY_POS` gives a position its own CV (over its rookies, as the shipped
+  RB 0.359 and WR 0.288 are) only where it has at least `MIN_POS_N` of them, and the refit
+  pooled value otherwise -- the rule that put the shipped QB and TE (eight and six rookies) at
+  the pooled value, stated as a threshold fixed before the run. A position the refit cannot
+  split says so in the printed line; it is not a missing measurement.
+
+The earlier-seasons fit is deliberately not the leave-one-season-out of the other fitting
+scripts: a 2023 board's constants refitted with 2024-25 in them would read seasons that had
+not happened, which is the leakage rule 2 names. The cost is fewer clusters on the early
+seasons (2022 fits on one), said in the run line, not hidden.
 
     uv run python scripts/fit_impute_cv.py
     uv run python scripts/fit_impute_cv.py --seasons 2021,2022,2023,2024,2025 --min-games 8
     uv run python scripts/fit_impute_cv.py --exclude-season 2024
+    uv run python scripts/fit_impute_cv.py --exclude-season 2024 --point-in-time --record
 """
 from __future__ import annotations
 
@@ -73,6 +94,16 @@ MIN_GAMES = not_an_input(
 # The boards a rookie residual can be measured on from the archive: the consensus archive
 # starts 2019-12-27, so no 2019 preseason board exists, and 2020's as-of is not cached.
 DEFAULT_SEASONS: tuple[int, ...] = (2021, 2022, 2023, 2024, 2025)
+
+# Fewest rookies at a position before the hold-out refit gives it a CV of its own. Fixed
+# before the refit was run (method.md rule 1). The shipped table splits RB (36) and WR (42)
+# and pools QB (8) and TE (6); anything between 8 and 36 reproduces that split on the full
+# data, and twenty is the round number in the gap.
+MIN_POS_N = not_an_input(
+    20,
+    "fewest rookies a position needs before the hold-out refit gives it its own CV rather "
+    "than the refit pooled value: the shipped table's own split (RB 36 and WR 42 own, QB 8 "
+    "and TE 6 pooled) put as a threshold; a rule of the fit and not an input to a prediction")
 
 FIRST_STATS_SEASON = not_an_input(
     2019,
@@ -211,6 +242,35 @@ def player_bootstrap_se(rows: pl.DataFrame, against: str, *, draws: int = 2000,
     return float(np.std(np.std(r[idx], axis=1, ddof=1), ddof=1))
 
 
+def refit(measured: dict[str, Any], *, min_pos_n: int = MIN_POS_N,
+          ) -> tuple[float, dict[str, float], list[str]] | None:
+    """`(IMPUTE_CV, IMPUTE_CV_BY_POS, positions_with_their_own)` from one `measure` result, or
+    None when it holds no pooled spread (no fit season carried two rookies).
+
+    The pooled value is the season-clustered mean where there are two fit seasons or more and
+    the one season's pooled CV where there is one -- the same statistic, the mean of the
+    per-season pooled CVs. A position keeps its own CV over its rookies when it has
+    `min_pos_n` of them and takes the pooled value otherwise. Values are rounded to the three
+    places the shipped table carries.
+    """
+    xfp = measured["xfp_pg"]
+    pooled = (xfp["clustered"]["mean"] if xfp["clustered"] is not None
+              else xfp["by_position"]["pooled"]["cv"])
+    if pooled is None:
+        return None
+    pooled = round(float(pooled), 3)
+    by_pos: dict[str, float] = {}
+    own: list[str] = []
+    for pos in DRAFTED_POSITIONS:
+        c = xfp["by_position"][pos]
+        if c["cv"] is not None and c["n"] >= min_pos_n:
+            by_pos[pos] = round(float(c["cv"]), 3)
+            own.append(pos)
+        else:
+            by_pos[pos] = pooled
+    return pooled, by_pos, own
+
+
 def measure(seasons: Sequence[int], *, exclude: int | None = None, min_games: int = MIN_GAMES,
             build_board=None, load_stats=None, load_realised=None) -> tuple[dict, list[str]]:
     """The measurement over `seasons`, and the lines a script prints. The three loaders
@@ -287,36 +347,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Measure IMPUTE_CV on rookies -- the players the board imputes (#277).")
     ap.add_argument("--seasons", default=",".join(str(s) for s in DEFAULT_SEASONS))
     ap.add_argument("--min-games", type=int, default=MIN_GAMES)
+    ap.add_argument("--point-in-time", action="store_true",
+                    help="with --exclude-season N: fit on the seasons strictly before N "
+                         "(rule 2) instead of every season but N; --record needs it (#320)")
     holdout.add_arguments(ap)
     a = ap.parse_args(argv)
     from hub.models import predict
 
+    if a.point_in_time and a.exclude_season is None:
+        raise SystemExit("--point-in-time needs --exclude-season N: the season fitted for")
+    if a.record and not a.point_in_time:
+        raise SystemExit("--record needs --point-in-time: a set records the refit on the "
+                         "seasons strictly before the excluded one (#320)")
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
-    note = holdout.recording(a, holdout.command_line("scripts/fit_impute_cv.py", a))
+    note = holdout.recording(a, f"uv run python scripts/fit_impute_cv.py "
+                                f"--exclude-season {a.exclude_season} --point-in-time --record")
+    if a.point_in_time:
+        seasons = [s for s in seasons if s < a.exclude_season]
+        if not seasons:
+            return _not_refitted(note, f"no board before {a.exclude_season} in --seasons to "
+                                       f"fit on")
     try:
-        result, lines = measure(seasons, exclude=a.exclude_season, min_games=a.min_games)
+        result, lines = measure(seasons, exclude=None if a.point_in_time else a.exclude_season,
+                                min_games=a.min_games)
     except Exception as e:
         return unavailable("scripts/fit_impute_cv.py", "the boards and seasons of the archive", e)
     print("\n".join(lines))
     print(f"\n  the shipped IMPUTE_CV {predict.IMPUTE_CV:.3f} is this measurement on all five "
           f"seasons "
           f"(#298, 2026-09-16); a run prints beside it and does not rewrite it")
-    # Printed, and recorded as *not refitted* (#294). The shipped constant is this script's
-    # own measurement on all five seasons (#298), so a hold-out set carrying the four-season
-    # number would replay under an estimate whose interval -- four clusters on a t with 3 df
-    # -- is wider than the one the decision was taken on, with QB and TE pooled by that
-    # decision rather than by the run. The reason carries the hold-out's own pooled number
-    # so the run line shows what the replay did not use.
-    pooled = result["xfp_pg"]["by_position"]["pooled"]["cv"]
-    why = (f"IMPUTE_CV is not refitted: the shipped {predict.IMPUTE_CV:.3f} is this script's "
-           f"rookie "
-           f"measurement on all five seasons (#298, 2026-09-16), and with the hold-out the "
-           f"same measurement gives pooled {pooled:.3f} against the season's own xFP on "
-           f"n = {result['n']} with {result['seasons']} minus the hold-out -- "
-           f"{result['clusters']} clusters, fewer than the decision was taken on"
-           if pooled is not None else "IMPUTE_CV is not refitted: too few rookies to measure")
+    if not a.point_in_time:
+        return 0
+    # Recorded as a refit (#320): the pre-#320 "not refitted: fewer clusters than the decision
+    # was taken on" disqualified every hold-out fit by construction, since one season out is
+    # always one cluster fewer than the full fit.
+    fitted_on = f"seasons {result['seasons']} (strictly before {a.exclude_season})"
+    got = refit(result)
+    if got is None:
+        return _not_refitted(note, f"too few rookies to measure on {fitted_on}")
+    pooled, by_pos, own = got
+    split = ", ".join(f"{p} {v:.3f}" + ("" if p in own else f" (pooled: < {MIN_POS_N} rookies)")
+                      for p, v in by_pos.items())
+    print(f"\n  refit for {a.exclude_season}, on {fitted_on}, {result['clusters']} "
+          f"cluster(s), n = {result['n']}: IMPUTE_CV {pooled:.3f}; by position {split}")
+    note("predict.IMPUTE_CV", pooled)
+    note("predict.IMPUTE_CV_BY_POS", by_pos)
+    return 0
+
+
+def _not_refitted(note, reason: str) -> int:
+    """Record both keys as not refitted, with the reason, when the fit has nothing to fit."""
+    why = f"IMPUTE_CV is not refitted: {reason}"
     for key in ("predict.IMPUTE_CV", "predict.IMPUTE_CV_BY_POS"):
         note(key, None, why_not=why)
+    print(f"  {why}")
     return 0
 
 
