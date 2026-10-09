@@ -300,7 +300,7 @@ def test_the_retired_board_is_hidden_not_deleted():
     """Retirement is a render decision: the section stays in the markup, and the rule never
     touches the file or its manifest entry."""
     text = PAGE.read_text()
-    assert '<section id="p-board">' in text
+    assert re.search(r'<section id="p-board"[^>]*>', text)
     assert "section[hidden] { display: none; }" in text
     assert (DATA / "draft_board.json").exists()
     man = json.loads((DATA / "manifest.json").read_text())
@@ -1275,7 +1275,8 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
 # order; zone two (weekly, after scoring) holds the track record. `auto-fit` reflows panels
 # *within* a zone and no longer decides the ranking of the page.
 
-WEEK_ZONE = ("p-roster", "p-survivor", "p-slate")
+# The board leads zone one while it is shown (#348): in July it is that week's decision.
+WEEK_ZONE = ("p-board", "p-roster", "p-survivor", "p-slate")
 RECORD_ZONE = ("p-record",)
 
 
@@ -1340,6 +1341,19 @@ def test_a_panel_belongs_to_exactly_one_zone_and_nothing_visible_is_outside_both
         zones = [z for z in ("z-week", "z-record") if z in layout[panel]["in"]]
         assert len(zones) == 1 or layout[panel]["hidden"], (
             f"{panel} is in {zones or 'no zone'} and is visible: every panel answers to one zone")
+
+
+def test_a_shown_board_appears_in_this_week_and_a_retired_one_stays_hidden(node):
+    """#348 decides whether the board shows; #350 decides where it sits when it does. In July
+    (no slate yet) `boardShows` is true and the section it unhides is the first panel of zone
+    one; the markup ships it hidden so a retired board costs no space."""
+    layout = _layout(PAGE.read_text())
+    board = layout["p-board"]
+    assert "z-week" in board["in"] and "z-record" not in board["in"]
+    assert _panels_in(layout, "z-week")[0] == "p-board"
+    assert board["hidden"], "the board must ship hidden; render() unhides it through boardShows"
+    assert _board_shows(node, JULY) is True
+    assert _board_shows(node, WEEK_2) is False
 
 
 def test_the_zones_do_not_share_a_column_track():

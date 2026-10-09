@@ -125,6 +125,9 @@
   <div class="zone-head"><h2 class="zone-title" id="zh-week">This week</h2>
     <span class="zone-when">regenerated Wed &amp; Sat, live Sun</span></div>
   <div class="grid">
+    <!-- The draft board (#348) shows only while no newer slate exists: the decision of the week
+         in July, gone once a slate is published. Hidden until render() says boardShows. -->
+    <section id="p-board" class="wide" hidden><h3>Draft board <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-roster"><h3>Who to start <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-survivor"><h3>Who to pick in survivor <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-slate" class="wide"><h3>Who wins this week <span class="age"></span></h3><div class="body"></div></section>
@@ -139,10 +142,6 @@
     <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3><div class="body"></div></section>
   </div>
 </div>
-
-<!-- The draft board is retired from the page by #348. Until that lands, render() still fills
-     it, so its element stays -- parked out of both zones, hidden, so zone one is full width. -->
-<div hidden><section id="p-board"><h3>Draft board <span class="age"></span></h3><div class="body"></div></section></div>
 
 <footer id="footer"></footer>
 
