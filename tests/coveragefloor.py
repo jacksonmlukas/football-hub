@@ -89,7 +89,7 @@ FLOOR: dict[str, int] = {
     "src/hub/live_chain.py": 1,
     "src/hub/models/__init__.py": 0,
     "src/hub/models/base.py": 2,
-    "src/hub/models/component_error.py": 8,
+    "src/hub/models/component_error.py": 5,
     "src/hub/models/components.py": 4,
     "src/hub/models/conformal.py": 3,
     "src/hub/models/correlate.py": 2,

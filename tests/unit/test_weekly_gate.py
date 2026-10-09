@@ -1194,3 +1194,41 @@ def test_main_hands_the_ceiling_flag_to_the_comparison(monkeypatch, capsys):
     assert code == 0 and code2 == 0
     assert G.HARNESS.ceiling_arm in with_it, "--ceiling was parsed and the arm never reached the report"
     assert G.HARNESS.ceiling_arm not in without
+
+
+def test_main_names_the_mode_every_flag_puts_the_run_in(monkeypatch, capsys):
+    """The mode label is what a reader pastes with a figure, so each flag that changes the
+    universe or the treatment has to be in it."""
+    _, code = _main_with(monkeypatch, ["--churn", "--open-pool", "--unrestricted",
+                                       "--shrink", "mae", "--expected", "--lcb", "1.0"])
+    said = capsys.readouterr().out
+    assert code == 0
+    assert ("[one add/drop a week, OPEN POOL -- not the gate, UNRESTRICTED -- the pre-#206 "
+            "universe, not the gate, shrink=mae, expected priors, waiver LCB z=1.0]") in said
+    assert "shrink=mae churn=True lcb=1.0 expected=True" in said
+
+
+def test_main_under_holdout_prints_each_seasons_set_and_stops_when_one_is_missing(
+        monkeypatch, capsys):
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "run_lines", lambda seasons: [f"set for {s}" for s in seasons])
+    ledger, code = _main_with(monkeypatch, ["--holdout"])
+    assert code == 0 and "  set for 2024" in capsys.readouterr().out
+    assert ledger._read() is not None
+
+    def missing(seasons):
+        raise FileNotFoundError("conf/holdout/2024.json")
+
+    monkeypatch.setattr(holdout, "run_lines", missing)
+    ledger, code = _main_with(monkeypatch, ["--holdout"])
+    assert code == 1 and "a hold-out constant set" in capsys.readouterr().err
+    assert ledger._read() in (None, []), "a missing set must stop the run before it reads"
+
+
+def test_main_without_the_flag_prints_help_and_assembles_nothing(capsys):
+    def assemble(seasons, **kw):
+        raise AssertionError("help must not read anything")
+
+    assert G.main([], assemble=assemble) == 0
+    assert "--run" in capsys.readouterr().out
