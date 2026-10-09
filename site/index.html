@@ -105,6 +105,19 @@
                        border-left: 3px dashed var(--st-unc-ink);
                        background: repeating-linear-gradient(135deg, var(--st-unc-hatch) 0 2px,
                                                              transparent 2px 7px); }
+  /* The lineup call (#352): the gain at display size, one decisive jump above everything else
+     on the page, in tabular numerals and the system stack. */
+  .lineup-gain { font-size: 3.2rem; font-weight: 700; line-height: 1.05; margin-top: 0.4rem;
+                 letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .lineup-gain .unit { font-size: 0.95rem; font-weight: 400; color: var(--muted);
+                       letter-spacing: 0; }
+  .lineup-call { font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0; }
+  .lineup-totals { color: var(--muted); font-size: 0.88rem; margin: 0.25rem 0 0;
+                   font-variant-numeric: tabular-nums; }
+  .swaps { list-style: none; margin: 0.7rem 0 0; padding: 0; font-size: 0.92rem; }
+  .swaps li { padding: 0.3rem 0; border-bottom: 1px solid var(--line); }
+  .swaps li:last-child { border-bottom: 0; }
+  .swaps .arrow { color: var(--muted); padding: 0 0.35rem; }
   .legend { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0; line-height: 1.5; }
   .tag { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
          padding: 0.05rem 0.4rem; border-radius: 4px; text-transform: uppercase; }
@@ -129,6 +142,9 @@
   <div class="grid">
     <!-- The draft board (#348) shows only while no newer slate exists: the decision of the week
          in July, gone once a slate is published. Hidden until render() says boardShows. -->
+    <!-- The lineup call (#352) heads zone one: who to start is the one decision the reader came
+         for. Hidden until render() has a roster to make a call from. -->
+    <section id="p-lineup" class="wide" hidden><h3>The lineup call <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-board" class="wide" hidden><h3>Draft board <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-roster"><h3>Who to start <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-survivor"><h3>Who to pick in survivor <span class="age"></span></h3><div class="body"></div></section>
@@ -276,6 +292,64 @@ function statusLine(records) {
     return `<span class="${bad ? "down" : ""}">${esc(r.name)} ${esc(r.age)}${why}</span>`;
   });
   return `<p class="status">${items.join(" &middot; ")}</p>`;
+}
+
+// Who a name is, where the reader cannot ask: the name with its position and NFL team beside
+// it (#352). A second reader has no league context to supply either, and a bare name is the
+// shortcut that is easy to take by accident. The name is looked up on the published roster
+// rows; one the rows do not carry still renders, with `?` where the fact should be, so the
+// gap is visible rather than silent.
+function whoIs(name, byName) {
+  const r = byName.get(name);
+  return `<span class="who"><b>${esc(name)}</b> <span class="thin">${esc(r?.pos ?? "?")} &middot; ${esc(r?.nfl_team ?? "?")}</span></span>`;
+}
+
+// `sit` and `start` are two unordered lists; a swap is one out and one in at the same position.
+// Pair by position first, then the leftovers in order (a flex slot swaps across positions), and
+// a side with nothing to pair against is null.
+function pairSwaps(sit, start, byName) {
+  const posOf = n => byName.get(n)?.pos ?? "";
+  const ins = [...start], rest = [], pairs = [];
+  for (const out of sit) {
+    const i = posOf(out) ? ins.findIndex(n => posOf(n) === posOf(out)) : -1;
+    if (i >= 0) pairs.push([out, ins.splice(i, 1)[0]]); else rest.push(out);
+  }
+  while (rest.length || ins.length) pairs.push([rest.shift() ?? null, ins.shift() ?? null]);
+  return pairs;
+}
+
+// The lineup call, kept apart from the DOM so a test can lift it into node: the gain at display
+// size, the two totals under it, who was withheld, then the swaps and the caveat. A gain under
+// the threshold and a null gain each say so in the same slot -- the headline never blanks.
+function lineupHeadline(ros) {
+  const rows = Array.isArray(ros?.rows) ? ros.rows : [];
+  // Keyed on player name: two rostered players sharing a name would collide here.
+  const byName = new Map(rows.map(r => [r.player, r]));
+  const gain = ros?.gain;
+  const totals = (gain != null && ros.set_total != null && ros.optimal_total != null)
+    ? `<p class="lineup-totals">set lineup ${fmt(ros.set_total, 1)} &rarr; best available ${fmt(ros.optimal_total, 1)}</p>`
+    : "";
+  // Withheld players come before the swaps: the recommendation is only trustworthy if the
+  // reader can see who was taken out of it. The unconfirmed state, as a chip's worth of prose.
+  const heldHtml = (ros?.withheld ?? []).map(n => whoIs(n, byName)).join(", ");
+  const chip = heldHtml
+    ? `<p class="${STATE.unconfirmed}">Withheld as unavailable: ${heldHtml}. Not startable: ESPN's
+         injury field does not carry suspensions; its games projection does, and these are short
+         of a full slate. They are excluded from the lineup below.</p>`
+    : "";
+  if (gain == null) {
+    return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + chip;
+  }
+  if (!(gain > 0.05)) {
+    return `<p class="lineup-call">The set lineup is already the best available one.</p>` + totals + chip;
+  }
+  const side = n => n == null ? "&mdash;" : whoIs(n, byName);
+  const swaps = pairSwaps(ros.sit ?? [], ros.start ?? [], byName)
+    .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
+  return `<div class="lineup-gain">+${fmt(gain, 1)}<span class="unit"> pts a week</span></div>`
+    + totals + chip + `<ul class="swaps">${swaps}</ul>`
+    + `<p class="legend">These projections are season-long and do not know who is hurt this week,
+         so settle it at lock.</p>`;
 }
 
 // Escapes by default, so a column cannot forget. Getters return *text*, never markup --
@@ -827,7 +901,14 @@ async function render() {
 
   // The status line is drawn before any panel, so a panel that throws cannot take it with it.
   const [bigten, cfbd] = await Promise.all([load("bigten"), load("cfbd")]);
-  document.getElementById("footer").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));
+  // Guarded (#352): a record that makes the status line throw costs the footer and nothing
+  // else -- the panels below it still draw.
+  try {
+    document.getElementById("footer").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));
+  } catch {
+    document.getElementById("footer").innerHTML =
+      `<p class="status"><span class="down">status line unavailable: an artifact record could not be read</span></p>`;
+  }
 
   // --- draft board (retires itself when a newer slate exists, #348)
   const boardEl = document.getElementById("p-board");
@@ -871,26 +952,11 @@ async function render() {
   const ros = await load("roster");
   const rArt = findArt(man, "roster");
   if (ros && Array.isArray(ros.rows) && ros.rows.length) {
-    // The gain is stated with its caveat attached rather than as a headline number. mu is
-    // the board's season-long projection, so it does not know who is hurt this week.
-    const gain = ros.gain;
-    const held = (ros.withheld ?? []);
-    // Withheld players are named first: the recommendation is only trustworthy if the reader
-    // can see who was taken out of it and why.
-    const heldNote = held.length
-      ? `<p class="${STATE.unconfirmed}">Withheld as unavailable: <b>${esc(held.join(", "))}</b>. ESPN's injury
-           field does not carry suspensions; its games projection does, and these are short of
-           a full slate. They are excluded from the lineup below.</p>`
-      : "";
-    const note = gain == null
-      ? `<p class="empty">No lineup could be filled from the available players.</p>`
-      : gain > 0.05
-        ? `<p class="warn">The set lineup projects ${fmt(ros.set_total, 1)}; the best available
-             one projects ${fmt(ros.optimal_total, 1)}, a difference of <b>${fmt(gain, 1)}</b>
-             a week &mdash; start ${esc((ros.start ?? []).join(", "))} over
-             ${esc((ros.sit ?? []).join(", "))}. These projections are season-long and do not know
-             who is hurt this week, so settle it at lock.</p>`
-        : `<p class="empty">The set lineup is already the best available one.</p>`;
+    // The call is the headline (#352); the table below it is the full roster. mu is the
+    // board's season-long projection, so it does not know who is hurt this week.
+    document.getElementById("p-lineup").hidden = false;
+    panel("p-lineup", { age: `synced ${ago(ros.generated_at)}`, stale: staleOf(rArt),
+                        html: lineupHeadline(ros) });
     panel("p-roster", {
       // Synced, not published. `generated_at` on this artifact is the roster parquet's own
       // date, because the CLI serves last-good without rewriting it -- so this is when ESPN
@@ -898,9 +964,10 @@ async function render() {
       // time the page was built, which is always "just now" (issue #122).
       age: `${ros.n} rostered · synced ${ago(ros.generated_at)}`,
       stale: staleOf(rArt),
-      html: heldNote + note + table([
+      html: table([
         { label: "", get: r => r.starting ? "S" : "", cls: r => r.starting ? "good" : "" },
         { label: "pos", get: r => r.pos ?? "" },
+        { label: "team", get: r => r.nfl_team ?? "" },
         { label: "player", get: r => r.player ?? "" },
         { label: "proj", get: r => r.projected ? fmt(r.mu, 1) : "\u2014" },
         { label: "+/-", get: r => r.projected ? fmt(r.sd, 1) : "" },
@@ -913,6 +980,7 @@ async function render() {
       ], ros.rows),
     });
   } else {
+    document.getElementById("p-lineup").hidden = true;
     panel("p-roster", {
       age: "",
       warn: failureWarn(rArt, "No roster yet. Run `python -m hub.season.roster --write`."),
