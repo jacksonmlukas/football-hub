@@ -214,6 +214,56 @@ replay's run line shows what it did not use.
 > no flag, which is why it held. The weekly forward arm does not read it
 > (docs/weekly-forward.md, 2026-10-08).
 
+## Like with like: the pre-registration (#327, 2026-10-09; written before any number is taken)
+
+The shipped 0.315 compares a **last-year curve** with **this year's outcome**: the as-of board
+for season Y imputes a rookie from the rank-to-xFP curve of Y-1's veterans
+(`board._impute_xfp`), and the residual is taken against the rookie's own Y xFP per game.
+`IMPUTE_CV` is the *imputation error alone* (#322, the kind question, answered), so this
+measurement imputes and realises on the same season. Fixed here, before the run:
+
+1. **The like-for-like imputation.** Take the same as-of board. Keep each *observed* player's
+   rank and replace his Y-1 xFP per game by his **season-Y** xFP per game (`expected_points(Y)`,
+   the quantity the realised side reads); a veteran with no Y line, and every rookie and every
+   other imputed row, goes null. Run the shipped `board._impute_xfp` unchanged on that frame and
+   read the rookie's value off it. The curve is the Y-veterans' curve at the rookie's rank, the
+   rookie sits outside the fit, and the only thing that differs from the shipped basis is the
+   season the curve was drawn from.
+2. **Same rookies on both bases.** The drift-carrying and like-for-like bases are computed on the
+   identical rows (same rookies, same `MIN_GAMES`), so the four cells differ by basis and
+   statistic only.
+3. **The 2x2.** Per position and pooled, on each basis: `sd(r)` (ddof 1, the shipped statistic)
+   and `RMS(r) = sqrt(mean(r^2))`, `r = realised / imputed - 1`, with the median and the mean
+   (the bias) beside them. Each is reported over rookies and as the **mean of the per-season
+   pooled values** (the season-clustered form #298 adopted: k seasons, t on k-1 df); the
+   clustered pooled cell is the one that reads beside 0.315.
+4. **The drift component.** `d = imputed_like_for_like / imputed_shipped - 1` on the same rookies
+   is the year passing, as the curve sees it. Reported as sd, RMS, median and mean, and as
+   `sqrt(max(0, RMS_drift_basis^2 - RMS_like_for_like^2))`, the quadrature remainder, labelled an
+   approximation (the two terms are not independent).
+5. **#322's cells.** Tripwire: the like-for-like **sd**, season-clustered, against 0.315 -- above
+   it is a bug until shown otherwise (rule 9), and is said as such. Adoption reads the
+   like-for-like **RMS**, season-clustered, with the median residual printed beside it. This
+   ticket writes no constant.
+6. **Population (R18's four defects).** First seasons are keyed on `player_id` from the
+   **regular-season** weekly stats (`season_type == "REG"`), grouped by id so row order cannot
+   matter. A board name resolves to an id through the stats' own normalised names; a name that
+   resolves to more than one id is **ambiguous**, excluded and tallied (never silently the
+   earliest of both). An imputed top-200 player whose first line comes in a *later* season than
+   the board's is a **delayed debut**: tallied, not measured on this board. The realised row is
+   picked by id in a deterministic order, not `unique(keep="first")`.
+7. **The BuildReport.** The measurement takes `board_as_of`'s pair and refuses a board whose
+   `BuildReport` shows an advisory stage that can run on a historical build (SoS, touchdown
+   luck, durability, byes) not having run. The live-only checks and the ADP market stage do not
+   apply to an as-of board by construction and are not required.
+8. **Controls (rule 18).** The drift-carrying cell is the shipped measurement and must reproduce
+   0.315 (clustered sd) / 0.324 (over rookies) on the shipped 92-rookie population, or the
+   population change is named by the tallies that moved. Tests plant: a shifted curve (moves the
+   drift component, not the like-for-like residual), a two-id name collision (excluded, not
+   reclassified), a shuffled stats order (same answer), a delayed debut (tallied) and an absorbed
+   stage (refused). There is no verdict here to be underpowered (rule 16): the number is reported
+   with its season-clustered interval at k = 5.
+
 ## Reproduce
 
 ```bash
