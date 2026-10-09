@@ -673,6 +673,235 @@ def test_the_survivor_panel_escapes_its_own_numbers_too():
     assert not raw, f"unescaped interpolations in the survivor panel: {raw}"
 
 
+# --- the page speaks one confidence grammar (#347) ---------------------------
+#
+# Every number is frozen, live, stale or unconfirmed and the page says which by how it draws
+# the number. Each state below is planted -- an artifact older than its window, a pool rule
+# nobody confirmed -- and the rendered label asserted, because a test that renders only the
+# healthy case passes on a page that has no grammar at all. The stale test is the one a
+# guard on the page points at, and `test_a_panel_with_the_wrong_state_turns_the_grammar_red`
+# plants the mislabelled panel and requires red.
+
+STATE_CLASSES = {"frozen": "state-frozen", "live": "state-live", "stale": "state-stale",
+                 "unconfirmed": "state-unconfirmed"}
+
+
+def _panel_parts(node: str, opts_js: str) -> dict:
+    """`panelParts(...)` as the page defines it, run in node. `opts_js` is a JS expression, so
+    a test can plant an age relative to now rather than a date that will go out of date."""
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
+        _lift(r"function panelParts\([\s\S]*?\n\}"),
+        _lift(r"const staleOf = [^\n]*"),
+    ])
+    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify({opts_js}));"))
+
+
+PLANTED_STALE = ("(() => { const art = {stale: true, reason: 'ESPN unreachable', "
+                 "generated_at: new Date(Date.now() - 3 * 864e5).toISOString()}; "
+                 "return panelParts({age: '12 rostered', html: '<td>Q. Example 18.4</td>', "
+                 "stale: staleOf(art)}); })()")
+
+
+def test_a_stale_artifact_renders_in_the_stale_state_with_its_age(node):
+    """Planted: an artifact three days old that the manifest marks stale. The warning is in
+    the stale state, carries the age, the panel is stale, and the value is still there."""
+    got = _panel_parts(node, PLANTED_STALE)
+    assert got["cls"] == STATE_CLASSES["stale"]
+    assert f'class="warn {STATE_CLASSES["stale"]}"' in got["body"]
+    assert "Stale: ESPN unreachable" in got["body"]
+    assert "artifact 3d ago" in got["body"], got["body"]
+    assert "<td>Q. Example 18.4</td>" in got["body"], "a stale panel must not blank its value"
+
+
+def test_a_stale_artifact_that_cannot_say_its_age_says_so(node):
+    """The age stamp is required. An artifact with no `generated_at` is stale with an
+    unknown age, and the warning says that rather than omitting the stamp."""
+    got = _panel_parts(node, "panelParts({html: 'v', stale: staleOf("
+                             "{stale: true, reason: 'r', generated_at: null})})")
+    assert "artifact age unknown" in got["body"]
+    assert got["cls"] == STATE_CLASSES["stale"]
+
+
+def test_a_current_artifact_is_frozen_and_carries_no_stale_label(node):
+    """The control for the two above: the same panel with a current manifest entry is the
+    default state, and nothing on it says stale."""
+    got = _panel_parts(node, "panelParts({html: 'v', stale: staleOf("
+                             "{stale: false, reason: null, generated_at: 'x'})})")
+    assert got["cls"] == STATE_CLASSES["frozen"]
+    assert got["body"] == "v"
+
+
+def test_a_panel_with_no_data_renders_its_reason_and_does_not_throw(node):
+    got = _panel_parts(node, "panelParts({warn: 'No roster yet.'})")
+    assert got["body"] == '<p class="warn">No roster yet.</p>'
+    assert got["cls"] == STATE_CLASSES["frozen"]
+
+
+def test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state(node):
+    """Planted: a survivor artifact naming a rule nobody has confirmed. The note renders in
+    the unconfirmed state and names the rule; with nothing unconfirmed, no state is drawn."""
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"const STATE = \{[\s\S]*?\};"),
+        _lift(r"function unconfirmedNote\(surv\) \{[\s\S]*?\n\}"),
+    ])
+    out = _run(node, f"{lifted}\nconsole.log(unconfirmedNote("
+                     f"{json.dumps({'unconfirmed': ['co_survivor_rule']})}));")
+    assert f'class="{STATE_CLASSES["unconfirmed"]}"' in out
+    assert "co_survivor_rule" in out
+    clean = _run(node, f"{lifted}\nconsole.log(unconfirmedNote({{unconfirmed: []}}));")
+    assert STATE_CLASSES["unconfirmed"] not in clean
+
+
+def test_the_roster_withheld_note_renders_in_the_unconfirmed_state():
+    """The note is built inside `render`, which needs a DOM to run, so this reads the page:
+    the sentence that names the withheld players is the one opening in the state."""
+    got = re.search(r'`<p class="([^"]*)">Withheld as unavailable:', PAGE.read_text())
+    assert got, "the withheld note is gone, or no longer an unlabelled paragraph"
+    assert got.group(1) == "${STATE.unconfirmed}"
+
+
+def test_every_stale_warning_goes_through_the_one_stale_note():
+    """No panel spells its own `Stale:` warning. A hand-written one would render without the
+    age, which is the omission the grammar exists to stop."""
+    text = PAGE.read_text()
+    assert len(re.findall(r"`[^`]*Stale:", text)) == 1
+    sites = re.findall(r"stale: staleOf\(", text)
+    assert len(sites) == 5, f"expected the five panel exits that can be stale, got {len(sites)}"
+
+
+def _style() -> str:
+    text = PAGE.read_text()
+    return text[text.index("<style>"):text.index("</style>")]
+
+
+def test_the_four_states_are_a_named_token_set_in_both_colour_schemes():
+    style = _style()
+    for cls in STATE_CLASSES.values():
+        assert re.search(rf"\.{cls}\b[^{{]*\{{", style), f"no rule for .{cls}"
+    split = style.index("prefers-color-scheme: dark")
+    light, dark = style[:split], style[split:style.index("* { box-sizing")]
+    tokens = set(re.findall(r"--st-[\w-]+(?=:)", light))
+    assert tokens, "no --st- tokens declared"
+    missing = {t for t in tokens if t not in dark}
+    assert not missing, f"tokens with no dark-scheme value: {sorted(missing)}"
+
+
+def _rule(selector: str) -> str:
+    got = re.search(rf"(?m)^\s*{re.escape(selector)}\s*\{{([^}}]*)\}}", _style())
+    assert got, f"no rule for {selector!r}"
+    return got.group(1)
+
+
+def test_the_four_states_are_drawn_differently():
+    """Distinguishable by treatment and not by hue alone: solid rule, tinted field, dotted
+    rule on dimmed ink, dashed hatch."""
+    assert "solid" in _rule(".state-frozen")
+    assert "var(--st-live-tint)" in _rule(".state-live, .grp-live")
+    assert "dotted" in _rule(".state-stale")
+    unconfirmed = _rule(".state-unconfirmed")
+    assert "dashed" in unconfirmed and "repeating-linear-gradient" in unconfirmed
+
+
+def test_the_slates_live_group_is_an_alias_of_the_live_state_not_a_second_rule():
+    defs = re.findall(r"(?m)^\s*([^\n{}]*\.grp-live[^\n{}]*?)\s*\{", _style())
+    assert defs == [".state-live, .grp-live"], (
+        f"`.grp-live` must be defined once, sharing `.state-live`'s rule; found {defs}")
+
+
+def _token(block: str, name: str) -> str:
+    got = re.search(rf"{re.escape(name)}:\s*(#[0-9a-fA-F]{{3,6}})\b", block)
+    assert got, f"no {name} colour in that scheme"
+    return got.group(1)
+
+
+def _linear(c: float) -> float:
+    c /= 255
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _full(hex_: str) -> str:
+    h = hex_.lstrip("#")
+    return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h)
+
+
+def _luminance(hex_: str) -> float:
+    h = _full(hex_).lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * _linear(r) + 0.7152 * _linear(g) + 0.0722 * _linear(b)
+
+
+def _blend(fg: str, bg: str, alpha: float) -> str:
+    f, b = _full(fg).lstrip("#"), _full(bg).lstrip("#")
+    return "#" + "".join(f"{round(alpha * int(f[i:i + 2], 16) + (1 - alpha) * int(b[i:i + 2], 16)):02x}"
+                         for i in (0, 2, 4))
+
+
+def _contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _stale_body_contrast(style: str) -> dict[str, float]:
+    """WCAG contrast of stale body text against the card, per scheme, from the tokens.
+
+    Any `opacity` a `.state-stale` rule applies to body content is blended in: dimming the
+    ink and then fading the element stacks, which is how this was measured at 2.8:1."""
+    split = style.index("prefers-color-scheme: dark")
+    schemes = {"light": style[:split], "dark": style[split:style.index("* { box-sizing")]}
+    alpha = 1.0
+    for sel, body in re.findall(r"(?m)^\s*([^\n{}]*\.state-stale[^\n{}]*)\{([^}]*)\}", style):
+        if ".warn" in sel and ":not" not in sel:
+            continue
+        for op in re.findall(r"(?<![-\w])opacity:\s*([\d.]+)", body):
+            alpha *= float(op)
+    out = {}
+    for name, block in schemes.items():
+        ink = re.search(r"--st-stale-ink:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        card = re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", block)
+        assert ink, f"no --st-stale-ink in the {name} scheme"
+        card = card or re.search(r"--card:\s*(#[0-9a-fA-F]{3,6})\b", style)
+        assert card
+        out[name] = _contrast(_blend(ink.group(1), card.group(1), alpha), card.group(1))
+    return out
+
+
+def test_stale_body_text_meets_wcag_aa_in_both_schemes_and_stays_distinct_from_frozen():
+    """Stale text is body text: at least 4.5:1, with the opacity stacked in. And it is not
+    simply the frozen ink: it must be measurably dimmer than frozen, or the state is lost."""
+    style = _style()
+    got = _stale_body_contrast(style)
+    assert all(v >= 4.5 for v in got.values()), f"stale body contrast under 4.5:1: {got}"
+    split = style.index("prefers-color-scheme: dark")
+    for name, block in {"light": style[:split], "dark": style[split:]}.items():
+        fg = _token(block, "--fg")
+        card = _token(block, "--card")
+        assert _contrast(fg, card) > got[name] + 3, f"stale is not dimmer than frozen in {name}"
+
+
+def test_a_too_faint_stale_value_turns_the_contrast_test_red():
+    """The planted failure: the original values, and a stacked opacity, must both fail."""
+    style = _style()
+    faint = style.replace("--st-stale-ink: #5b6170", "--st-stale-ink: #9ca3af")
+    assert faint != style
+    assert min(_stale_body_contrast(faint).values()) < 4.5
+    stacked = style.replace(".state-stale { color", ".state-stale > :not(.warn) { opacity: 0.5; }\n  .state-stale { color")
+    assert stacked != style
+    assert min(_stale_body_contrast(stacked).values()) < 4.5
+
+
+def test_reduced_motion_still_stops_the_live_pulse():
+    style = _style()
+    assert "animation: pulse" in style
+    media = re.search(r"@media \(prefers-reduced-motion: reduce\) \{([^}]*)\}", style)
+    assert media and "animation: none" in media.group(1)
+    assert ".tag.live::before" in media.group(1)
+
+
 # --- the page's own guards, proved by deleting them (#61) --------------------
 #
 # `tests/contracts/test_guards_are_load_bearing.py` does this for the guards in
@@ -931,3 +1160,27 @@ def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
         f"it fires. It guards: {guard.why}\n"
         f"Either the tests assert the outcome rather than that the guard produced it, or the "
         f"guard is dead. ({got.why_not_evidence()})")
+
+
+# --- the grammar's planted failure (#347) ------------------------------------
+
+@parent_only
+def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
+    """The planted failure. A page that labels a stale panel frozen -- the mislabel the
+    grammar exists to stop -- must fail the stale test; so must one that drops the age; and
+    an unconfirmed note drawn as a plain warning must fail its own."""
+    text = PAGE.read_text()
+    stale_test = "test_a_stale_artifact_renders_in_the_stale_state_with_its_age"
+    for name, old, new, expected in [
+        ("frozen-for-stale", "cls: stale ? STATE.stale : STATE.frozen",
+         "cls: STATE.frozen", stale_test),
+        ("no-age", ' <span class="stamp">artifact ${esc(age)}</span>', "", stale_test),
+        ("plain-warning", '<p class="${STATE.unconfirmed}">These figures',
+         '<p class="warn">These figures',
+         "test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state"),
+    ]:
+        mutant = text.replace(old, new)
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
