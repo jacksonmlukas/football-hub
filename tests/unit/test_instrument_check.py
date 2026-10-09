@@ -119,6 +119,31 @@ def test_a_late_run_inside_the_grace_still_counts_and_one_outside_does_not(repo)
     assert _check(repo, grace=timedelta(minutes=30)).status == ic.FAIL
 
 
+def test_a_capture_beyond_the_grace_is_named_late_and_still_fails(repo):
+    """Real 2026-10-07/08: the 11:00Z polls landed at 17:40Z and 17:46Z, 6.7h on a 6h grace.
+    Present is not the same as missing, and neither is a pass: the detail says which."""
+    _git(repo, "rm", "-q", f"state/odds/2026/wk04/snap-{SLOTS[0]}.json")
+    _snap(repo, 4, "20261007T174001")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "very late")
+    got = _check(repo)
+    assert got.status == ic.FAIL
+    assert got.facts["late_beyond_grace"] == {"2026-10-07T11:00:00+00:00":
+                                              "2026-10-07T17:40:01+00:00"}
+    assert "DO have a committed capture" in got.detail and "+6.7h" in got.detail
+    assert _check(repo, grace=timedelta(hours=8)).status == ic.PASS
+
+
+def test_a_removed_capture_is_not_called_late(repo):
+    """The late reading must not turn the removal control into a softer fail: with nothing
+    between the slot and the next poll there is no late capture to name."""
+    _git(repo, "rm", "-q", f"state/odds/2026/wk04/snap-{SLOTS[1]}.json")
+    _git(repo, "commit", "-q", "-m", "lose one")
+    got = _check(repo)
+    assert got.status == ic.FAIL and got.facts["late_beyond_grace"] == {}
+    assert "DO have" not in got.detail
+
+
 def test_nothing_checkable_yet_is_not_a_pass(repo):
     """The vacuity control: before any slot's grace has passed there is nothing to have
     persisted, and saying PASS would be the check that cannot fail."""

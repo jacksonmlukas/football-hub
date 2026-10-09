@@ -149,6 +149,22 @@ def _stamp(s: str) -> datetime:
     return datetime.strptime(s + "+0000", "%Y%m%dT%H%M%S%z")
 
 
+HOUR = timedelta(hours=1)
+
+
+def _late(missing: list[datetime], slots: list[datetime], stamps: list[datetime],
+          grace: timedelta) -> dict[datetime, datetime]:
+    """For each missing slot, the first committed capture after its grace and before the next
+    scheduled poll (a day after the last): present, and too late to count."""
+    out: dict[datetime, datetime] = {}
+    for s in missing:
+        nxt = next((n for n in slots if n > s), s + timedelta(days=1))
+        got = [t for t in stamps if s + grace < t < nxt]
+        if got:
+            out[s] = min(got)
+    return out
+
+
 def persistence(repo: Path, season: int, week: int, start: datetime, until: datetime,
                 *, now: datetime, grace: timedelta = GRACE,
                 fresh: dict[str, object] | None = None) -> Criterion:
@@ -167,10 +183,12 @@ def persistence(repo: Path, season: int, week: int, start: datetime, until: date
     checkable = [s for s in slots if s + grace <= now]
     missing = [s for s in checkable if not any(s <= t <= s + grace for t in stamps)]
     pre = [s for s in missing if s < PERSISTENCE_BEGINS]
+    late = _late(missing, slots, stamps, grace)
     facts = {"week": week, "window": [start.isoformat(), until.isoformat()],
              "scheduled": len(slots), "checkable": len(checkable),
              "missing": [s.isoformat() for s in missing],
              "missing_before_persistence": len(pre),
+             "late_beyond_grace": {s.isoformat(): t.isoformat() for s, t in late.items()},
              "snapshots_for_week_in_fresh_checkout": len(stamps),
              "season_rows_read_by_fresh_checkout": fresh["rows"],
              "fresh_checkout_had_a_data_dir": fresh["clone_has_data"]}
@@ -185,9 +203,19 @@ def persistence(repo: Path, season: int, week: int, start: datetime, until: date
         why = (f"; {len(pre)} fall before #383 landed ({PERSISTENCE_BEGINS:%Y-%m-%d %H:%MZ}) "
                f"and were never committed (their runner discarded them) and cannot be re-captured"
                if pre else "")
+        if late:
+            # Reported, never promoted to a pass: the grace was fixed before this was read, and
+            # moving it to the observed delay is how a check learns to agree with its data.
+            why += (f"; {len(late)} of them DO have a committed capture, but later than the "
+                    f"{grace} grace allows: "
+                    + ", ".join(f"{s:%m-%d %H:%MZ} -> {t:%m-%d %H:%MZ} (+{(t - s) / HOUR:.1f}h)"
+                                for s, t in late.items())
+                    + " (the presence is real, the lateness is the cron's; whether the grace "
+                      "should move is the maintainer's call, not this check's)")
         return Criterion("persistence", FAIL,
                          f"{len(missing)} of {len(checkable)} checkable poll(s) have no "
-                         f"committed capture for week {week} in a fresh checkout: "
+                         f"committed capture for week {week} in a fresh checkout inside the "
+                         f"grace: "
                          f"{', '.join(s.strftime('%m-%d %H:%MZ') for s in missing)}{why}", facts)
     return Criterion("persistence", PASS,
                      f"all {len(checkable)} checkable poll(s) are in a fresh checkout "
@@ -294,11 +322,12 @@ def k_report(paired: pl.DataFrame | None, season: int) -> Criterion:
 # --- the run -------------------------------------------------------------------------------
 
 def run(repo: Path, season: int, week: int, start: datetime, until: datetime, *,
-        paired_path: Path | None, now: datetime, gate: str = "weekly") -> list[Criterion]:
+        paired_path: Path | None, now: datetime, gate: str = "weekly",
+        grace: timedelta = GRACE) -> list[Criterion]:
     paired = pl.read_parquet(paired_path) if paired_path else None
     fresh = read_from_fresh_checkout(repo, season)  # one clone serves both readings
     return [pipeline(paired, season),
-            persistence(repo, season, week, start, until, now=now, fresh=fresh),
+            persistence(repo, season, week, start, until, now=now, grace=grace, fresh=fresh),
             ledger(paired, gate),
             k_report(paired, season),
             backfill_readable(repo, season, fresh=fresh)]
@@ -321,6 +350,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--until", required=True, type=_iso, help="end of that window (UTC)")
     ap.add_argument("--paired", type=Path, default=None,
                     help="the stamped paired parquet of a gate run (`--out`)")
+    ap.add_argument("--grace-hours", type=float, default=GRACE / HOUR,
+                    help="how late after its slot a poll's capture may land and still count "
+                         f"(default {GRACE / HOUR:g}); a later one is named, not passed")
     ap.add_argument("--gate", default="weekly", help="the ledger's name for that gate")
     ap.add_argument("--repo", type=Path, default=ROOT)
     ap.add_argument("--now", type=_iso, default=None, help=argparse.SUPPRESS)
@@ -328,7 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     now = a.now or datetime.now(UTC)
     try:
         results = run(a.repo, a.season, a.week, a.start, a.until, paired_path=a.paired,
-                      now=now, gate=a.gate)
+                      now=now, gate=a.gate, grace=timedelta(hours=a.grace_hours))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError,
             RuntimeError, OSError, pl.exceptions.PolarsError) as e:
         # An input that could not be read is not a criterion that failed: say which, exit

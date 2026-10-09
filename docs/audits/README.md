@@ -163,3 +163,35 @@ nflverse data and was not run here: no `data/` exists in this worktree. They are
 `PASS`, and the check exits 3 until they are supplied. The first in-season capture that persists is
 the 2026-10-07 11:00Z slate run; after it, `--from 2026-10-07T00:00 --until <later>` is the first
 window where criterion 2 can pass. Criterion 4's k is not yet reported for a real run.
+
+### 2026-10-09 re-run (#389) -- still no verdict
+
+Re-run on head `32eaeec`, from a fresh clone of committed `HEAD`, with no `data/`, spending no Odds
+credit. Still **produces no ADOPT, REMOVE or SHOW**; no published number moves.
+
+- **Criterion 2, persistence: FAIL for week 4 (unchanged, unrepairable).** 0 of 6 scheduled polls
+  (09-30 11:00Z to 10-05 11:00Z) have a committed capture. The only week-4 captures in git are
+  #428's 8 back-filled polls (08-25 to 09-06), which read from a fresh clone (1,892 rows, all 18
+  weeks). **Weeks 1 to 4 have no in-season capture at all**; the reading is unavailable for them
+  beyond that back-fill. Not back-filled here and not fabricated.
+- **Persistence works from 2026-10-07, with a lateness finding.** Week 5 holds the first two
+  in-season captures in git (`snap-20261007T174001`, `snap-20261008T174636`). Both land 6.7h and
+  6.8h after their 11:00Z slot, past the 6h grace this check fixed on 10-06 from a measured 97-126
+  minute delay, so criterion 2 reads FAIL for week 5 at 6h and PASS at `--grace-hours 8`. The
+  check now names a capture that is present and late, and does not pass it: moving the grace to
+  fit the data it was meant to judge is the choice for the maintainer. Whether the 10-07 capture
+  came from the poll or from the 17:40Z slate refresh is not established by the check.
+- **Criteria 1, 3, 4: NOT-YET, and not constructible today.** They read the stamped paired
+  parquet of a gate over scored 2026 rows. The only gate with a 2026 arm is the weekly forward
+  reading, whose incumbent is the first-party consensus capture, and no `state/consensus/` file is
+  committed (`hub.fetch.consensus.read_captures(2026)` has nothing to read). What week 4 does have
+  is the slate pipeline: `hub.audit_ready --season 2026 --week 4` READY, `track_record.json`
+  scoring 64 of 2026's games. It carries no `config_digest`/`data_digest`, so it is evidence the
+  pipeline completes, not the stamp criterion 1 asks for. The ledger holds 22 entries; none is a
+  2026-rows run, so nothing is compared within a digest pair for it. k available: 2026 is one
+  partial cluster of 64 scored games; no gate cluster is added by it.
+- **Control (rule 18)**, `tests/unit/test_instrument_check.py`: a removed capture, an untracked
+  capture, a wrong-week capture and a capture beyond the grace each leave criterion 2 red, the last
+  naming the capture as late and the first not; a window with nothing past its grace is `NOT-YET`.
+
+**What would reopen it as a decision:** any proposal to attach a verdict to it.
