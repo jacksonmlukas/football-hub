@@ -105,6 +105,12 @@
                        border-left: 3px dashed var(--st-unc-ink);
                        background: repeating-linear-gradient(135deg, var(--st-unc-hatch) 0 2px,
                                                              transparent 2px 7px); }
+  /* The page-level backtest statement (#354): one line under the header, in whichever state its
+     source is in. It is the page's own sentence, so it sits outside the panels and clear of them. */
+  .statement.state-frozen, .statement.state-stale, .statement.state-unconfirmed {
+    margin: 0 0 1.25rem; font-size: 0.92rem; }
+  .statement p { margin: 0; }
+  .statement .thin { display: block; margin-top: 0.2rem; }
   /* The lineup call (#352): the gain at display size, one decisive jump above everything else
      on the page, in tabular numerals and the system stack. */
   .lineup-gain { font-size: 3.2rem; font-weight: 700; line-height: 1.05; margin-top: 0.4rem;
@@ -134,6 +140,10 @@
   <h1>football hub</h1>
   <span class="sub" id="subtitle">loading…</span>
 </header>
+
+<!-- The page-level backtest statement (#354): what the page's model numbers have and have not been
+     tested against, said once. Filled by render() from the track record artifact alone. -->
+<div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
 
 <!-- Zone one: this week. Regenerated Wed & Sat, live Sun. Lineup, survivor, slate, in that order. -->
 <div class="zone" id="z-week" role="region" aria-labelledby="zh-week">
@@ -415,6 +425,54 @@ function reliabilitySVG(bins) {
   <p class="legend">Dot area is the number of games. A hollow ring on the bottom edge is a bin
     that held no games.</p>`;
 }
+
+// The page-level backtest statement (#354). `n_preregistered = 0` qualifies every model number on
+// the page, not only the record panel's, so it is said once, under the header, and every figure in
+// it is read off the track record artifact -- none is typed here.
+//
+// It retires loudly. While nothing is pre-registered it is an `unconfirmed` statement of the
+// scored count and zero; the first artifact with `n_preregistered > 0` does not delete it, it
+// flips the same slot to a `frozen` statement of both counts, because a line that merely vanishes
+// is a line a returning reader has stopped seeing by the week it matters. It carries its as-of
+// and the condition that ends it, and it is `stale` -- never a current claim -- when the manifest
+// marks the record stale or the record is older than the window. A missing artifact still fills
+// the slot, with the standing reason. Returns `{cls, html}`; the page owns the DOM.
+// GUARD backtest-statement-is-sourced-and-retires [contracts/test_dashboard_escapes.py::test_the_statement_flips_from_unconfirmed_to_frozen_when_pre_registration_begins]: the statement reads its counts off the artifact and flips state when the pre-registered count rises above zero.
+const BACKTEST_WINDOW_DAYS = 9;
+function backtestStatement(tr, art) {
+  if (!tr) {
+    return { cls: STATE.unconfirmed,
+             html: `<p>${esc(failureWarn(art, "No track record has been published, so no model number on this page can be called a record."))}</p>` };
+  }
+  const pre = tr.n_preregistered ?? null;
+  const n = tr.n_scored ?? null;
+  const scored = n === null ? "An unknown number of" : esc(n);
+  const asOf = Number.isFinite(Date.parse(tr.generated_at))
+    ? String(tr.generated_at).slice(0, 10) : "an unknown date";
+  const lead = pre === null
+    ? `<b>${scored} predictions scored; whether any were pre-registered could not be counted &mdash; a backtest until it can be.</b>`
+    : pre === 0
+    ? `<b>${scored} predictions scored retrospectively, ${esc(pre)} pre-registered &mdash; a backtest, not a record.</b>`
+    : `<b>${esc(pre)} pre-registered, ${scored} scored.</b>` +
+      (n > pre ? ` The other ${esc(n - pre)} were scored after the fact: a backtest, not a record.`
+               : "");
+  const ends = pre === null || pre === 0
+    ? "This line changes when a prediction's commit predates its kickoff: it then states the pre-registered count."
+    : "A prediction counts as pre-registered only once its commit predates its kickoff.";
+  const at = Date.parse(tr.generated_at);
+  const aged = !Number.isFinite(at) || (Date.now() - at) / 864e5 > BACKTEST_WINDOW_DAYS;
+  const stale = staleOf(art) ?? (aged ? {
+    reason: Number.isFinite(at) ? `older than its ${BACKTEST_WINDOW_DAYS}-day window`
+                                : "the record carries no usable date",
+    at: tr.generated_at } : null);
+  return {
+    cls: stale ? STATE.stale : pre === 0 || pre === null ? STATE.unconfirmed : STATE.frozen,
+    html: `<p>${lead}</p><p class="thin">As of ${esc(asOf)}. ${esc(ends)}
+           It goes stale ${BACKTEST_WINDOW_DAYS} days after the record was written.</p>`
+          + (stale ? staleNote(stale) : ""),
+  };
+}
+// /GUARD
 
 // The track record panel's body.
 //
@@ -910,6 +968,20 @@ async function render() {
       `<p class="status"><span class="down">status line unavailable: an artifact record could not be read</span></p>`;
   }
 
+  // The statement is drawn before any panel for the reason the footer is: nothing below can take
+  // it down. Its slot is never left empty, so a record it cannot read says why (#354).
+  const tr = await load("track_record");
+  const trArt = findArt(man, "track_record");
+  const slot = document.getElementById("st-backtest");
+  try {
+    const said = backtestStatement(tr, trArt);
+    slot.className = `statement ${said.cls}`;
+    slot.innerHTML = said.html;
+  } catch {
+    slot.className = `statement ${STATE.unconfirmed}`;
+    slot.innerHTML = `<p>The backtest statement could not be built from the track record.</p>`;
+  }
+
   // --- draft board (retires itself when a newer slate exists, #348)
   const boardEl = document.getElementById("p-board");
   const shows = boardShows(man);
@@ -993,8 +1065,6 @@ async function render() {
   await renderSlate(man);
 
   // --- track record
-  const tr = await load("track_record");
-  const trArt = findArt(man, "track_record");
   if (tr) {
     panel("p-record", { age: ago(tr.generated_at), stale: staleOf(trArt),
                         html: trackRecordBody(tr) });
