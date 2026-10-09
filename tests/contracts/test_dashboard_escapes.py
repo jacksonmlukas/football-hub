@@ -848,7 +848,7 @@ def test_every_stale_warning_goes_through_the_one_stale_note():
     text = PAGE.read_text()
     assert len(re.findall(r"`[^`]*Stale:", text)) == 1
     sites = re.findall(r"stale: staleOf\(", text)
-    assert len(sites) == 5, f"expected the five panel exits that can be stale, got {len(sites)}"
+    assert len(sites) == 6, f"expected the six panel exits that can be stale, got {len(sites)}"
 
 
 def _style() -> str:
@@ -1163,7 +1163,7 @@ def test_a_page_that_forgets_to_escape_is_caught_only_by_the_scan(node, tmp_path
     unescaped interpolation, whose own removal was caught by nothing.
     """
     forgetful = PAGE.read_text().replace(
-        "</script>", "const forgotten = `<td>${r.player}</td>`;\n</script>")
+        "</script>", "const forgotten = r => `<td>${r.player}</td>`;\n</script>")
     assert forgetful != PAGE.read_text(), "the injection did not land"
     assert _parses(node, _script(forgetful)).returncode == 0, "the injected page must parse"
 
@@ -1500,3 +1500,198 @@ def test_a_fixed_340px_track_minimum_is_caught():
     assert planted != _style(), "the plant did not land"
     assert _grid_minimum_fits(planted) is False
     assert _grid_minimum_fits(planted.replace("340px", "300px")) is True
+
+
+# --- the status line, and failure at the panel it broke (#351) ----------------
+#
+# The footer names every artifact the manifest lists with its age, and for anything stale or
+# unfetched its reason; `bigten` and `cfbd` sit beside them as named non-fetches. Two things
+# can go wrong silently, so each is planted: an artifact missing from the line, and a failure
+# reported in the footer *only* -- the panel that read the broken artifact saying nothing.
+#
+# `_render` runs the page's whole script in node against a stub DOM and a stub `fetch` that
+# serves the committed `site/data/` with per-test overrides (`None` is a 404). It is the real
+# `render()`, so a panel that stops reporting its own failure turns a test red.
+
+MANIFEST_NAMES = ("preds_2026_wk05", "track_record", "live", "roster", "draft_board",
+                  "survivor")
+
+
+def _render(node: str, overrides: dict | None = None) -> dict:
+    script = _script(PAGE.read_text())
+    script = re.sub(r"\nrender\(\)\.then\([\s\S]*?\n\}\);\n", "\n", script)
+    cfg = {"script": script, "dataDir": str(PAGE.parent / "data"), "ov": overrides or {}}
+    body = f"""
+const vm = require('vm'), fs = require('fs');
+const cfg = {json.dumps(cfg)};
+function el() {{ return {{ innerHTML: '', textContent: '', hidden: false, className: '',
+  _c: {{}}, querySelector(s) {{ return this._c[s] ??= el(); }} }}; }}
+const els = {{}};
+const document = {{ getElementById: id => els[id] ??= el(), addEventListener() {{}} }};
+async function fetch(url) {{
+  const n = url.replace(/^data\\//, '').replace(/\\.json.*$/, '');
+  if (n in cfg.ov) {{
+    return cfg.ov[n] === null ? {{ ok: false }} : {{ ok: true, json: async () => cfg.ov[n] }};
+  }}
+  const f = cfg.dataDir + '/' + n + '.json';
+  return fs.existsSync(f) ? {{ ok: true, json: async () => JSON.parse(fs.readFileSync(f)) }}
+                          : {{ ok: false }};
+}}
+const ctx = vm.createContext({{ document, fetch, setInterval() {{}}, console }});
+vm.runInContext(cfg.script, ctx);
+vm.runInContext('render()', ctx).then(() => {{
+  const out = {{ footer: els.footer.innerHTML, panels: {{}} }};
+  for (const [id, e] of Object.entries(els)) {{
+    if (id.startsWith('p-')) out.panels[id] = {{ body: e._c['.body']?.innerHTML ?? '',
+      cls: e._c['.body']?.className ?? '', age: e._c['.age']?.textContent ?? '' }};
+  }}
+  console.log(JSON.stringify(out));
+}});
+"""
+    return json.loads(_run(node, body))
+
+
+def _committed_manifest() -> dict:
+    return json.loads((PAGE.parent / "data" / "manifest.json").read_text())
+
+
+def _with_artifact(name: str, **fields) -> dict:
+    man = _committed_manifest()
+    for a in man["artifacts"]:
+        if a["name"] == name:
+            a.update(fields)
+    return man
+
+
+def _status_records(node: str, man_js: dict | None, sides: dict) -> list[dict]:
+    lifted = "\n".join([
+        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
+        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
+        _lift(r"function statusRecords\(man, sides\) \{[\s\S]*?\n\}"),
+    ])
+    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify("
+                                 f"statusRecords({json.dumps(man_js)}, {json.dumps(sides)})));"))
+
+
+def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
+    """Planted: an artifact stamped long ago. Its record carries that age as text, and every
+    record carries the full field set whatever the footer later draws."""
+    man = {"artifacts": [
+        {"name": "roster", "present": True, "stale": False, "reason": None,
+         "generated_at": "2000-01-01T00:00:00+00:00"},
+        {"name": "survivor", "present": True, "stale": True, "reason": "ESPN unreachable",
+         "generated_at": None}]}
+    recs = _status_records(node, man, {"bigten": None, "cfbd": None})
+    assert [r["name"] for r in recs] == ["roster", "survivor", "bigten", "cfbd"]
+    for r in recs:
+        assert set(r) == {"name", "age", "stale", "reason", "fetched"}, r
+    assert recs[0]["age"].endswith("d ago") and recs[0]["stale"] is False
+    assert recs[1] == {"name": "survivor", "age": "age unknown", "stale": True,
+                       "reason": "ESPN unreachable", "fetched": True}
+    for r in recs[2:]:
+        assert r["fetched"] is False and r["reason"], "an absent file is a named non-fetch"
+
+
+def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line(node):
+    got = _render(node)["footer"]
+    for name in MANIFEST_NAMES:
+        assert name in got, f"{name} is missing from the footer"
+    assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
+    assert "bigten" in got and "cfbd" in got
+    cfbd = json.loads((PAGE.parent / "data" / "cfbd.json").read_text())
+    assert cfbd["fetched"] is False
+    assert "nothing was fetched" in got, "cfbd's own reason is not on the line"
+    assert " ago" in got, "no ages on the line"
+
+
+def test_a_healthy_artifact_adds_no_reason_to_the_line(node):
+    """Silent when healthy: the control for the stale case below. The roster is current, so
+    its entry is a name and an age and nothing else."""
+    got = _render(node)["footer"]
+    entry = re.search(r"<span class=\"\">roster [^<]*</span>", got)
+    assert entry and "stale" not in entry.group(0)
+
+
+def test_a_stale_artifact_is_named_in_the_footer_and_bannered_at_its_panel(node):
+    man = _with_artifact("survivor", stale=True, reason="CFBD quota exhausted")
+    got = _render(node, {"manifest": man})
+    assert "survivor" in got["footer"] and "CFBD quota exhausted" in got["footer"]
+    panel = got["panels"]["p-survivor"]
+    assert STATE_CLASSES["stale"] in panel["cls"].split()
+    assert f'class="warn {STATE_CLASSES["stale"]}"' in panel["body"]
+    assert "Stale: CFBD quota exhausted" in panel["body"] and "artifact " in panel["body"]
+    assert "<table" in panel["body"], "a stale panel must keep its value"
+    assert STATE_CLASSES["stale"] not in got["panels"]["p-roster"]["cls"], "the control"
+
+
+def test_a_missing_artifact_reports_its_failure_at_its_own_panel(node):
+    """Planted: the roster is in the manifest as missing and its file 404s. The footer names
+    it, and so does the roster panel -- the failure is at the decision, not only in the footer."""
+    man = _with_artifact("roster", present=False, stale=True, reason="ESPN unreachable")
+    got = _render(node, {"manifest": man, "roster": None})
+    assert "ESPN unreachable" in got["footer"]
+    assert "ESPN unreachable" in got["panels"]["p-roster"]["body"], got["panels"]["p-roster"]
+    record = _render(node, {"manifest": _with_artifact(
+        "track_record", present=False, stale=True, reason="scoring not run"),
+        "track_record": None})
+    assert "scoring not run" in record["panels"]["p-record"]["body"].lower()
+
+
+def test_a_stale_track_record_is_bannered_at_its_panel(node):
+    man = _with_artifact("track_record", stale=True, reason="scores lag")
+    got = _render(node, {"manifest": man})
+    assert f'class="warn {STATE_CLASSES["stale"]}"' in got["panels"]["p-record"]["body"]
+    assert "scores lag" in got["footer"]
+
+
+def test_stale_live_scores_are_reported_at_the_slate(node):
+    man = _with_artifact("live", stale=True, reason="scoreboard unreachable")
+    # `live.json` is not committed, so the artifact the manifest calls stale is planted too.
+    got = _render(node, {"manifest": man, "live": {"rows": [], "generated_at": man["generated_at"]}})
+    assert "Live scores are stale: scoreboard unreachable" in got["panels"]["p-slate"]["body"]
+
+
+def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node):
+    got = _render(node, {"bigten": None})["footer"]
+    assert "bigten never" in got and "not fetched" in got
+    for name in (*MANIFEST_NAMES, "cfbd"):
+        assert name in got
+
+
+def test_no_manifest_still_leaves_a_footer_naming_the_two_non_fetches(node):
+    got = _render(node, {"manifest": None})["footer"]
+    assert "bigten" in got and "cfbd" in got
+
+
+def test_nothing_in_the_footer_or_a_banner_reaches_the_page_unescaped(node):
+    man = _with_artifact("survivor", stale=True, reason=HOSTILE)
+    got = _render(node, {"manifest": man,
+                         "bigten": {"name": HOSTILE, "fetched": False, "reason": HOSTILE,
+                                    "generated_at": None}})
+    assert "<script>" not in got["footer"] + got["panels"]["p-survivor"]["body"]
+    assert "&lt;script&gt;" in got["footer"]
+    assert "&lt;script&gt;" in got["panels"]["p-survivor"]["body"]
+
+
+@parent_only
+def test_a_page_that_drops_an_artifact_or_hides_a_failure_turns_the_status_line_red(node, tmp_path):
+    """The planted failures: a footer that drops the last manifest artifact; a roster panel
+    that ignores the manifest's reason (failure in the footer only); a footer that loses the
+    named non-fetches; a stale record panel with no banner."""
+    text = PAGE.read_text()
+    for name, old, new, expected in [
+        ("drops-an-artifact", "(man?.artifacts ?? []).map(a => ({",
+         "(man?.artifacts ?? []).slice(0, -1).map(a => ({",
+         "test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line"),
+        ("failure-only-in-the-footer", "failureWarn(rArt, ", "(",
+         "test_a_missing_artifact_reports_its_failure_at_its_own_panel"),
+        ("no-non-fetches", 'for (const name of ["bigten", "cfbd"])', "for (const name of [])",
+         "test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders"),
+        ("record-has-no-banner", "stale: staleOf(trArt),", "",
+         "test_a_stale_track_record_is_bannered_at_its_panel"),
+    ]:
+        mutant = text.replace(old, new)
+        assert mutant != text, f"{name}: the mutation did not land"
+        assert _parses(node, _script(mutant)).returncode == 0, name
+        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"

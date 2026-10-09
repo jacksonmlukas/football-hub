@@ -78,6 +78,8 @@
   .empty { color: var(--muted); font-size: 0.85rem; margin-top: 0.6rem; }
   footer { color: var(--muted); font-size: 0.78rem; margin-top: 1.5rem;
            border-top: 1px solid var(--line); padding-top: 0.8rem; }
+  footer .status { margin: 0; line-height: 1.6; }
+  footer .down { color: var(--st-stale-ink); font-weight: 600; }
   code { font-size: 0.85em; background: var(--line); padding: 0.05rem 0.3rem;
          border-radius: 3px; }
 
@@ -206,7 +208,8 @@ function panelParts({ age, warn, html, stale }) {
   return {
     age: age ?? "",
     cls: stale ? STATE.stale : STATE.frozen,
-    body: (stale ? staleNote(stale) : warn ? `<p class="warn">${esc(warn)}</p>` : "")
+    body: (stale ? staleNote(stale) : "")
+          + (warn ? `<p class="warn">${esc(warn)}</p>` : "")
           + (html ?? ""),
   };
 }
@@ -223,6 +226,57 @@ function panel(id, opts) {
 // The manifest entry's stale state, or null when the artifact is current. One reading of
 // "is this stale" for every panel, so none of them can spell it differently.
 const staleOf = art => art?.stale ? { reason: art.reason, at: art.generated_at } : null;
+
+// What a panel says when its artifact gave it nothing to draw: the manifest's own reason when
+// it has one, else the panel's standing sentence. A failure is reported where it broke (#351),
+// not only in the footer.
+const failureWarn = (art, fallback) =>
+  art && (art.stale || art.present === false) && art.reason ? cap(art.reason) : fallback;
+
+// The status line's data (#351): one record per artifact, whole -- name, age, stale, reason,
+// fetched -- so that a reader-facing expansion later changes only how it is drawn. The
+// manifest's artifacts come first; `bigten` and `cfbd` are not in the manifest, so the page
+// loads them itself (`sides`, null where the file is absent) and reports their own `reason`.
+// An absent side file is a named non-fetch with a standing reason, not an error and not
+// absence. Built from data only, so a test can lift it into node.
+// GUARD status-records-carry-every-artifact [contracts/test_dashboard_escapes.py::test_the_status_records_name_every_manifest_artifact_with_its_age]: the footer's data has an entry, with age, for every artifact the manifest lists.
+function statusRecords(man, sides) {
+  const out = (man?.artifacts ?? []).map(a => ({
+    name: String(a?.name ?? "?"),
+    age: a?.generated_at ? ago(a.generated_at) : "age unknown",
+    stale: !!a?.stale || a?.present === false,
+    reason: a?.reason ?? (a?.present === false ? "the artifact is missing" : null),
+    fetched: a?.present !== false,
+  }));
+  for (const name of ["bigten", "cfbd"]) {
+    if (out.some(r => r.name === name)) continue;
+    const s = sides?.[name] ?? null;
+    out.push(s ? {
+      name,
+      age: s.generated_at ? ago(s.generated_at) : "age unknown",
+      stale: !!s.stale || s.fetched === false,
+      reason: s.reason ?? null,
+      fetched: s.fetched !== false,
+    } : {
+      name, age: "never", stale: true, fetched: false,
+      reason: `no ${name}.json has been published`,
+    });
+  }
+  return out;
+}
+// /GUARD
+
+// One line, silent when healthy: every record's name and age; for anything stale or unfetched,
+// its reason too. Every interpolation is escaped -- the reasons come off feeds.
+function statusLine(records) {
+  const items = records.map(r => {
+    const bad = r.stale || !r.fetched;
+    const why = bad
+      ? ` &mdash; ${r.fetched ? "stale" : "not fetched"}: ${esc(r.reason ?? "no reason given")}` : "";
+    return `<span class="${bad ? "down" : ""}">${esc(r.name)} ${esc(r.age)}${why}</span>`;
+  });
+  return `<p class="status">${items.join(" &middot; ")}</p>`;
+}
 
 // Escapes by default, so a column cannot forget. Getters return *text*, never markup --
 // which is why the em dash below is the character rather than `&mdash;`. Relying on each
@@ -647,7 +701,7 @@ let slateMan = null;
 // the panel's frame beside it: how many games matched, and how old the scores are. Hence
 // the `{age, warn, html}` where `trackRecordBody` returns markup alone -- the join happens
 // here, so what it found is known here and nowhere else.
-async function slateBody(preds, art, archived) {
+async function slateBody(preds, art, archived, liveArt) {
   // Scores are joined only for the week the manifest names. The live map is keyed by the
   // matchup alone, and three of 2026 week 1's fixtures repeat 2025 week 18's -- so reaching
   // the older week put tonight's score beside a prediction made for a different season's
@@ -719,7 +773,9 @@ async function slateBody(preds, art, archived) {
     age: `${preds.n} games · ${matched} live`,
     stale: staleOf(art),
     warn: archived ? "An earlier published week, kept exactly as it was committed."
-        : (!live ? "Live scores unavailable — model numbers below are still correct."
+        : (!live ? (liveArt?.reason ? `Live scores unavailable (${liveArt.reason}) — ` : "Live scores unavailable — ")
+                      + "model numbers below are still correct."
+                 : liveArt?.stale ? `Live scores are stale: ${liveArt.reason ?? "unknown"}.`
                  : (matched === 0 ? "No live game matches this slate; scores column is idle."
                                   : null)),
     html: head + body,
@@ -751,7 +807,7 @@ async function renderSlate(man) {
   // One exit, so the links are appended once. They were concatenated at each of the two
   // this render used to have, and the one that would eventually lose them is the empty
   // case -- which is exactly when a reader wants the week that did publish.
-  const shown = preds?.rows?.length ? await slateBody(preds, art, archived) : {
+  const shown = preds?.rows?.length ? await slateBody(preds, art, archived, archived ? null : findArt(man, "live")) : {
     age: "",
     warn: art?.reason ? `No slate: ${art.reason}`
         : archived ? "That published week could not be loaded."
@@ -768,6 +824,10 @@ async function render() {
   document.getElementById("subtitle").textContent =
     man ? `${man.season} · week ${wk} · published ${ago(man.generated_at)}`
         : "no manifest — run `make slate`";
+
+  // The status line is drawn before any panel, so a panel that throws cannot take it with it.
+  const [bigten, cfbd] = await Promise.all([load("bigten"), load("cfbd")]);
+  document.getElementById("footer").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));
 
   // --- draft board (retires itself when a newer slate exists, #348)
   const boardEl = document.getElementById("p-board");
@@ -804,7 +864,7 @@ async function render() {
   } else {
     // Backticks, not `<code>`: `warn` is escaped, and the manifest's own reason strings
     // ("run `python -m hub.season.roster --write`") already read this way.
-    panel("p-board", { age: "", warn: "No draft board. Run `make draft`." });
+    panel("p-board", { age: "", warn: failureWarn(bArt, "No draft board. Run `make draft`.") });
   }
 
   // --- my roster, and where the set lineup differs from the best one
@@ -855,7 +915,7 @@ async function render() {
   } else {
     panel("p-roster", {
       age: "",
-      warn: "No roster yet. Run `python -m hub.season.roster --write`.",
+      warn: failureWarn(rArt, "No roster yet. Run `python -m hub.season.roster --write`."),
       html: `<p class="empty">Knowable only after the draft, which is why this panel was
              empty all summer.</p>`,
     });
@@ -866,10 +926,12 @@ async function render() {
 
   // --- track record
   const tr = await load("track_record");
+  const trArt = findArt(man, "track_record");
   if (tr) {
-    panel("p-record", { age: ago(tr.generated_at), html: trackRecordBody(tr) });
+    panel("p-record", { age: ago(tr.generated_at), stale: staleOf(trArt),
+                        html: trackRecordBody(tr) });
   } else {
-    panel("p-record", { age: "", warn: "No track record published yet." });
+    panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
   }
 
   // --- survivor
@@ -913,11 +975,6 @@ async function render() {
     });
   }
 
-  const stale = (man?.artifacts ?? []).filter(a => a.stale);
-  document.getElementById("footer").innerHTML = stale.length
-    ? `${stale.length} of ${man.artifacts.length} panels stale: ${esc(stale.map(a => a.name).join(", "))}.
-       Panels show last-good data rather than going blank.`
-    : `All panels current. Regenerate with <code>make slate</code>.`;
 }
 
 // Poll only the slate. The other three panels read artifacts that change once a week, and
