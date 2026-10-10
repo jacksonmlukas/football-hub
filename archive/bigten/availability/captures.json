@@ -54,5 +54,19 @@
   "bytes": 388266,
   "path": "availability/2026/page/5f118633bdf5ffe5.html",
   "new_content": true
+ },
+ {
+  "deadline": "2026-10-10T1500Z",
+  "deadline_name": "gameday-early",
+  "captured_at": "2026-10-10T19:06:58+00:00",
+  "season": 2026,
+  "kind": "page",
+  "url": "https://bigten.org/fb/availability-reports/",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "fc31452baf93d50f679920db422df86c55e316a4492b93767428e2c00380f641",
+  "bytes": 388267,
+  "path": "availability/2026/page/fc31452baf93d50f.html",
+  "new_content": true
  }
 ]
