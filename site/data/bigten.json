@@ -1,12 +1,12 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-10-09T07:45:10+00:00",
+  "generated_at": "2026-10-10T07:24:55+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 6,
   "deadline": {
-    "id": "2026-10-09T0130Z",
+    "id": "2026-10-10T0130Z",
     "name": "evening"
   },
   "fetched": true,
@@ -52,10 +52,10 @@
       "2026-10-04T0130Z"
     ]
   },
-  "archive_rows": 3,
+  "archive_rows": 4,
   "quota": {
     "month": "2026-10",
-    "used": 5,
+    "used": 6,
     "limit": 1000
   }
 }

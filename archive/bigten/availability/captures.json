@@ -40,5 +40,19 @@
   "bytes": 389745,
   "path": "availability/2026/page/651bebe90591bcdb.html",
   "new_content": true
+ },
+ {
+  "deadline": "2026-10-10T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-10T07:24:51+00:00",
+  "season": 2026,
+  "kind": "page",
+  "url": "https://bigten.org/fb/availability-reports/",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "5f118633bdf5ffe551eb5a72176396cbe9dc0ebeb168c0a4a35164ae73c5a495",
+  "bytes": 388266,
+  "path": "availability/2026/page/5f118633bdf5ffe5.html",
+  "new_content": true
  }
 ]
