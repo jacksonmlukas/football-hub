@@ -1,7 +1,7 @@
 {
   "name": "cfbd",
   "source": "hub.fetch.cfbd",
-  "generated_at": "2026-10-07T17:40:00+00:00",
+  "generated_at": "2026-10-10T18:24:32+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 6,
@@ -13,7 +13,7 @@
   "rows_by_endpoint": {},
   "quota": {
     "month": "2026-10",
-    "used": 3,
+    "used": 8,
     "limit": 1000
   }
 }

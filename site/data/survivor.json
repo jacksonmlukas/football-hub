@@ -1,23 +1,18 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-10-07T17:40:09+00:00",
+  "generated_at": "2026-10-10T18:24:40+00:00",
   "shape": "rows",
-  "n": 20,
+  "n": 19,
   "rows": [
     {
-      "week": 5,
-      "team": "HOU",
-      "win_prob": 0.7219522298168483
-    },
-    {
       "week": 6,
-      "team": "IND",
-      "win_prob": 0.6950317276536153
+      "team": "LA",
+      "win_prob": 0.7950617937505842
     },
     {
       "week": 7,
-      "team": "NYJ",
+      "team": "TEN",
       "win_prob": 0.5777798142127708
     },
     {
@@ -32,8 +27,8 @@
     },
     {
       "week": 10,
-      "team": "LA",
-      "win_prob": 0.7950617937505842
+      "team": "IND",
+      "win_prob": 0.6950317276536153
     },
     {
       "week": 11,
@@ -114,10 +109,9 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.0011133037879837344,
+  "survival": 0.0015420740348238392,
   "unpriced_weeks": [],
   "weeks_remaining": [
-    5,
     6,
     7,
     8,
@@ -136,10 +130,12 @@
     1,
     2,
     3,
-    4
+    4,
+    5
   ],
   "spent": [
     "BAL",
+    "HOU",
     "JAX",
     "KC",
     "SF"

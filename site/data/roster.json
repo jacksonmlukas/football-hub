@@ -1,7 +1,7 @@
 {
   "name": "roster",
   "source": "roster.parquet",
-  "generated_at": "2026-10-07T17:40:07+00:00",
+  "generated_at": "2026-10-10T18:24:38+00:00",
   "shape": "rows",
   "n": 17,
   "rows": [
@@ -68,7 +68,7 @@
       "mu": 10.389073468391505,
       "sd": 6.865434248373909,
       "projected": true,
-      "starting": true,
+      "starting": false,
       "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
@@ -121,8 +121,8 @@
       "player": "Matthew Golden",
       "pos": "WR",
       "nfl_team": "GB",
-      "mu": 9.605333333333334,
-      "sd": 6.60139657951255,
+      "mu": 9.610333333333333,
+      "sd": 6.60311451513602,
       "projected": true,
       "starting": true,
       "best_start": true,
@@ -154,7 +154,7 @@
       "projected": true,
       "starting": false,
       "best_start": false,
-      "injury_status": "ACTIVE",
+      "injury_status": "OUT",
       "available": true,
       "can_start": true,
       "missing_games": 0
@@ -177,10 +177,10 @@
       "player": "Braelon Allen",
       "pos": "RB",
       "nfl_team": "NYJ",
-      "mu": 5.65625,
-      "sd": 4.923054501526465,
+      "mu": 5.94625,
+      "sd": 5.04768131175097,
       "projected": true,
-      "starting": false,
+      "starting": true,
       "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
@@ -191,8 +191,8 @@
       "player": "Will Shipley",
       "pos": "RB",
       "nfl_team": "PHI",
-      "mu": 4.238333333333333,
-      "sd": 4.261553061971656,
+      "mu": 4.233333333333333,
+      "sd": 4.259038623915027,
       "projected": true,
       "starting": false,
       "best_start": false,
@@ -244,18 +244,32 @@
       "missing_games": 0
     }
   ],
-  "set_total": 88.65770225627028,
-  "optimal_total": 98.96436892293697,
-  "gain": 10.306666666666686,
+  "set_total": 84.2198787878788,
+  "optimal_total": 98.96936892293697,
+  "gain": 14.749490135058167,
   "withheld": [
     "Ja'Marr Chase",
     "Jonathon Brooks"
   ],
   "start": [
+    "Denzel Boston",
     "KC Concepcion"
   ],
   "sit": [
+    "Braelon Allen",
     "Ja'Marr Chase"
   ],
-  "previous": null
+  "previous": {
+    "generated_at": "2026-10-07T17:40:07+00:00",
+    "start": [
+      "KC Concepcion"
+    ],
+    "sit": [
+      "Ja'Marr Chase"
+    ],
+    "withheld": [
+      "Ja'Marr Chase",
+      "Jonathon Brooks"
+    ]
+  }
 }
