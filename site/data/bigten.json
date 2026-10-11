@@ -1,13 +1,13 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-10-11T00:05:19+00:00",
+  "generated_at": "2026-10-11T07:34:07+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 6,
   "deadline": {
-    "id": "2026-10-10T2100Z",
-    "name": "gameday-late"
+    "id": "2026-10-11T0130Z",
+    "name": "evening"
   },
   "fetched": true,
   "stale": true,
@@ -52,10 +52,10 @@
       "2026-10-04T0130Z"
     ]
   },
-  "archive_rows": 6,
+  "archive_rows": 7,
   "quota": {
     "month": "2026-10",
-    "used": 10,
+    "used": 11,
     "limit": 1000
   }
 }
