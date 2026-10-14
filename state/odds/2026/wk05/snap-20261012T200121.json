@@ -1,0 +1,17 @@
+{
+ "captured_at": "2026-10-12T20:01:21.836177",
+ "rows": [
+  {
+   "captured_at": "2026-10-12T20:01:21.836177",
+   "close_spread": 3.5,
+   "close_total": 54.5,
+   "game_id": "2026_05_BUF_LA",
+   "polls_unmoved": 1,
+   "spread_price": -101.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-12T20:01:21.836177"
+  }
+ ],
+ "season": 2026,
+ "week": 5
+}
