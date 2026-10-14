@@ -1,19 +1,19 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-10-10T18:24:40+00:00",
+  "generated_at": "2026-10-14T15:41:59+00:00",
   "shape": "rows",
   "n": 19,
   "rows": [
     {
       "week": 6,
       "team": "LA",
-      "win_prob": 0.7950617937505842
+      "win_prob": 0.8367245094853888
     },
     {
       "week": 7,
-      "team": "TEN",
-      "win_prob": 0.5777798142127708
+      "team": "NYJ",
+      "win_prob": 0.6380271805560663
     },
     {
       "week": 8,
@@ -109,7 +109,7 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.0015420740348238392,
+  "survival": 0.00179210580512622,
   "unpriced_weeks": [],
   "weeks_remaining": [
     6,
@@ -141,7 +141,6 @@
     "SF"
   ],
   "snapshot_only_weeks": [
-    7,
     8,
     9,
     10,
