@@ -33,6 +33,11 @@ on:
   # against; `tests/contracts/test_odds_schedule.py` holds the two to each other, the way
   # `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
   #
+  # **Scheduled runs start late (2026-10-14, #468).** GitHub starts these ~4-8.5h after the
+  # cron slot (measured starts 9-23 15:16 ... 10-08 17:45 UTC against 11:00-14:00 crons).
+  # Captures are stamped with their real time and nothing assumes the slot time;
+  # `hub.instrument_check.GRACE` is 9h for this reason (was 6h). See docs/decisions.md.
+  #
   # Six polls a week is twelve odds credits (two markets x one region a poll), about 52 a
   # month against 500 -- `hub.fetch.odds` refuses below a floor of 75 before spending one, so
   # an over-eager cadence cannot drain the month. The maintainer approved the spend.
