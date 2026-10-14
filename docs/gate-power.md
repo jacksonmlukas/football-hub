@@ -3330,6 +3330,67 @@ being quietly assumed to have moved the day this section reads ADOPT.
 begins, per the order stated at the top: pre-register → fit as an unwired exhibit → gate in
 October, after Audit V (#325).
 
+## Fit-stage specification (stage 1), 2026-10-14 — written before any number is computed
+
+**ADOPTED** on #365 (maintainer, 2026-09-21): *pre-register → fit as an unwired exhibit under
+`hub/exhibits/` with every constant `not_an_input` → gate in October under the fixed rule.*
+This addendum fixes, before the first fit, the choices the section above left open. Nothing
+below has been run; the module that runs it (`hub.exhibits.state_space_rating`) does not
+exist at the commit that carries this text.
+
+**The filter.** A Kalman filter over the league's team strengths. Per game `g` in week `w` of
+season `s`: `y_g = result = θ_home − θ_away + HOME_ADV + e`, `e ~ N(0, RATING_MARGIN_SD²)`.
+State evolution inside a season: each team's variance grows by `WEEK_STEP_SD²` per elapsed
+week since the team's last update (a bye costs two steps, not one). At a season boundary:
+`θ ← (1 − SEASON_SHRINK)·θ` and
+`P ← (1 − SEASON_SHRINK)²·P + SEASON_SHRINK·(2 − SEASON_SHRINK)·INITIAL_STRENGTH_VAR` — the
+AR(1) whose stationary variance is the prior's, so no sixth constant enters. A team's
+first-ever appearance starts at `θ = 0`, `P = INITIAL_STRENGTH_VAR`. Franchise moves are one
+team (OAK→LV, SD→LAC, STL→LA). Each team plays at most once a week, so the games of a week
+are updated sequentially and exactly.
+
+**What the filter reads (rule 6, rule 2).** Results only — never `spread_line`/`close_spread`
+as a feature. The prediction for a game in week `w` uses the state after every regular-season
+game of weeks `< w` of that season and every earlier season: strictly earlier, never the same
+week. The state ingests every completed regular-season game, tie (margin 0) and unpriced
+game included — a result is not a price; postseason games are not ingested.
+
+**Four constants are fitted walk-forward, one season held out at a time** by
+`hub.models.experiment.expanding_seasons`: for held-out season `S` the vector
+`(WEEK_STEP_SD, SEASON_SHRINK, HOME_ADV, RATING_MARGIN_SD)` is the maximiser of the filter's
+one-step-ahead Gaussian predictive log-likelihood of the margin over **seasons strictly before
+`S` only** (L-BFGS-B, box bounds, the same start vector every fold). `INITIAL_STRENGTH_VAR` is
+**chosen** at 6.0², not fitted, being unidentified at a team's first game. The filter is then
+run from 1999 through `S` with those constants; only the games of `S` are scored. Season 1999
+is only ever training data; scored seasons are 2000 through the last completed one. The table
+carries `train_seasons` per row so a reader can discount the early folds, which fit four
+constants on one to a few seasons — a stated weakness, not repaired by a prior.
+
+**The estimand and the arms.** Per game, `−[y·log p + (1−y)·log(1−p)]`, `y` = home won,
+`p_B = normal_cdf(margin_hat / RATING_MARGIN_SD)`. Arm A is the close exactly as the section
+above states: `normal_cdf(spread_line / MARGIN_SD)` with the shipped `MARGIN_SD`. **`MARGIN_SD`
+was fitted on 2016–2025, so for seasons before 2026 Arm A carries information about those
+seasons that Arm B's constants do not (rule 2)**; the fit therefore also records, beside the
+pre-registered gap, a supplementary `gap_trailing`: Arm A with a σ taken from the strictly
+earlier ten seasons' residuals (the `trailing10` form `hub.models.margin` uses). The
+pre-registered gap is the first column; the second is a disclosure and decides nothing.
+Scored population: regular season, `spread_line` present, `result ≠ 0`, completed.
+
+**What is recorded: per season, `gap = mean(logloss_A) − mean(logloss_B)` in nats per game,
+positive when the rating is lower — with no verdict word**, plus `n` games and
+`train_seasons`. The mean over seasons may be printed as a number and is not an interval.
+
+**The gate harness** is declared in the exhibit (`arm_roots` = the exhibit), with
+`within=("game_id",)` and the ceiling arm `RATING_CEILING_ARM` named above. It is run only
+with no ceiling frame, so it must print NOT-RUNNABLE and name the snapshot-archive depth
+(#383); that is the expected first print, not a failure. Nothing imports the exhibit; the
+weekly forward arm's import closure (`arm_closure()`) is held unchanged.
+
+**Rule-18 controls, written first:** (1) a planted league with a known strength drift — the
+rating recovers it and beats the passthrough on the planted close; (2) a static league — no
+gain over the passthrough; (3) no leak — flipping a later season's results moves no earlier
+fold's constants, state or score.
+
 ---
 
 # Pre-registered 2026-09-21 — PROPOSED: the state-space team rating on CFB (#366)
