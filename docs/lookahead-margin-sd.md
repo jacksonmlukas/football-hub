@@ -32,10 +32,9 @@ result (weeks 1-5). Scored (game, bucket) rows by bucket, buckets as fixed below
 | b3 | [4, 8) | 43 |
 | b4 | [8, inf) | 0 |
 
-Every number in that table was counted before the buckets were fixed in the next section only in
-the sense that the edges below were chosen on the *shape of the ticket* (one-week steps near the
-close, wider steps far out) and not on these counts; **b4 is empty**, and is named so rather than
-merged away.
+The edges (next section) were written down before these counts were taken; the one earlier count
+was of all snapshots, scored or not, by whole week out. They are one-week steps near the close
+and wider steps far out. **b4 is empty**, and is named so rather than merged away.
 
 ## The arms
 
@@ -100,7 +99,7 @@ simulation on synthetic spreads (`N(0, 6)`, 200,000 draws) and a margin that is 
 | 14.0 (+10%) | 0.0004 | 0.031 | 0.0087 | 0.0042 |
 | 15.0 (+18%) | 0.0012 | 0.052 | 0.0148 | 0.0071 |
 
-**The MDE is larger than the gain it is looking for in every cell**, by a factor of 4 to 12. A
+**The MDE is larger than the gain it is looking for in every cell**, by a factor of 6 to 27. A
 log-loss gate on this question cannot return ADOPT or REMOVE for a plausible effect in 2026
 (four held-out week clusters today; at most about sixteen by week 18), and with the ceiling
 printed it will return **NOT-RUNNABLE**. That is the branch this gate will take, and **it is
