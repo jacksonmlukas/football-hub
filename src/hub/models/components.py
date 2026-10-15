@@ -25,6 +25,12 @@ ratios come out at 1.11 for receptions and 0.83-0.86 for each kind of touchdown 
 enough to Poisson to use it -- while yards are continuous and right-skewed, so Gamma with a
 fitted coefficient of variation.
 
+**The touchdown count (#307, 2026-10-15).** Under-dispersed counts are drawn from the
+Conway-Maxwell-Poisson, whose `nu` is solved so the variance over mean is the fitted constant
+at the mean being drawn, with no ceiling on the support; and a phase's touchdowns are paired
+with its yards at a fitted correlation (`TD_YARDS_RHO`) rather than drawn apart. Both are in
+`docs/td-count-sampler.md`, with what each moved.
+
 **The expected columns are not point-in-time (named 2026-10-07, #313, audit IV R11).** The
 `_exp` columns `EXPECTED` maps are the output of a model nflverse fitted over its whole history,
 so a 2022 board reading 2021 values is reading numbers produced with sight of 2022 through 2025.
@@ -35,9 +41,12 @@ is not known, and no figure here measures it.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from functools import lru_cache
 
 import numpy as np
 import polars as pl
+from scipy.special import ndtri
+from scipy.stats import rankdata
 
 from hub.config import drafted_positions
 from hub.declare import chosen, fitted
@@ -145,9 +154,24 @@ COUNT_DISPERSION: dict[str, float] = fitted(
 # Touchdowns are *under*dispersed -- variance-to-mean 0.83 to 0.86, measured the same way.
 # Poisson would be 1.0, and using it overstated weekly skew (0.80 simulated against 0.60
 # observed) because the lumpiest term was drawn lumpier than it really is. Under 1.0 the
-# right family is binomial: var/mean = 1 - p, so p follows directly from the measurement.
+# family is the Conway-Maxwell-Poisson, whose `nu` is solved so the variance over mean is this
+# number at the mean being drawn (#307; it was a binomial of `round(mean / (1 - phi))` trials,
+# which has a ceiling a few counts above the mean and drifts off the number it holds).
 TD_DISPERSION: dict[str, float] = fitted(
     {"pass": 0.85, "rush": 0.86, "rec": 0.83})
+
+# The largest Conway-Maxwell-Poisson `nu` the solver will return: where a dispersion is below
+# what any count of that mean can reach (0.83 at a mean under 0.17), `nu` runs to this and the
+# law is the two-point one on the integers either side of the mean. Past about 10 the law no
+# longer moves at any mean a touchdown count has, so the value is a stop and not a fit.
+CMP_NU_MAX: float = chosen(64.0)
+
+# How tightly a phase's touchdowns follow its yards, week to week within a player: the
+# Gaussian-copula correlation `draw_touchdowns` pairs the drawn counts with the yards' ranks at
+# (#307). Fitted so the sampler's own within-player Pearson correlation of yards and touchdowns
+# on each 2022-25 player-season's line equals the observed one; `docs/td-count-sampler.md`.
+TD_YARDS_RHO: dict[str, float] = fitted(
+    {"pass": 0.506, "rush": 0.465, "rec": 0.456})
 
 # Teammate correlation is owned by `hub.models.predict` -- who moves together is a
 # prediction, where this module is about how stats become points. It used to be re-exported
@@ -161,13 +185,103 @@ _PHASE_TDS = {"pass": "passing_tds", "rush": "rushing_tds", "rec": "receiving_td
 _PHASE_UNITS = {"pass": "attempts", "rush": "carries", "rec": "receptions"}
 
 
-def _counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.ndarray:
+def _log_factorials(k_max: int) -> np.ndarray:
+    """`log(k!)` for k = 0..k_max."""
+    return np.concatenate([[0.0], np.cumsum(np.log(np.arange(1, k_max + 1)))])
+
+
+def _cmp_support(mean: float) -> int:
+    """The last count the Conway-Maxwell-Poisson tables carry for a mean. Ten Poisson
+    standard deviations and twenty-five counts past the mean: at `nu >= 1` the tail is
+    lighter than the Poisson's, whose mass there is below 1e-20, so the cut is not a
+    ceiling anything can see. It is wide on purpose -- the defect this replaced was a
+    ceiling at `round(mean / (1 - phi))`, a few counts above the mean."""
+    return int(mean + 10.0 * np.sqrt(mean) + 25.0)
+
+
+def _cmp_log_lambda(mean: np.ndarray, nu: np.ndarray, k_max: int) -> np.ndarray:
+    """The `log(lambda)` at which the Conway-Maxwell-Poisson `P(k) ~ lambda^k / (k!)^nu`
+    has this mean, elementwise: bisection on a mean that rises with `lambda`, all pairs at
+    once. Sixty halvings of a bracket a few hundred wide leave it at machine precision."""
+    ks = np.arange(k_max + 1)
+    log_fact = _log_factorials(k_max)
+    lo = np.full(mean.shape, -60.0)
+    hi = nu * np.log(k_max + 1.0) + 10.0
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        logp = ks[None, :] * mid[:, None] - nu[:, None] * log_fact[None, :]
+        p = np.exp(logp - logp.max(axis=1, keepdims=True))
+        rising = (p @ ks) / p.sum(axis=1) < mean
+        lo = np.where(rising, mid, lo)
+        hi = np.where(rising, hi, mid)
+    return (lo + hi) / 2.0
+
+
+def _cmp_dispersion(mean: float, nu: np.ndarray) -> np.ndarray:
+    """Variance over mean of the Conway-Maxwell-Poisson at this mean, for each `nu`."""
+    k_max = _cmp_support(mean)
+    ks = np.arange(k_max + 1)
+    log_fact = _log_factorials(k_max)
+    log_lam = _cmp_log_lambda(np.full(nu.shape, mean), nu, k_max)
+    logp = ks[None, :] * log_lam[:, None] - nu[:, None] * log_fact[None, :]
+    p = np.exp(logp - logp.max(axis=1, keepdims=True))
+    p /= p.sum(axis=1, keepdims=True)
+    m = p @ ks
+    return ((p @ ks ** 2) - m ** 2) / m
+
+
+@lru_cache(maxsize=8192)
+def cmp_nu(mean: float, phi: float) -> float:
+    """The Conway-Maxwell-Poisson `nu` whose variance over mean is `phi` at this mean.
+
+    `nu = 1` is the Poisson (`phi = 1`) and a larger `nu` is a narrower distribution, so the
+    dispersion index falls monotonically from one and a bracket search finds it: five passes
+    of a 17-point grid, each narrowing the bracket sixteen-fold. **A target below what any
+    count distribution of this mean can reach returns `CMP_NU_MAX`**, the two-point law on the
+    integers either side of the mean, which is the narrowest there is: a count with mean
+    m < 1 cannot have variance below `m(1-m)`, so `phi` under `1 - m` is unreachable -- 0.83 at
+    a mean under 0.17 -- and the shipped binomial's answer there was not 0.83 either.
+    """
+    if not 0.0 < phi < 1.0:
+        raise ValueError(f"the Conway-Maxwell-Poisson narrows a count: phi={phi} is not in (0, 1)")
+    if mean <= 0.0:
+        raise ValueError(f"mean={mean}: there is no count to narrow at a mean of zero")
+    if _cmp_dispersion(mean, np.array([CMP_NU_MAX]))[0] >= phi:
+        return CMP_NU_MAX
+    lo, hi = 1.0, CMP_NU_MAX
+    for _ in range(5):
+        grid = np.linspace(lo, hi, 17)
+        i = min(max(int((_cmp_dispersion(mean, grid) > phi).sum()), 1), 16)
+        lo, hi = float(grid[i - 1]), float(grid[i])
+    return (lo + hi) / 2.0
+
+
+def cmp_pmf(mean: float, nu: float) -> np.ndarray:
+    """The Conway-Maxwell-Poisson probabilities of 0..K at this mean and `nu`, summing to one."""
+    k_max = _cmp_support(mean)
+    ks = np.arange(k_max + 1)
+    log_lam = _cmp_log_lambda(np.array([mean]), np.array([nu]), k_max)[0]
+    logp = ks * log_lam - nu * _log_factorials(k_max)
+    p = np.exp(logp - logp.max())
+    return p / p.sum()
+
+
+def draw_counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.ndarray:
     """Draw `n` counts with mean `mean` and variance `phi * mean`.
 
     Three families, picked by what the measurement says rather than by convention:
-    negative binomial above Poisson, binomial below it, Poisson at it. Volume counts are
-    overdispersed because usage moves week to week; touchdowns are underdispersed because
-    they are bounded by a small number of scoring chances.
+    negative binomial above Poisson, Conway-Maxwell-Poisson below it, Poisson at it. Volume
+    counts are overdispersed because usage moves week to week; touchdowns are underdispersed
+    because they are bounded by a small number of scoring chances.
+
+    **The family below one is the Conway-Maxwell-Poisson, and why it is not the binomial
+    (#307).** A binomial of `round(mean / (1 - phi))` trials has a ceiling at that many
+    counts -- two touchdowns at a WR1's rate and one below a mean of 0.3, where the
+    Poisson's chance of three is 0.6% -- and the rounding moves the realised dispersion off
+    the constant it was fitted to hold. The Katz family has the same ceiling (`b < 0` is
+    its under-dispersed side, a binomial in a continuous parameter, with support ending at
+    `-a/b`). The Conway-Maxwell-Poisson has none and `nu` solves the dispersion exactly at
+    every mean the dispersion is reachable at (`cmp_nu`).
     """
     if mean <= 0:
         return np.zeros(n, dtype=int)
@@ -176,12 +290,35 @@ def _counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.nda
         p = 1.0 / phi
         return rng.negative_binomial(max(mean * p / (1.0 - p), 1e-9), p, n)
     if phi < 1.0:
-        # var/mean = 1 - p for a binomial, so p is fixed by the dispersion and the number
-        # of trials by the mean.
-        p = 1.0 - phi
-        trials = round(mean / p)
-        return rng.binomial(max(trials, 1), min(mean / max(trials, 1), 1.0), n)
+        mean = float(mean)
+        cdf = np.cumsum(cmp_pmf(mean, cmp_nu(mean, float(phi))))
+        return np.minimum(np.searchsorted(cdf, rng.random(n), side="left"), cdf.size - 1)
     return rng.poisson(mean, n)
+
+
+def draw_touchdowns(rng: np.random.Generator, mean: float, phi: float, yards: np.ndarray,
+                    rho: float) -> np.ndarray:
+    """A phase's touchdowns, drawn *given the week's yards* (#307).
+
+    The marginal count is `draw_counts` -- the measured mean and dispersion, untouched. What
+    changes is which weeks get which count: a Gaussian copula pairs them with the yards at
+    correlation `rho`, by giving the weeks a latent score `rho * z + sqrt(1 - rho^2) * e`
+    (`z` the normal score of the week's yards rank, `e` a fresh normal) and handing the largest
+    counts to the largest scores. A big week is big because the yards and the touchdowns
+    happened together; drawn apart, as this module did, the weeks that are high on both are
+    missing, and the upper tail of every total is thinned a second time.
+
+    The coupling is a reordering of the counts drawn, so the marginal law is the one drawn
+    and no family needs its own conditional. A phase with no yards drawn (touchdowns supplied
+    without them) has nothing to condition on and is drawn marginally."""
+    tds = draw_counts(rng, mean, phi, yards.size)
+    if mean <= 0 or rho == 0.0 or not yards.any():
+        return tds
+    z = ndtri((rankdata(yards) - 0.5) / yards.size)
+    latent = rho * z + np.sqrt(1.0 - rho ** 2) * rng.standard_normal(yards.size)
+    out = np.empty_like(tds)
+    out[np.argsort(latent, kind="stable")] = np.sort(tds)
+    return out
 
 
 def scoring_mismatch(league: Mapping[str, float]) -> dict[str, tuple]:
@@ -284,43 +421,56 @@ def regress_touchdowns(c: Mapping[str, float], position: str) -> dict[str, float
     return out
 
 
+def phase_draws(rng: np.random.Generator, c: Mapping[str, float], phase: str,
+                n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One phase's (units, yards, touchdowns) over `n` weeks.
+
+    Units are counts with measured dispersion. Yards are a Gamma compounded on the drawn count
+    -- a week's yardage is the sum of one gain per unit -- so their variance grows with the
+    count rather than with the square of the mean, which is the square-root spread law arriving
+    as an output. A line that carries yards and no count infers one from the phase's typical
+    yards per unit, so the compound structure holds either way. **Touchdowns are drawn last,
+    given the yards (#307)**: the units and the yards of a seed are the draws they were, and
+    only the touchdowns, which follow the yards, are new.
+    """
+    mu_y = float(c.get(_PHASE_YARDS[phase]) or 0.0)
+    mu_u = float(c.get(_PHASE_UNITS[phase]) or 0.0)
+    if mu_y > 0 and mu_u <= 0:
+        # No count supplied: infer one so the compound structure still holds.
+        mu_u = mu_y / YARDS_PER_UNIT[phase]
+    units = draw_counts(rng, mu_u, COUNT_DISPERSION[phase], n)
+    yards = np.zeros(n)
+    if mu_y > 0 and mu_u > 0:
+        # Sum of `units` iid Gamma(1/cv^2, m*cv^2) is Gamma(units/cv^2, m*cv^2),
+        # so a week's yardage is drawn in one call and its variance grows with the
+        # number of units -- linearly in the mean, which is the whole point.
+        cv = PER_UNIT_CV[phase]
+        shape = units / cv ** 2
+        nz = shape > 0
+        yards[nz] = rng.gamma(shape[nz], (mu_y / mu_u) * cv ** 2)
+    tds = draw_touchdowns(rng, float(c.get(_PHASE_TDS[phase]) or 0.0), TD_DISPERSION[phase],
+                          yards, TD_YARDS_RHO[phase])
+    return units, yards, tds
+
+
 def sample_weeks(c: Mapping[str, float], position: str, n: int,
                  rng: np.random.Generator) -> np.ndarray:
     """Draw `n` weeks of fantasy points for a player with these per-game components.
 
-    Counts are Poisson and yards are Gamma, both from measured dispersion. Aggregating the
-    draws rather than drawing points directly is what produces the right skew, and what
-    makes the square-root spread law an output instead of an assumption.
+    Counts are negative binomial above Poisson and Conway-Maxwell-Poisson below it, yards are
+    Gamma compounded on the count, and touchdowns are drawn given the yards -- all from measured
+    dispersion. Aggregating the draws rather than drawing points directly is what produces the
+    right skew, and what makes the square-root spread law an output instead of an assumption.
     """
     total = np.zeros(n)
     counted_receptions = False
     for phase, yards_key in _PHASE_YARDS.items():
-        mu_y = float(c.get(yards_key) or 0.0)
-        units_key = _PHASE_UNITS[phase]
-        mu_u = float(c.get(units_key) or 0.0)
-        if mu_y > 0 and mu_u <= 0:
-            # No count supplied: infer one so the compound structure still holds.
-            mu_u = mu_y / YARDS_PER_UNIT[phase]
-        if mu_u > 0:
-            units = _counts(rng, mu_u, COUNT_DISPERSION[phase], n)
-            if mu_y > 0:
-                # Sum of `units` iid Gamma(1/cv^2, m*cv^2) is Gamma(units/cv^2, m*cv^2),
-                # so a week's yardage is drawn in one call and its variance grows with the
-                # number of units -- linearly in the mean, which is the whole point.
-                cv = PER_UNIT_CV[phase]
-                per_unit = mu_y / mu_u
-                shape = units / cv ** 2
-                yards = np.zeros(n)
-                nz = shape > 0
-                yards[nz] = rng.gamma(shape[nz], per_unit * cv ** 2)
-                total += SCORING[yards_key] * yards
-            if phase == "rec":
-                total += SCORING["receptions"] * units
-                counted_receptions = True
-        mu_td = float(c.get(_PHASE_TDS[phase]) or 0.0)
-        if mu_td > 0:
-            total += SCORING[_PHASE_TDS[phase]] * _counts(
-                rng, mu_td, TD_DISPERSION[phase], n)
+        units, yards, tds = phase_draws(rng, c, phase, n)
+        total += SCORING[yards_key] * yards + SCORING[_PHASE_TDS[phase]] * tds
+        if phase == "rec" and (float(c.get(_PHASE_UNITS[phase]) or 0.0) > 0
+                               or float(c.get(yards_key) or 0.0) > 0):
+            total += SCORING["receptions"] * units
+            counted_receptions = True
 
     mu_rec = float(c.get("receptions") or 0.0)
     if mu_rec > 0 and not counted_receptions:

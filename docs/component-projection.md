@@ -67,6 +67,13 @@ that, and using one left simulated spread ~13% light.
 Touchdowns are **under**dispersed, being bounded by a small number of scoring chances.
 Poisson overstated them, which overstated skew.
 
+> **Restated 2026-10-15 (#307); the table above stands as written.** The family for the
+> touchdown rows is the Conway-Maxwell-Poisson, not the binomial: the binomial's trial count was
+> its support, so a WR1 could not score three touchdowns in a game, and its rounding moved the
+> realised variance over mean up to 9.6% off the constant. A phase's touchdowns are also drawn
+> with its yards now, at a fitted correlation. The measured dispersions are unchanged.
+> `docs/td-count-sampler.md`.
+
 Yardage is compound: a week's receiving yards are the sum of one gain per catch. Modelling
 it as a Gamma with constant CV makes its variance grow with the *square* of the mean, which
 quietly reimposes the proportional spread law this whole layer exists to replace — the first

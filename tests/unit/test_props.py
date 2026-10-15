@@ -567,7 +567,7 @@ def test_log_without_its_inputs_is_a_sentence(tmp_path, capsys):
 
 def test_a_poisson_count_is_the_family_at_a_dispersion_of_one():
     """No measured phase sits at exactly one, so the branch is reached only by asking."""
-    d = props._counts(np.random.default_rng(0), 4.0, 1.0, 100_000)
+    d = C.draw_counts(np.random.default_rng(0), 4.0, 1.0, 100_000)
     assert d.var() / d.mean() == pytest.approx(1.0, rel=0.05)
 
 

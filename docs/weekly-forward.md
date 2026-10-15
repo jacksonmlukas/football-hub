@@ -922,3 +922,51 @@ No 2026 outcome has been read.
 
 The other 26 rows are as in the latest table above. Closure digest **`dbccd0d96ad1171a`** (was
 `376fd23b022aa541`).
+
+## Amended 2026-10-15: `hub.models.components` re-pinned for #307's touchdown sampler (prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; one row of the latest is superseded.
+
+**What changed.** #307 (`docs/td-count-sampler.md`): the under-dispersed count is drawn from the
+Conway-Maxwell-Poisson where it was a binomial of `round(mean / (1 - phi))` trials, and a phase's
+touchdowns are paired with its yards at a fitted correlation. In `hub.models.components` that
+removes `_counts`, replaces `sample_weeks`, and adds `phase_draws`, `draw_counts`,
+`draw_touchdowns`, `cmp_nu`, `cmp_pmf`, four private helpers and two declared constants
+(`TD_YARDS_RHO`, `CMP_NU_MAX`). It changes that one module of the closure and no other: on this
+tree `arm_closure()` differs from the pin in that one module, and the set is unchanged -- 29
+modules, the same names (`scipy` is third-party and not in the closure). `hub.models.props`, which
+held a second copy of the sampler and now takes it from `components`, is not in the closure.
+
+**Why the arm's figures are unchanged.** Three measurements, each of a different thing.
+
+1. *What the module's other names are.* Parsing `components.py` at `main` and in this change,
+   removing every docstring and replacing each call of `fitted`, `chosen` and `not_an_input` by its
+   first argument, the two syntax trees agree (`ast.dump`) for every top-level name except the
+   ones above: `COUNT_DISPERSION`, `EXPECTED`, `FALLBACK_TD_RATE`, `NO_EXPECTED_SOURCE`,
+   `PER_UNIT_CV`, `SCORING`, `TD_DISPERSION`, `TD_RATE`, `YARDS_PER_UNIT`, `expected_columns`,
+   `from_opportunity`, `moments`, `points`, `points_expr`, `project`, `regress_touchdowns`,
+   `scoring_mismatch` and `td_rate` are identical.
+2. *What the closure reads from it.* `grep` over `src/` and `scripts/` for `sample_weeks`,
+   `phase_draws`, `draw_counts`, `draw_touchdowns`, `cmp_nu`, `cmp_pmf`, `TD_DISPERSION`,
+   `COUNT_DISPERSION`, `PER_UNIT_CV`, `YARDS_PER_UNIT`, `TD_YARDS_RHO` and `CMP_NU_MAX` finds
+   them in `components` and in `hub.models.props` only. The closure's modules take `td_rate`,
+   `SCORING`, `EXPECTED`, `from_opportunity`, `regress_touchdowns` and `points` (`hub.draft.board`,
+   `hub.draft.regression`, `hub.models.panel`, `hub.models.volume`,
+   `hub.exhibits.weekly_projection`), all identical by (1).
+3. *A tripwire.* With every function of the sampler (`sample_weeks`, `moments`, `phase_draws`,
+   `draw_counts`, `draw_touchdowns`, `cmp_nu`, `cmp_pmf`) replaced by one that raises, the whole of
+   `tests/unit`, `tests/contracts` and `tests/golden` ran, except the three files that exercise the
+   sampler on purpose, and passed -- including #430's identity test
+   (`tests/unit/test_weekly_projection_move.py`), which reproduces the figures computed on the
+   pre-move code. No 2026 outcome has been read.
+
+**What did move:** `config_digest` `96fee74f` -> `4fad9f78` and `fitted_digest` `772d3bba` ->
+`f6b8c28a`, because `components.TD_YARDS_RHO` and `components.CMP_NU_MAX` entered the covered
+declarations (recorded in `tests/unit/test_config.py`; removing exactly those two names from the
+live constants reproduces both prior values). That is the model version's label and the prop log's
+`version()`, and not a number the arm computes.
+
+**The row now pinned.** `hub.models.components` `75740834610f` (was `b23c5d7d0c49`); the other 28
+rows are as in the latest table above. Closure digest **`a2a3e8720e86c13b`** (was
+`dbccd0d96ad1171a`).
