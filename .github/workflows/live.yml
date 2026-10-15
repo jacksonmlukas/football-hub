@@ -48,6 +48,35 @@ on:
     - cron: "*/10 0-5  * * 0"    # Saturday night ET      -- college primetime
     - cron: "*/10 0-5  * * 5"    # Thursday night ET
 
+    # **Backup starts, an hour ahead of every window** (#470, from #416). The 00:15Z kickoff
+    # of 2026-10-13 had no `live` run and no `watchdog` check: GitHub never delivered the
+    # scheduled start (#391), and #468 measured the starts it does deliver arriving 4-8.5
+    # hours late. A cron is a request, and every request above sits in the window's own
+    # hours, so one bad stretch of the scheduler took all of them. These ask twice more, at
+    # :20 and :40 of the hour before the window opens (T-40m and T-20m for a kickoff at the
+    # window's first hour), so a window has two requests in hand ahead of any game that do
+    # not share the primary crons' hours. Redundancy inside GitHub, since an external
+    # dispatcher is not set up.
+    #
+    # Duplicate starts are harmless, by the group below rather than by anything here: a
+    # later start replaces the running loop (`cancel-in-progress: true`, which the hand-over
+    # also needs, so it stays), the replaced run still performs its "Watchdog check" step
+    # (`if: always()`), and `hub.watchdog_gap` asks whether *any* check completed in a window,
+    # so a window checked by two runs is checked once and cannot also read as a gap.
+    # `tests/contracts/test_backup_crons.py` holds the entries, the group, and a planted copy
+    # without the backups going red.
+    #
+    # Each opens its window an hour earlier, so `watchdog.yml` starts an hour later to keep
+    # its rule of never watching a window's opening hour.
+    - cron: "20 15 * * 0"        # Sunday daytime ET backup -- professional
+    - cron: "40 15 * * 0"
+    - cron: "20 23 * * 1"        # Monday night ET backup
+    - cron: "40 23 * * 1"
+    - cron: "20 15 * * 6"        # Saturday daytime ET backup -- college
+    - cron: "40 15 * * 6"
+    - cron: "20 23 * * 4"        # Thursday night ET backup
+    - cron: "40 23 * * 4"
+
   # The opening of a window is exactly where a late cron hurts most, and a workflow-completion
   # event is delivered promptly where a schedule is not. The Saturday slate finishes around
   # 14:00 UTC, two hours before the college window opens, so this start covers the opening
@@ -136,6 +165,14 @@ jobs:
             "*/10 0-5  * * 1")  LEAGUE=nfl ;;   # Sunday night ET
             "*/10 0-5  * * 2")  LEAGUE=nfl ;;   # Monday night ET
             "*/10 0-5  * * 5")  LEAGUE=nfl ;;   # Thursday night ET
+            "20 15 * * 0")      LEAGUE=nfl ;;   # backups (#470)
+            "40 15 * * 0")      LEAGUE=nfl ;;
+            "20 23 * * 1")      LEAGUE=nfl ;;
+            "40 23 * * 1")      LEAGUE=nfl ;;
+            "20 15 * * 6")      LEAGUE=cfb ;;
+            "40 15 * * 6")      LEAGUE=cfb ;;
+            "20 23 * * 4")      LEAGUE=nfl ;;
+            "40 23 * * 4")      LEAGUE=nfl ;;
             "")
               if [ -n "$ASKED" ] && [ "$ASKED" != "auto" ]; then LEAGUE="$ASKED"
               elif [ "$(TZ=America/New_York date +%u)" = "6" ]; then LEAGUE=cfb

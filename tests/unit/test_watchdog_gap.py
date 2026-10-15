@@ -45,20 +45,20 @@ def _replay(kicks, runs=WATCHDOG_RUNS, now=REPORTING_RUN):
 
 def test_the_scan_finds_the_crons_that_exist():
     """A parser that matched nothing would make every assertion below vacuously true."""
-    assert len(REAL_CRONS) == 6
+    assert len(REAL_CRONS) == 14   # six window crons and the eight backups (#470)
 
 
 def test_a_sunday_that_runs_past_midnight_is_one_window():
     wins, _ = _replay([])
     sunday = [w for w in wins if w.contains(at(27, 20))]
-    assert [(w.start, w.end) for w in sunday] == [(at(27, 16), at(28, 6))], (
+    assert [(w.start, w.end) for w in sunday] == [(at(27, 15), at(28, 6))], (
         "Sunday daytime and Sunday night are two cron lines and one stretch of games")
 
 
 def test_monday_night_is_a_window_of_its_own():
     wins, _ = _replay([])
     monday_night = [w for w in wins if w.contains(PHI_CHI)]
-    assert [(w.start, w.end) for w in monday_night] == [(at(29, 0), at(29, 6))]
+    assert [(w.start, w.end) for w in monday_night] == [(at(28, 23), at(29, 6))]
 
 
 def test_a_window_that_has_not_closed_is_nobodys_gap():
@@ -68,7 +68,7 @@ def test_a_window_that_has_not_closed_is_nobodys_gap():
 
 def test_a_window_open_at_the_start_of_the_look_back_is_whole_not_clipped():
     wins = wg.windows(REAL_CRONS, since=at(28, 3), until=at(28, 12))
-    assert [(w.start, w.end) for w in wins] == [(at(27, 16), at(28, 6))]
+    assert [(w.start, w.end) for w in wins] == [(at(27, 15), at(28, 6))]
 
 
 def test_a_step_in_a_window_cron_is_refused_rather_than_widened():
@@ -92,7 +92,7 @@ def test_sunday_written_as_seven_is_sunday():
 def test_the_dropped_monday_night_window_is_reported():
     """The incident. No run in 00:00-06:00Z, a kickoff at 00:15Z: reported."""
     _, gaps = _replay([PHI_CHI])
-    assert [g.window.id for g in gaps] == ["2026-09-29T00:00Z"]
+    assert [g.window.id for g in gaps] == ["2026-09-28T23:00Z"]
     assert gaps[0].kickoffs == (PHI_CHI,)
 
 
@@ -107,7 +107,7 @@ def test_the_run_that_does_the_reporting_is_not_a_check_inside_the_window():
 def test_the_sunday_night_window_that_did_have_a_check_is_not_reported():
     """#390's window: the 04:57Z run was inside it, whatever it concluded."""
     _, gaps = _replay([LAR_DEN, PHI_CHI])
-    assert all(g.window.id != "2026-09-27T16:00Z" for g in gaps)
+    assert all(g.window.id != "2026-09-27T15:00Z" for g in gaps)
 
 
 def test_a_window_with_a_check_is_never_put_to_espn():
@@ -120,7 +120,7 @@ def test_a_window_with_a_check_is_never_put_to_espn():
         return [PHI_CHI]
     wins = wg.windows(REAL_CRONS, since=at(27, 12), until=REPORTING_RUN)
     wg.find_gaps(wins, WATCHDOG_RUNS, lookup)
-    assert asked == ["2026-09-29T00:00Z"], asked
+    assert asked == ["2026-09-28T23:00Z"], asked
 
 
 # --- rule 18: plant the failure, then plant its absence ------------------------------------
@@ -153,7 +153,7 @@ def test_espn_not_answering_is_reported_not_read_as_no_game():
         raise RuntimeError("ESPN unreachable")
     wins = wg.windows(REAL_CRONS, since=at(28, 12), until=REPORTING_RUN)
     gaps = wg.find_gaps(wins, [], down)
-    assert [g.window.id for g in gaps] == ["2026-09-29T00:00Z"]
+    assert [g.window.id for g in gaps] == ["2026-09-28T23:00Z"]
     assert gaps[0].kickoffs is None
     assert "could not be asked" in wg.render(gaps)
 
@@ -183,7 +183,7 @@ def test_espn_kickoffs_asks_both_boards_and_keeps_every_kickoff(monkeypatch):
         asked.append((league, date))
         return {"events": [{"id": league + str(date), "date": "2026-09-29T00:15Z"}]}
     monkeypatch.setattr(espn, "scoreboard", board)
-    w = wg.Window(at(29, 0), at(29, 6))
+    w = wg.Window(at(28, 23), at(29, 6))
     got = wg.espn_kickoffs(w)
     assert {lg for lg, _ in asked} == {"nfl", "cfb"}
     assert {d for _, d in asked} >= {"20260928", "20260929"}, "ET dates around the window"
@@ -196,12 +196,12 @@ def test_the_report_names_the_window_and_the_kickoff():
     _, gaps = _replay([PHI_CHI])
     text = wg.render(gaps)
     assert text.startswith(wg.MARKER)
-    assert "2026-09-29T00:00Z" in text and "00:15Z" in text
+    assert "2026-09-28T23:00Z" in text and "00:15Z" in text
 
 
 def test_a_gap_the_incident_already_names_is_not_repeated():
     _, gaps = _replay([PHI_CHI])
-    assert wg.unseen(gaps, "earlier comment: window 2026-09-29T00:00Z had no check") == []
+    assert wg.unseen(gaps, "earlier comment: window 2026-09-28T23:00Z had no check") == []
     assert wg.unseen(gaps, "an unrelated comment") == gaps
 
 
@@ -226,14 +226,14 @@ def test_the_cli_reports_the_replayed_window(tmp_path, capsys):
     assert wg.main(args, kicks, checks) == 0
     out = capsys.readouterr().out.split()
     assert out == ["gaps=1", "new=1"]
-    assert "2026-09-29T00:00Z" in report.read_text()
+    assert "2026-09-28T23:00Z" in report.read_text()
 
 
 def test_the_cli_is_quiet_about_a_gap_the_incident_already_holds(tmp_path, capsys):
     earlier = [at(d, h, 30) for d in range(22, 28) for h in (3, 18, 22)]
     args, report, kicks, checks = _cli(
         tmp_path, [PHI_CHI], runs=WATCHDOG_RUNS + earlier,
-        known="`2026-09-29T00:00Z` (...) no check ran")
+        known="`2026-09-28T23:00Z` (...) no check ran")
     assert wg.main(args, kicks, checks) == 0
     assert capsys.readouterr().out.split() == ["gaps=1", "new=0"]
     assert not report.exists(), "nothing new to say, so nothing written"
@@ -311,7 +311,7 @@ def test_planted_a_window_with_no_live_run_and_no_watchdog_run_is_still_detected
     before = dt.datetime(2026, 10, 5, 22, 0, tzinfo=UTC)
     out, report = _lookback(tmp_path, capsys, _by_workflow(live=[before]))
     assert out == ["gaps=1", "new=1"]
-    assert "2026-10-06T00:00Z" in report.read_text()
+    assert "2026-10-05T23:00Z" in report.read_text()
 
 
 def test_planted_a_live_run_that_ended_inside_the_window_is_a_check(tmp_path, capsys):
@@ -421,3 +421,39 @@ def test_the_cli_filters_windows_by_the_date_in_the_named_file(tmp_path, capsys)
                 "--season-opens-from", str(wf)]
         assert wg.main(args, _board(OCT6_KICK), _by_workflow()) == 0
         assert capsys.readouterr().out.split() == expected
+
+
+# --- #470: backup starts make duplicate checks, and a duplicate must not double-count ------
+
+def test_a_window_with_several_runs_checked_is_checked_once_and_never_a_gap():
+    """The backup crons start more than one `live` run in a window, each performing the check
+    step (a replaced run still does: `if: always()`). The look-back asks whether any check
+    completed in the window, so two or ten of them are one 'checked', never also a gap."""
+    wins = wg.windows(REAL_CRONS, since=at(27, 12), until=REPORTING_RUN)
+    monday_night = next(w for w in wins if w.contains(PHI_CHI))
+    checks = [at(28, 23, 50), at(29, 1, 5), at(29, 1, 5), at(29, 3, 30)]
+    asked = []
+
+    def lookup(w):
+        asked.append(w.id)
+        return [PHI_CHI]
+    assert wg.find_gaps([monday_night], checks, lookup) == []
+    assert asked == [], "a checked window must not be put to ESPN"
+
+
+def test_planted_the_same_window_with_no_check_is_a_gap():
+    wins = wg.windows(REAL_CRONS, since=at(27, 12), until=REPORTING_RUN)
+    monday_night = next(w for w in wins if w.contains(PHI_CHI))
+    assert [g.window.id for g in wg.find_gaps([monday_night], [], _board(PHI_CHI))] == [
+        "2026-09-28T23:00Z"]
+
+
+def test_a_window_opened_early_by_a_backup_start_survives_the_season_filter(tmp_path, capsys):
+    """The window now opens at 23:00Z the day before a Monday-night or Thursday-night
+    kickoff, so a SEASON_OPENS on the game's own date must not drop it."""
+    wf = tmp_path / "w.yml"
+    wf.write_text('env:\n  SEASON_OPENS: "2026-10-06"\n')
+    args = ["--live-yml", str(LIVE_YML), "--repo", "o/r", "--now", OCT6_NOW.isoformat(),
+            "--season-opens-from", str(wf)]
+    assert wg.main(args, _board(OCT6_KICK), _by_workflow()) == 0
+    assert capsys.readouterr().out.split() == ["gaps=1", "new=1"]
