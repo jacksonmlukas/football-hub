@@ -41,6 +41,7 @@ HARNESS_OF: dict[str, str | None] = {
     "hub.exhibits.championship_equity": "draft/backtest.py",
     "hub.exhibits.weekly_projection": "season/weekly_gate_data.py",
     "hub.exhibits.leverage": None,
+    "hub.exhibits.state_space_rating": None,
 }
 
 # The removed arm, by name. Each was reachable only from the harness on the 2026-09-06

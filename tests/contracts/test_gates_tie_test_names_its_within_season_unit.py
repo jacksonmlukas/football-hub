@@ -34,6 +34,8 @@ def test_the_within_unit_is_a_declared_non_empty_tuple(key):
 DECLARED_UNITS: dict[str, tuple[str, ...]] = {
     "hub.draft.backtest.HARNESS": ("draft",),
     "hub.models.coverage.SHAPE_HARNESS": ("player_id",),
+    # #365: the unwired state-space rating; one row per game, so the within unit is not a no-op.
+    "hub.exhibits.state_space_rating.HARNESS": ("game_id",),
     "hub.models.starter_change.HARNESS": ("season",),  # one cluster/season: a real no-op
     "hub.models.margin.SHAPE_HARNESS": ("season",),    # one row/season: a real no-op
     "hub.models.margin.WIDTH_HARNESS": ("season",),    # one row/season: a real no-op
