@@ -374,6 +374,42 @@ removing the ambiguity exclusion, each fail a test.
 2022-2025 reproduces the table in the 2026-10-08 amendment to the digit, because the 92 rows are
 the same rows and the refit reads the drift-carrying basis, as it did.
 
+## #322's adoption rule amended, and #298's adoption re-taken (2026-10-14; the text above kept)
+
+**Decision (maintainer, 2026-10-14, option (a), recorded on #322).** `IMPUTE_CV` stays **0.315**
+and `IMPUTE_CV_BY_POS` is unchanged. No constant moves, no digest moves.
+
+**The premise that fails.** #322's adoption rule, and the #327 pre-registration (item 5), took it
+that removing drift can only lower the number. That holds for an additive shift. It fails for a
+multiplicative one: a relative error divides by the imputed value, so row by row
+`1 + r_drift = (1 + r_like) * q`, with mean q = **0.885** (last season's curve sits 11.5% above
+this season's at the same rank). Dividing by a larger imputed base shrinks the drift-carrying
+residual, so the like-for-like figure comes out higher. 0.359 against 0.315 was explained, not a
+bug, as already shown in "What moved" above.
+
+**Which cell is the adoption cell.** The drift-carrying one. The board imputes a rookie from last
+season's curve, so the constant should describe the error on the base it is applied to. The
+like-for-like value is a diagnostic about the curve, not about the consumer.
+
+**#298's adoption, re-taken.** Same 92 rookies (RB 36, WR 42, QB 8, TE 6); relative error against
+the season's own xFP/game; season-clustered pooled mean [over rookies]:
+
+| | drift-carrying (shipped basis) | like-for-like |
+|---|---|---|
+| sd | 0.315 [0.324] | 0.359 [0.370] |
+| RMS | 0.320 [0.333] | 0.356 [0.370] |
+| median residual | -0.069 | +0.020 |
+
+Drift-carrying sd interval [0.213, 0.416]. The like-for-like sd and RMS sit +1.1 t and +1.0 t
+from 0.315: no cell separates from the shipped constant, so there is no evidence for moving it.
+
+**Outcome.** `IMPUTE_CV` = 0.315, `IMPUTE_CV_BY_POS` unchanged. The #322 tripwire (like-for-like
+sd against 0.315) is retired as an adoption trigger; it stays printed as a diagnostic.
+
+**Possible future ticket, not opened.** Option (c): impute rookies from a drift-corrected curve
+(this season's rank-to-xFP shape rather than last season's). That would be a modelling change,
+and would make the like-for-like cell the consumer's cell. Recorded here only.
+
 ## Reproduce
 
 ```bash
