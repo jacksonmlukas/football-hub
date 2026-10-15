@@ -33,10 +33,11 @@ def test_twelve_harnesses_over_the_ten_gate_modules():
     is three more modules and three more declarations -- and ADR-0019's claim that every gate
     reads the one rule is what makes the count ten rather than seven; #360 declared a second
     injury harness (retention against `out_zero`), which makes it eleven; #465 declares a twelfth in
-    `favourite_longshot`, a tenth module."""
+    `favourite_longshot`, a tenth module; #365 declares a thirteenth in the unwired exhibit
+    `state_space_rating`, an eleventh."""
     found = all_harnesses()
-    assert len(found) == 12, f"expected twelve harnesses, found {len(found)}: {sorted(found)}"
-    assert len(GATE_MODULES) == 10, f"expected ten gate modules, found {sorted(GATE_MODULES)}"
+    assert len(found) == 13, f"expected thirteen harnesses, found {len(found)}: {sorted(found)}"
+    assert len(GATE_MODULES) == 11, f"expected eleven gate modules, found {sorted(GATE_MODULES)}"
 
 
 @pytest.mark.parametrize("key", sorted(all_harnesses()))

@@ -3386,6 +3386,13 @@ with no ceiling frame, so it must print NOT-RUNNABLE and name the snapshot-archi
 (#383); that is the expected first print, not a failure. Nothing imports the exhibit; the
 weekly forward arm's import closure (`arm_closure()`) is held unchanged.
 
+**Amended at the fit (2026-10-14), wording only:** the ceiling arm is spelled
+`RATING_CEILING_ARM = "the betting market's last pre-kickoff poll"`, because the glossary
+forbids the bare "the market" (`tests/contracts/test_avoided_terms.py`). It names the same
+arm. **Also at the fit:** a game is predicted from the state before its own *week*, not
+only before its own game — with the full covariance a same-week game earlier in the order
+would otherwise leak into a later one (a Sunday result is not known at Thursday's kickoff).
+
 **Rule-18 controls, written first:** (1) a planted league with a known strength drift — the
 rating recovers it and beats the passthrough on the planted close; (2) a static league — no
 gain over the passthrough; (3) no leak — flipping a later season's results moves no earlier

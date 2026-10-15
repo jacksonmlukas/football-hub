@@ -55,7 +55,7 @@ from hub.fetch import nflverse
 CLI_MODULES = (
     "hub.draft.adherence", "hub.draft.backtest", "hub.draft.board", "hub.draft.calibrate", "hub.draft.evaluate",
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
-    "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage",
+    "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
     "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.audit_ready",
@@ -239,6 +239,7 @@ ABSENT_INPUT = [
     ("hub.draft.impute_cv", []),
     ("hub.draft.live", ["--replay", "2024"]),
     ("hub.draft.tune", ["--sweep"]),
+    ("hub.exhibits.state_space_rating", ["--fit"]),
     ("hub.fetch.bigten", ["--capture", "--status-path", "{tmp}/bigten.json",
                           "--index", "{tmp}/captures.json", "--archive", "{tmp}/archive",
                           "--lines-dir", "{tmp}/lines", "--quota-path", "{tmp}/quota.json"]),

@@ -25,6 +25,11 @@ One module per measurement, named for the thing measured and carrying its own wr
     `docs/adr/0009-championship-equity-does-not-pick.md` and the harness `hub.draft.backtest`.
   * `leverage` -- what this league's six-of-twelve bracket rewards, `docs/six-of-twelve.md`;
     a CLI with no importer, which is the state it was found in and the right one for it.
+  * `state_space_rating` -- the state-space team rating of #365 (S8), fitted walk-forward and
+    never wired: `ratings.forecaster()` still returns the betting market's prior. It is the one
+    exhibit that arrives before its verdict rather than after a removal; it declares its own gate
+    `Harness`, which prints NOT-RUNNABLE until the snapshot archive holds three seasons (#383).
+    The pre-registration is `docs/gate-power.md`; a CLI with no importer.
 
 What does *not* belong here is anything a Gate still reads. `hub.draft.cohort` draws the
 rosters two season-side Gates are scored on through `optimize.simulate_remaining_draft`,
