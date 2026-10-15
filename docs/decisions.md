@@ -1065,6 +1065,17 @@ through the CLI's import, a superset of what it ran, as it was a superset when i
 module. The mutation script is re-pointed at the three modules and its count re-taken: 12 of
 12 killed.
 
+**Scheduled odds captures land late, and that is accepted (2026-10-14, #468, option a).** GitHub
+starts scheduled runs 4 to 8.5 hours after the cron slot: measured start times (UTC) against the
+11:00-14:00 crons were 9-23 15:16, 9-24 15:43, 9-25 15:46, 9-30 16:38, 10-02 16:34, 10-05 19:24
+(cancelled) and 10-07 17:39, 10-08 17:45; `createdAt == startedAt` on each, so the delay is
+GitHub's scheduler, not the job. It is not a persistence bug: the 10-08 poll committed
+`state/odds/2026/wk05/snap-20261008T174636.json`. Captures are stamped with their real time and
+nothing assumes the slot time. No schedule change and no external dispatcher.
+`hub.instrument_check`'s `GRACE` goes from 6h to 9h (the prior 6h was fixed on 2026-10-06 from a
+measured 97-126 minute delay). `tests/contracts/test_capture_workflows_say_why.py` holds
+`poll_odds`'s commit step.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win

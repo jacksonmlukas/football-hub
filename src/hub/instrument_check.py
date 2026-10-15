@@ -59,7 +59,11 @@ EXIT = {PASS: 0, FAIL: 1, NOT_YET: 3}
 # A cron is a request for a start, not a guarantee of one -- `live.yml` records GitHub delivering
 # runs 97-126 minutes late. A slot counts as checkable only once this has passed, and a capture
 # counts for a slot if it landed inside it.
-GRACE = timedelta(hours=6)
+# 2026-10-14 (#468): widened from 6h to 9h. The prior 6h came from that 97-126 minute reading;
+# `slate.yml`'s scheduled polls start 4-8.5h after their slot (measured starts 9-23 15:16 ...
+# 10-08 17:45 UTC against 11:00-14:00 crons, createdAt == startedAt, so it is GitHub's scheduler).
+# 9h covers the worst measured 8.5h; a capture later than that is still named and still fails.
+GRACE = timedelta(hours=9)
 
 # The instant #383 (`f79bef4`) landed, 2026-10-06 15:24 EDT. No scheduled poll before it was
 # ever committed, whatever it captured: the runner discarded it.
