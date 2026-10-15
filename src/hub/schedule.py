@@ -246,7 +246,17 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     # /GUARD
     games = slate.games
     moment = at or datetime.now(UTC).replace(tzinfo=None)
-    snaps = store.lines_as_of(moment, season, slate.league, base=base).rename(
+    # Each game is asked at the earlier of `moment` and its own kickoff (#471), so the
+    # capture that prices it is the last one at or before kickoff -- never an in-play one.
+    # Since #468 the Sunday poll lands after the 17:00Z kickoffs, and the unguarded join
+    # priced 8 of 43 week-5 games from it (2026_05_CHI_GB +11.0 against -1.5). Where the only
+    # captures are post-kickoff the game has no snapshot and falls to the moving field.
+    # STATED CHOICE: a game with no kickoff in the schedule cannot be shown to be in play and
+    # is asked at `moment`, as before -- the ladder would otherwise drop a game for a missing
+    # time (`comparable_quotes` makes the opposite choice, because it is a check, not a price).
+    cutoffs = games.select("game_id", pl.col("kickoff").alias("cutoff"))
+    snaps = store.lines_as_of(moment, season, slate.league, base=base,
+                              cutoffs=cutoffs).rename(
         {"close_spread": "snapshot_spread", "captured_at": "priced_at"})
     # How long the snapshot's quote had stood still at `moment` (#210), carried onto the row
     # for a reader. Joined on the capture that priced the row, so the two columns describe

@@ -267,12 +267,35 @@ ASOF LEFT JOIN (SELECT game_id, close_spread, captured_at FROM lines
   ON a.game_id = l.game_id AND a.at >= l.captured_at
 """
 
+# The same question with a per-game ceiling (#471): each game is asked at the earlier of `at`
+# and its own cutoff, so a capture stamped after the cutoff is never the answer -- the
+# previous capture is, where there is one. A game with no cutoff is asked at `at`.
+LINE_AS_OF_CAPPED = """
+WITH asked AS (
+    SELECT DISTINCT l.game_id,
+           LEAST(CAST(? AS TIMESTAMP), COALESCE(c.cutoff, CAST(? AS TIMESTAMP))) AS at
+    FROM lines l LEFT JOIN cutoffs c ON l.game_id = c.game_id
+    WHERE l.league = ? AND l.season = ?
+)
+SELECT a.game_id, l.close_spread, l.captured_at
+FROM asked a
+ASOF LEFT JOIN (SELECT game_id, close_spread, captured_at FROM lines
+                WHERE league = ? AND season = ?) l
+  ON a.game_id = l.game_id AND a.at >= l.captured_at
+"""
+
 LINE_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "captured_at": pl.Datetime}
 
 
 def lines_as_of(at: datetime, season: int, league: str = "nfl",
-                base: Path | None = None) -> pl.DataFrame:
+                base: Path | None = None,
+                cutoffs: pl.DataFrame | None = None) -> pl.DataFrame:
     """One line per game: the latest snapshot captured at or before `at`.
+
+    `cutoffs` (columns `game_id`, `cutoff`; #471) caps the moment per game: a game is asked
+    at the earlier of `at` and its cutoff, so with kickoffs as cutoffs the answer is the
+    last capture before the game started and an in-play capture is never returned. A game
+    absent from `cutoffs`, or with a null cutoff, is asked at `at` as before.
 
     A game whose only snapshots come *after* the moment is absent rather than null. It was
     not priced then, and returning its later line is the lookahead the as-of join exists to
@@ -291,7 +314,15 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
     """
     if "lines" not in tables(base):
         return pl.DataFrame(schema=LINE_SCHEMA)
-    got = sql(LINE_AS_OF, params=[at, league, season, league, season], base=base)
+    if cutoffs is None:
+        got = sql(LINE_AS_OF, params=[at, league, season, league, season], base=base)
+        return got.drop_nulls("close_spread")
+    cut = cutoffs.select(pl.col("game_id").cast(pl.Utf8),
+                         pl.col("cutoff").cast(pl.Datetime("us")))
+    with connect(read_only=False, base=base) as con:
+        con.register("cutoffs", cut.to_arrow())
+        got = con.execute(LINE_AS_OF_CAPPED,
+                          [at, at, league, season, league, season]).pl()
     return got.drop_nulls("close_spread")
 
 

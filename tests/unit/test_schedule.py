@@ -27,8 +27,8 @@ def _sched(rows):
          "home_team": [r[4] if len(r) > 4 else "KC" for r in rows],
          "away_team": [r[5] if len(r) > 5 else "LV" for r in rows],
          # Eastern date and time, the way nflverse gives them.
-         "gameday": [r[6] if len(r) > 6 else "2026-09-10" for r in rows],
-         "gametime": [r[7] if len(r) > 7 else "20:15" for r in rows],
+         "gameday": [r[6] if len(r) > 6 else "2026-09-20" for r in rows],
+         "gametime": [r[7] if len(r) > 7 else "13:00" for r in rows],
          "spread_line": [r[2] for r in rows],
          "result": [r[3] for r in rows]})
 
@@ -358,8 +358,8 @@ def test_kickoff_is_carried_in_utc_not_in_the_schedules_own_zone(sched, tmp_path
     this repo has already shipped one of those today."""
     sched([("a", 1, 3.0, None)])
     got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path)
-    # the fixture kicks off 2026-09-10 20:15 ET, which is 00:15 UTC on the 11th
-    assert got["kickoff"].to_list() == [dt.datetime(2026, 9, 11, 0, 15)]
+    # the fixture kicks off 2026-09-20 13:00 ET, which is 17:00 UTC
+    assert got["kickoff"].to_list() == [dt.datetime(2026, 9, 20, 17, 0)]
 
 
 def test_kickoff_converts_rather_than_offsetting_so_november_still_works(sched, tmp_path):
@@ -616,3 +616,50 @@ def test_control_a_dead_poller_is_reported_and_a_live_one_is_not():
     assert schedule.dead_poller(fresh) is None
     why = schedule.dead_poller(stale)
     assert why is not None and "dead" in why
+
+
+# --- a capture after kickoff is an in-play line, not the price (#471) ------------------
+#
+# Since #468 the scheduled poll lands hours late, so the Sunday capture falls after the 17:00Z
+# kickoffs. `priced_games` used to price a game from the latest capture at or before `at`
+# whatever kickoff said: 2026_05_CHI_GB read +11.0 in-play against a -1.5 pre-game line.
+# Kickoff for these rows is 2026-09-10 20:15 ET = 2026-09-11 00:15Z, set explicitly.
+
+def test_a_post_kickoff_capture_does_not_price_the_game(sched, tmp_path):
+    """Control: a pre-kickoff -1.5 and a later in-play +11.0. The pre-kickoff one prices it,
+    and cites itself; the in-play one is not used. Fails if the kickoff cap is removed."""
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    pre, inplay = dt.datetime(2026, 9, 10, 12), dt.datetime(2026, 9, 11, 2)
+    _snap(tmp_path, 2026, 1, [("a", -1.5)], pre)
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], inplay)
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.5]
+    assert got["priced_at"].to_list() == [pre]
+    assert got["price_source"].to_list() == ["live"]
+
+
+def test_a_game_with_only_an_in_play_capture_falls_to_the_moving_field(sched, tmp_path):
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], dt.datetime(2026, 9, 11, 2))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.0]
+    assert got["price_source"].to_list() == ["schedule"]
+    assert got["priced_at"].to_list() == [None]
+
+
+def test_a_pre_kickoff_capture_still_prices_the_game_after_kickoff(sched, tmp_path):
+    """The cap must not make a played game unpriceable: the pre-game close is the price."""
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    pre = dt.datetime(2026, 9, 10, 12)
+    _snap(tmp_path, 2026, 1, [("a", -1.5)], pre)
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 11, 6), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.5]
+    assert got["priced_at"].to_list() == [pre]
+
+
+def test_a_game_with_no_kickoff_is_priced_from_the_latest_capture_as_before(sched, tmp_path):
+    """STATED CHOICE: no kickoff cannot be shown to be in play, so the cap does not apply."""
+    sched([("a", 1, -1.0, None, "KC", "LV", None, None)])
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], dt.datetime(2026, 9, 11, 2))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [11.0]
