@@ -49,12 +49,14 @@ on:
   # spells out. `tests/contracts/test_game_windows.py` asserts all three rules against both
   # files.
   schedule:
-    - cron: "*/10 17-23 * * 0"   # Sunday daytime, from an hour into the window
-    - cron: "*/10 0-5  * * 1"    # Sunday night -- the window has been open since 16:00 UTC
-    - cron: "*/10 1-5  * * 2"    # Monday night
-    - cron: "*/10 17-23 * * 6"   # Saturday daytime
+    # (#470: `live.yml`'s backup starts open each window an hour earlier, at :15/:23 UTC, so
+    # "an hour into the window" moved with them -- Sunday and Saturday 16, Tuesday and Friday 00.)
+    - cron: "*/10 16-23 * * 0"   # Sunday daytime, from an hour into the window
+    - cron: "*/10 0-5  * * 1"    # Sunday night -- the window has been open since 15:20 UTC
+    - cron: "*/10 0-5  * * 2"    # Monday night
+    - cron: "*/10 16-23 * * 6"   # Saturday daytime
     - cron: "*/10 0-5  * * 0"    # Saturday night
-    - cron: "*/10 1-5  * * 5"    # Thursday night
+    - cron: "*/10 0-5  * * 5"    # Thursday night
   workflow_dispatch:
 
 permissions:

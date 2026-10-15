@@ -331,7 +331,10 @@ def main(argv: Sequence[str] | None = None,
             season_opens_from(args.season_opens_from) if args.season_opens_from else "")
         if season:
             opens = dt.datetime.fromisoformat(season).replace(tzinfo=UTC)
-            wins = [w for w in wins if w.start >= opens]
+            # By end, not start: a backup start (#470) opens a Monday- or Thursday-night
+            # window at 23:00Z the day before its kickoff, and a window that spans the
+            # opener must survive a SEASON_OPENS on the game's own date.
+            wins = [w for w in wins if w.end > opens]
         checks = [t for w in (args.workflow or ["watchdog.yml", "live.yml"])
                   for t in checks_fn(w, args.repo)]
     except Exception as e:
