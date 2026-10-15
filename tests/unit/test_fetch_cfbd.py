@@ -448,6 +448,56 @@ def test_an_empty_week_is_an_answer_rather_than_a_broken_contract(transport, pat
     assert all(df.height == 0 for df in got.values())
 
 
+# --- an integer among floats is a number, a string is not -----------------------------------
+#
+# 2026-10-14: the `slate` run's week 7 fetch died with `TypeError: unexpected value while
+# building Series of type Float64; found value of type Int64: 9`. A game's `lines` list holds
+# one object per sportsbook, and polars fixes a list's dtype on its first element.
+
+
+def _lines_payload(first, second):
+    return [{**_GAME, "lines": [{"provider": "A", "spread": first},
+                                {"provider": "B", "spread": second}]}]
+
+
+@pytest.mark.parametrize("first, second", [(-1.5, 9), (9, -1.5)])
+def test_an_integer_among_floats_in_one_games_lines_is_a_float(transport, paths, first, second):
+    transport(payload=_lines_payload(first, second))
+    got = cfbd.bulk("lines", 2026, 7, cache=paths["cache"], quota_path=paths["quota"])
+    spreads = got["lines"].to_list()[0]
+    assert [r["spread"] for r in spreads] == [first, second]
+    assert got.schema["lines"] == pl.List(pl.Struct({"provider": pl.Utf8,
+                                                     "spread": pl.Float64}))
+
+
+def test_the_planted_payload_does_break_polars_unwidened():
+    """The control: without the boundary step the same rows raise, so the test above is
+    about the fix and not about a payload that never failed."""
+    with pytest.raises(TypeError):
+        pl.DataFrame(_lines_payload(-1.5, 9), infer_schema_length=None)
+
+
+def test_a_string_where_a_number_belongs_is_still_refused(transport, paths):
+    transport(payload=_lines_payload(-1.5, "9"))
+    with pytest.raises(Exception):  # noqa: B017 -- polars' own type error, not ours to name
+        cfbd.bulk("lines", 2026, 7, cache=paths["cache"], quota_path=paths["quota"])
+
+
+def test_widening_leaves_booleans_and_integer_only_keys_alone():
+    rows = [{"id": 1, "lines": [{"flag": True, "n": 1}, {"flag": False, "n": 2}]}]
+    out = cfbd._widen_numbers(rows)
+    assert out == rows
+    assert type(out[0]["lines"][0]["flag"]) is bool
+    assert type(out[0]["lines"][0]["n"]) is int
+
+
+def test_a_week_whose_lines_mix_ints_and_floats_is_fetched_not_recorded_as_failed(
+        env, transport, paths):
+    transport(payload=_lines_payload(-1.5, 9))
+    got = cfbd.week(2026, 7, cache=paths["cache"], quota_path=paths["quota"])
+    assert all(df.height == 1 for df in got.values())
+
+
 # --- a test cannot spend a live call --------------------------------------
 #
 # Issue #68. Every test above patches `_http_get`, which is the right habit and is not a

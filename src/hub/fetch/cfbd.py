@@ -236,6 +236,39 @@ def quota_report(path: Path | None = None) -> int:
     return 0
 
 
+def _widen_numbers(node: Any) -> Any:
+    """Make a JSON payload's numbers agree with themselves before polars infers a dtype.
+
+    JSON does not distinguish 9 from 9.0, and CFBD does not either: a game's `lines` list
+    carries one entry per sportsbook, and one book's spread arrives as `-1.5` while the next
+    arrives as `9`. polars takes the dtype of a list's *first* element, so the integer after
+    a float raises `TypeError: unexpected value while building Series of type Float64` --
+    after the call has been spent and before the week reaches the cache (2026-10-14, the
+    `slate` run for week 7). Across rows polars widens correctly; within one row's list it
+    does not, so this does it: in every list of objects, a key that holds both floats and
+    integers has its integers made floats.
+
+    Deliberately narrow. Booleans are left alone, and so is everything that is not a
+    number, so a string where a number belongs still reaches polars unchanged and still
+    raises rather than being coerced to null.
+    """
+    if isinstance(node, dict):
+        return {k: _widen_numbers(v) for k, v in node.items()}
+    if not isinstance(node, list):
+        return node
+    items = [_widen_numbers(v) for v in node]
+    if items and all(isinstance(v, dict) for v in items):
+        mixed = {k for k in {k for v in items for k in v}
+                 if any(isinstance(v.get(k), float) for v in items)
+                 and any(isinstance(v.get(k), int) and not isinstance(v.get(k), bool)
+                         for v in items)}
+        if mixed:
+            items = [{k: (float(x) if k in mixed and isinstance(x, int)
+                          and not isinstance(x, bool) else x) for k, x in v.items()}
+                     for v in items]
+    return items
+
+
 def _http_get(path: str, params: Mapping[str, Any], key: str) -> Any:
     # GUARD no-live-call-from-the-suite [unit/test_fetch_cfbd.py]: a test cannot spend quota
     #
@@ -447,7 +480,8 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
         _CALLS_THIS_RUN += 1
         _record_call(quota_path)
 
-    df = pl.DataFrame(payload, infer_schema_length=None) if payload else pl.DataFrame()
+    df = (pl.DataFrame(_widen_numbers(payload), infer_schema_length=None)
+          if payload else pl.DataFrame())
     atomic.write_parquet(df, path)
     # A failure here is swallowed on purpose: a payload that could not be stamped is still a
     # payload, and taking a fetched week down over its stamp would spend the call and throw
