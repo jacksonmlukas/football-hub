@@ -33,6 +33,16 @@ def _sched(rows):
          "result": [r[3] for r in rows]})
 
 
+def _kicking_off_after_the_polls(rows):
+    """The same rows with an explicit kickoff of 2026-12-20 13:00 ET, after every capture
+    these tests plant. The default fixture kickoff (2026-09-10) is earlier than the
+    September-12 'this morning' captures they use, and since #471 a capture after kickoff
+    cannot price a game; these tests are about the poll age and the label, not about
+    kickoff, so they move the kickoff out of the way rather than change what they assert."""
+    return [(*r, *(("KC", "LV")[len(r) - 4:]), "2026-12-20", "13:00") if len(r) < 6
+            else (*r, "2026-12-20", "13:00") for r in rows]
+
+
 @pytest.fixture
 def sched(monkeypatch):
     def _install(rows):
@@ -129,7 +139,8 @@ def test_a_quote_unmoved_for_ten_days_but_polled_today_is_a_live_price(sched, tm
     had reason to move, and a live price. The staleness columns still say the run is ten
     days long; the label no longer reads them."""
     at = dt.datetime(2026, 9, 12, 12)
-    sched([("a", 2, 3.0, None)])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls([("a", 2, 3.0, None)]))
     for days in (10, 5, 0):
         _snap(tmp_path, 2026, 2, [("a", 6.5)],
               at - dt.timedelta(days=days, hours=1))
@@ -180,10 +191,12 @@ def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
     yields to the moving field and is adjusted."""
     from hub.models import quarterback
     at = dt.datetime(2026, 9, 12, 12)
-    sched([("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
-           ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC"),
-           ("frozen-fresh", 5, 3.0, None, "KC", "LV"),
-           ("polled-old", 6, 3.0, None, "LV", "LAC")])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls(
+        [("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
+         ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC"),
+         ("frozen-fresh", 5, 3.0, None, "KC", "LV"),
+         ("polled-old", 6, 3.0, None, "LV", "LAC")]))
     _snap(tmp_path, 2026, 2, [("live", 6.5)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 18, [("stale", 6.5)], dt.datetime(2026, 8, 20))
     _snap(tmp_path, 2026, 4, [("both", 6.5)], dt.datetime(2026, 8, 20))
@@ -205,8 +218,10 @@ def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
 
 
 def test_by_source_counts_all_three_and_the_unpriced(sched, tmp_path):
-    sched([("a", 2, 3.0, None), ("b", 18, None, None), ("c", 3, 3.0, None),
-           ("d", 4, None, None)])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls(
+        [("a", 2, 3.0, None), ("b", 18, None, None), ("c", 3, 3.0, None),
+         ("d", 4, None, None)]))
     _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 18, [("b", 6.5)], dt.datetime(2026, 8, 20))
     got = schedule.by_source(schedule.priced_games(2026, at=dt.datetime(2026, 9, 12, 12),
@@ -616,3 +631,50 @@ def test_control_a_dead_poller_is_reported_and_a_live_one_is_not():
     assert schedule.dead_poller(fresh) is None
     why = schedule.dead_poller(stale)
     assert why is not None and "dead" in why
+
+
+# --- a capture after kickoff is an in-play line, not the price (#471) ------------------
+#
+# Since #468 the scheduled poll lands hours late, so the Sunday capture falls after the 17:00Z
+# kickoffs. `priced_games` used to price a game from the latest capture at or before `at`
+# whatever kickoff said: 2026_05_CHI_GB read +11.0 in-play against a -1.5 pre-game line.
+# Kickoff for these rows is 2026-09-10 20:15 ET = 2026-09-11 00:15Z, set explicitly.
+
+def test_a_post_kickoff_capture_does_not_price_the_game(sched, tmp_path):
+    """Control: a pre-kickoff -1.5 and a later in-play +11.0. The pre-kickoff one prices it,
+    and cites itself; the in-play one is not used. Fails if the kickoff cap is removed."""
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    pre, inplay = dt.datetime(2026, 9, 10, 12), dt.datetime(2026, 9, 11, 2)
+    _snap(tmp_path, 2026, 1, [("a", -1.5)], pre)
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], inplay)
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.5]
+    assert got["priced_at"].to_list() == [pre]
+    assert got["price_source"].to_list() == ["live"]
+
+
+def test_a_game_with_only_an_in_play_capture_falls_to_the_moving_field(sched, tmp_path):
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], dt.datetime(2026, 9, 11, 2))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.0]
+    assert got["price_source"].to_list() == ["schedule"]
+    assert got["priced_at"].to_list() == [None]
+
+
+def test_a_pre_kickoff_capture_still_prices_the_game_after_kickoff(sched, tmp_path):
+    """The cap must not make a played game unpriceable: the pre-game close is the price."""
+    sched([("a", 1, -1.0, None, "KC", "LV", "2026-09-10", "20:15")])
+    pre = dt.datetime(2026, 9, 10, 12)
+    _snap(tmp_path, 2026, 1, [("a", -1.5)], pre)
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 11, 6), base=tmp_path)
+    assert got["close_spread"].to_list() == [-1.5]
+    assert got["priced_at"].to_list() == [pre]
+
+
+def test_a_game_with_no_kickoff_is_priced_from_the_latest_capture_as_before(sched, tmp_path):
+    """STATED CHOICE: no kickoff cannot be shown to be in play, so the cap does not apply."""
+    sched([("a", 1, -1.0, None, "KC", "LV", None, None)])
+    _snap(tmp_path, 2026, 1, [("a", 11.0)], dt.datetime(2026, 9, 11, 2))
+    got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 12), base=tmp_path)
+    assert got["close_spread"].to_list() == [11.0]
