@@ -120,18 +120,31 @@ def test_a_late_run_inside_the_grace_still_counts_and_one_outside_does_not(repo)
 
 
 def test_a_capture_beyond_the_grace_is_named_late_and_still_fails(repo):
-    """Real 2026-10-07/08: the 11:00Z polls landed at 17:40Z and 17:46Z, 6.7h on a 6h grace.
-    Present is not the same as missing, and neither is a pass: the detail says which."""
+    """Planted past the 9h grace (#468 widened it from 6h): an 11:00Z poll landing 20:30Z is
+    9.5h late. Present is not the same as missing, and neither is a pass: the detail says which."""
     _git(repo, "rm", "-q", f"state/odds/2026/wk04/snap-{SLOTS[0]}.json")
-    _snap(repo, 4, "20261007T174001")
+    _snap(repo, 4, "20261007T203001")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "very late")
     got = _check(repo)
     assert got.status == ic.FAIL
     assert got.facts["late_beyond_grace"] == {"2026-10-07T11:00:00+00:00":
-                                              "2026-10-07T17:40:01+00:00"}
-    assert "DO have a committed capture" in got.detail and "+6.7h" in got.detail
-    assert _check(repo, grace=timedelta(hours=8)).status == ic.PASS
+                                              "2026-10-07T20:30:01+00:00"}
+    assert "DO have a committed capture" in got.detail and "+9.5h" in got.detail
+    assert _check(repo, grace=timedelta(hours=10)).status == ic.PASS
+
+
+def test_the_measured_github_delays_are_inside_the_default_grace(repo):
+    """#468: real 2026-10-07/08 captures landed 17:40Z and 17:46Z (6.7h, 6.8h) and the worst
+    measured start was 8.5h. The default grace (was 6h) must count these, not name them late."""
+    assert ic.GRACE == timedelta(hours=9)
+    _git(repo, "rm", "-q", f"state/odds/2026/wk04/snap-{SLOTS[0]}.json")
+    _snap(repo, 4, "20261007T174001")              # 6.7h
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "late but inside")
+    got = _check(repo)
+    assert got.status == ic.PASS and got.facts["late_beyond_grace"] == {}
+    assert _check(repo, grace=timedelta(hours=6)).facts["late_beyond_grace"]
 
 
 def test_a_removed_capture_is_not_called_late(repo):

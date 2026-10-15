@@ -283,3 +283,54 @@ def test_the_commit_runs_after_the_capture_and_the_run_is_bounded():
     assert steps.index(CONSENSUS_COMMIT) > steps.index(CONSENSUS_CAPTURE)
     assert wf["jobs"]["capture"]["timeout-minutes"]
     assert wf["concurrency"]["group"] == "slate"
+
+
+# --- the odds poll (#468) -----------------------------------------------------------------
+# GitHub starts `poll_odds` 4-8.5h after its cron slot (#468, 2026-10-14). Late is accepted;
+# silent is not. These hold that when it does run, the capture reaches the remote.
+
+POLL_COMMIT = "Commit the credit balance and the capture"
+POLL_SNAP = "state/odds/2026/wk05/snap-20261008T174636.json"
+
+
+def _poll_step() -> str:
+    return _script("slate.yml", "poll_odds", POLL_COMMIT)
+
+
+def _a_poll_ran(work: Path) -> None:
+    snap = work / POLL_SNAP
+    snap.parent.mkdir(parents=True)
+    snap.write_text("{}")
+    (work / "state/odds.json").write_text(json.dumps({"remaining": 400}))
+
+
+def test_the_poll_commit_lands_the_capture_and_the_balance_on_the_remote(runner):
+    work, origin = runner
+    _a_poll_ran(work)
+    got = _sh(_poll_step(), work)
+    assert got.returncode == 0, got.stderr
+    landed = _git(origin, "ls-tree", "-r", "--name-only", "main")
+    assert POLL_SNAP in landed and "state/odds.json" in landed
+    assert _git(origin, "log", "-1", "--format=%s", "main").startswith("odds: scheduled poll")
+
+
+def test_the_plant_adding_only_the_balance_leaves_the_capture_off_the_remote(runner):
+    """The plant: `git add state/odds.json` commits the credit balance and strands the capture
+    on the runner that is then discarded. If this lands the capture, the test above could not
+    tell the two steps apart."""
+    work, origin = runner
+    _a_poll_ran(work)
+    new = _poll_step()
+    old = re.sub(r"git add state\n", "git add state/odds.json\n", new)
+    assert old != new and "git add state/odds.json\n" in old, "could not plant the defect"
+    got = _sh(old, work)
+    assert got.returncode == 0, got.stderr
+    landed = _git(origin, "ls-tree", "-r", "--name-only", "main")
+    assert "state/odds.json" in landed and POLL_SNAP not in landed
+
+
+def test_the_poll_job_shares_the_slate_concurrency_group():
+    wf = yaml.safe_load((WORKFLOWS / "slate.yml").read_text())
+    assert wf["concurrency"]["group"] == "slate"
+    assert "concurrency" not in wf["jobs"]["poll_odds"], (
+        "a job-level group would replace the workflow's and let a poll race the refresh")

@@ -1516,8 +1516,13 @@ def test_a_fixed_340px_track_minimum_is_caught():
 # serves the committed `site/data/` with per-test overrides (`None` is a 404). It is the real
 # `render()`, so a panel that stops reporting its own failure turns a test red.
 
-MANIFEST_NAMES = ("preds_2026_wk05", "track_record", "live", "roster", "draft_board",
-                  "survivor")
+# Read from the committed manifest, not typed: the slate refresh renames the `preds_*` entry
+# every week, and a typed `preds_2026_wk05` turned this suite red on week 6's refresh.
+MANIFEST_NAMES = tuple(a["name"] for a in json.loads(
+    (PAGE.parent / "data" / "manifest.json").read_text())["artifacts"])
+assert len(MANIFEST_NAMES) == 6 and sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1, (
+    f"the footer tests assume six manifest artifacts with one slate; the manifest has "
+    f"{MANIFEST_NAMES}")
 
 
 def _render(node: str, overrides: dict | None = None) -> dict:
