@@ -101,6 +101,7 @@ FLOOR: dict[str, int] = {
     "src/hub/models/experiment.py": 0,
     "src/hub/models/favourite_longshot.py": 2,
     "src/hub/models/injury.py": 4,
+    "src/hub/models/lookahead_margin.py": 0,
     "src/hub/models/margin.py": 1,
     "src/hub/models/market.py": 1,
     "src/hub/models/panel.py": 1,

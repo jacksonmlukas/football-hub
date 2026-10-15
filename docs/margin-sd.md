@@ -532,7 +532,7 @@ coverage.
 | b1 [1, 2) | 15 | 12.741 | - | **inherited** (n under 30) |
 | b2 [2, 4) | 44 | 13.018 | [10.27, 15.77] | fitted; ratio 1.02 |
 | b3 [4, 8) | 42 | 10.199 | [7.99, 12.41] | fitted; ratio 0.80 |
-| b4 [8, inf) | 0 | 12.741 chain: 10.199 | - | **inherited, no rows** |
+| b4 [8, inf) | 0 | 10.199 (b3's) | - | **inherited, no rows** |
 
 **Verdict, verbatim:** `SHOW: MARGIN_SD stays on every row; the gate could not establish that a
 bucketed sd pays. 0 resolved of 1, 1 abstained (won 0, tied 1, lost 0 of 1 seasons) and no
