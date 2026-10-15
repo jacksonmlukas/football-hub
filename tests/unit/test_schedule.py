@@ -519,13 +519,54 @@ def test_a_row_priced_from_the_moving_field_carries_no_staleness(sched, tmp_path
 
 # --- the snapshot / moving-field agreement check (#440) ------------------------------------
 
+_KICKOFF = dt.datetime(2026, 10, 11, 17, 0)
+
+
 def _quotes(rows):
-    """(game_id, price_source, snapshot_spread, schedule_spread) rows."""
+    """(game_id, price_source, snapshot_spread, schedule_spread[, capture]) rows. `capture` is
+    "pre" (the default: a day before kickoff), "post" (an hour into the game) or "none"."""
+    def captured(r):
+        mode = r[4] if len(r) > 4 else "pre"
+        return {"pre": _KICKOFF - dt.timedelta(days=1), "post": _KICKOFF + dt.timedelta(hours=1),
+                "none": None}[mode]
     return pl.DataFrame({"game_id": [r[0] for r in rows], "price_source": [r[1] for r in rows],
                          "snapshot_spread": [r[2] for r in rows],
-                         "schedule_spread": [r[3] for r in rows]},
+                         "schedule_spread": [r[3] for r in rows],
+                         "kickoff": [_KICKOFF] * len(rows),
+                         "priced_at": [captured(r) for r in rows]},
                         schema={"game_id": pl.Utf8, "price_source": pl.Utf8,
-                                "snapshot_spread": pl.Float64, "schedule_spread": pl.Float64})
+                                "snapshot_spread": pl.Float64, "schedule_spread": pl.Float64,
+                                "kickoff": pl.Datetime, "priced_at": pl.Datetime})
+
+
+def test_a_capture_after_kickoff_is_an_in_play_line_and_is_not_compared():
+    """#468: the poll lands hours late, after the early kickoffs, and an in-play line against
+    the pre-game `spread_line` is a different quantity -- 2026_05_CHI_GB read +11.0 against
+    -1.5. A capture before kickoff, and one at kickoff exactly, are compared; one after, or
+    with no capture or kickoff to show it was pre-game, is not."""
+    games = _quotes([("pre", "live", -3.0, -3.5), ("post", "live", 11.0, -1.5, "post"),
+                     ("nocap", "live", 4.0, 4.0, "none")])
+    assert schedule.comparable_quotes(games)["game_id"].to_list() == ["pre"]
+    pre = games.filter(pl.col("game_id") == "pre")
+    assert schedule.comparable_quotes(pre.with_columns(priced_at=pl.col("kickoff"))).height == 1
+    assert schedule.comparable_quotes(
+        pre.with_columns(kickoff=pl.lit(None, dtype=pl.Datetime))).height == 0
+
+
+def test_control_in_play_captures_are_dropped_but_a_real_flip_before_kickoff_still_trips():
+    """Rule 18: dropping post-kickoff rows must not blunt the sign check. In-play rows with a
+    huge gap and a favourite flip leave the clean pre-game set clean; inverting the pre-game
+    set's sign convention still fails it."""
+    agree = [(f"g{i}", "live", s, s + 0.25) for i, s in
+             enumerate([-7.0, -3.5, 3.0, 6.5, -10.0, 2.5, -4.0, 8.0, -2.5, 5.5])]
+    in_play = [(f"p{i}", "live", 11.0, -1.5, "post") for i in range(3)]
+    clean = schedule.line_agreement(
+        schedule.comparable_quotes(_quotes(agree + in_play)), pick_em=2.0)
+    assert clean.n == 10 and clean.flipped == [] and clean.mean_abs == pytest.approx(0.25)
+    inverted = [(g, src, -a, b) for g, src, a, b in agree]
+    broken = schedule.line_agreement(
+        schedule.comparable_quotes(_quotes(inverted + in_play)), pick_em=2.0)
+    assert broken.mean_abs > 0.5 and len(broken.flipped) == 10
 
 
 def test_only_live_snapshots_are_compared_against_the_moving_field():
