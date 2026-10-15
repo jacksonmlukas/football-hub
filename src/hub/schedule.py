@@ -361,10 +361,21 @@ def comparable_quotes(games: pl.DataFrame) -> pl.DataFrame:
     carries a lookahead quote against a line that has since moved (2026-10-07: 64 of 93
     games, mean gap 1.89 against 0.14 on the 29 live ones, no orientation error in either),
     and counting it as disagreement would flag the poller's silence as a sign convention.
+
+    **And captured before kickoff (#468).** A capture stamped after the game started is an
+    in-play line, not the books' price for the game, and `spread_line` is the pre-game
+    number: the two are different quantities however fresh the poll. Since #383 the
+    scheduled polls land hours late (#468: ~6.7h after their 11:00Z slot), so the Sunday
+    capture falls after the 17:00Z kickoffs. Measured 2026-10-15 on the committed archive:
+    8 of 43 live comparable games were captured after kickoff, mean gap 4.1 (worst 12.5,
+    2026_05_CHI_GB +11.0 against -1.5; 2026_05_MIN_NO the lone favourite flip), against
+    mean 0.33, worst 1.5 and no flip on the 35 captured before kickoff. A game with no
+    kickoff cannot be shown to be pre-game and is left out.
     """
     return games.filter((pl.col("price_source") == "live")
                         & pl.col("snapshot_spread").is_not_null()
-                        & pl.col("schedule_spread").is_not_null())
+                        & pl.col("schedule_spread").is_not_null()
+                        & (pl.col("priced_at") <= pl.col("kickoff")).fill_null(False))
 
 
 def line_agreement(both: pl.DataFrame, pick_em: float) -> Agreement:

@@ -58,6 +58,14 @@ from hub.config import SEASON_AHEAD
 # Scoping to live rows would hide a dead poller, so `test_the_coverage_report...` fails on it
 # (its own fixture skips only on a fresh clone). Residual, deliberately not floored: a poller
 # that is alive but leaves fewer than 10 comparable live games still skips the two line tests.
+#
+# Scoped again 2026-10-15 (#468): `comparable_quotes` also requires the capture to precede
+# kickoff. The scheduled run failed three days running (1.345 mean, MIN-NO flipped) because
+# the Sunday poll now lands ~50 minutes after the 17:00Z kickoffs, so 8 of 43 live games
+# were compared as in-play lines (mean 4.1, worst 12.5) against the pre-game `spread_line`;
+# the 35 captured before kickoff agree at mean 0.33, worst 1.5, no flip. Not a sign bug and
+# the tolerance is unchanged. The sign check keeps its teeth:
+# `test_control_in_play_captures_are_dropped_but_a_real_flip_before_kickoff_still_trips`.
 MEAN_TOLERANCE = 0.5
 MAX_TOLERANCE = 5.0
 
