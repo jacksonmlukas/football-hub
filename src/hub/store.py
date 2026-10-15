@@ -267,14 +267,14 @@ ASOF LEFT JOIN (SELECT game_id, close_spread, captured_at FROM lines
   ON a.game_id = l.game_id AND a.at >= l.captured_at
 """
 
-# The same question with a per-game ceiling (#471): each game is asked at the earlier of `at`
-# and its own ceiling, so a capture stamped after the ceiling is never the answer -- the
-# previous capture is, where there is one. A game with no ceiling is asked at `at`.
+# The same question with a per-game `price_by` moment (#471): each game is asked at the earlier
+# of `at` and its own `price_by`, so a capture stamped after it is never the answer -- the
+# previous capture is, where there is one. A game with no `price_by` is asked at `at`.
 LINE_AS_OF_CAPPED = """
 WITH asked AS (
     SELECT DISTINCT l.game_id,
-           LEAST(CAST(? AS TIMESTAMP), COALESCE(c.ceiling, CAST(? AS TIMESTAMP))) AS at
-    FROM lines l LEFT JOIN ceilings c ON l.game_id = c.game_id
+           LEAST(CAST(? AS TIMESTAMP), COALESCE(c.price_by, CAST(? AS TIMESTAMP))) AS at
+    FROM lines l LEFT JOIN price_by c ON l.game_id = c.game_id
     WHERE l.league = ? AND l.season = ?
 )
 SELECT a.game_id, l.close_spread, l.captured_at
@@ -289,13 +289,13 @@ LINE_SCHEMA = {"game_id": pl.Utf8, "close_spread": pl.Float64, "captured_at": pl
 
 def lines_as_of(at: datetime, season: int, league: str = "nfl",
                 base: Path | None = None,
-                ceilings: pl.DataFrame | None = None) -> pl.DataFrame:
+                price_by: pl.DataFrame | None = None) -> pl.DataFrame:
     """One line per game: the latest snapshot captured at or before `at`.
 
-    `ceilings` (columns `game_id`, `ceiling`; #471) caps the moment per game: a game is asked
-    at the earlier of `at` and its ceiling, so with kickoffs as ceilings the answer is the
+    `price_by` (columns `game_id`, `price_by`; #471) caps the moment per game: a game is asked
+    at the earlier of `at` and its price_by, so with kickoffs as price_by the answer is the
     last capture before the game started and an in-play capture is never returned. A game
-    absent from `ceilings`, or with a null ceiling, is asked at `at` as before.
+    absent from `price_by`, or with a null price_by, is asked at `at` as before.
 
     A game whose only snapshots come *after* the moment is absent rather than null. It was
     not priced then, and returning its later line is the lookahead the as-of join exists to
@@ -314,13 +314,15 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
     """
     if "lines" not in tables(base):
         return pl.DataFrame(schema=LINE_SCHEMA)
-    if ceilings is None:
+    if price_by is None:
         got = sql(LINE_AS_OF, params=[at, league, season, league, season], base=base)
         return got.drop_nulls("close_spread")
-    cut = ceilings.select(pl.col("game_id").cast(pl.Utf8),
-                         pl.col("ceiling").cast(pl.Datetime("us")))
+    cut = price_by.select(pl.col("game_id").cast(pl.Utf8),
+                         pl.col("price_by").cast(pl.Datetime("us")))
+    # read_only=False, as `sql` does: `register` needs a writable connection, and a
+    # read-only one failed the suite when tried.
     with connect(read_only=False, base=base) as con:
-        con.register("ceilings", cut.to_arrow())
+        con.register("price_by", cut.to_arrow())
         got = con.execute(LINE_AS_OF_CAPPED,
                           [at, at, league, season, league, season]).pl()
     return got.drop_nulls("close_spread")

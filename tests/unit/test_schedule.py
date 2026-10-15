@@ -27,10 +27,20 @@ def _sched(rows):
          "home_team": [r[4] if len(r) > 4 else "KC" for r in rows],
          "away_team": [r[5] if len(r) > 5 else "LV" for r in rows],
          # Eastern date and time, the way nflverse gives them.
-         "gameday": [r[6] if len(r) > 6 else "2026-09-20" for r in rows],
-         "gametime": [r[7] if len(r) > 7 else "13:00" for r in rows],
+         "gameday": [r[6] if len(r) > 6 else "2026-09-10" for r in rows],
+         "gametime": [r[7] if len(r) > 7 else "20:15" for r in rows],
          "spread_line": [r[2] for r in rows],
          "result": [r[3] for r in rows]})
+
+
+def _kicking_off_after_the_polls(rows):
+    """The same rows with an explicit kickoff of 2026-12-20 13:00 ET, after every capture
+    these tests plant. The default fixture kickoff (2026-09-10) is earlier than the
+    September-12 'this morning' captures they use, and since #471 a capture after kickoff
+    cannot price a game; these tests are about the poll age and the label, not about
+    kickoff, so they move the kickoff out of the way rather than change what they assert."""
+    return [(*r, *(("KC", "LV")[len(r) - 4:]), "2026-12-20", "13:00") if len(r) < 6
+            else (*r, "2026-12-20", "13:00") for r in rows]
 
 
 @pytest.fixture
@@ -129,7 +139,8 @@ def test_a_quote_unmoved_for_ten_days_but_polled_today_is_a_live_price(sched, tm
     had reason to move, and a live price. The staleness columns still say the run is ten
     days long; the label no longer reads them."""
     at = dt.datetime(2026, 9, 12, 12)
-    sched([("a", 2, 3.0, None)])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls([("a", 2, 3.0, None)]))
     for days in (10, 5, 0):
         _snap(tmp_path, 2026, 2, [("a", 6.5)],
               at - dt.timedelta(days=days, hours=1))
@@ -180,10 +191,12 @@ def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
     yields to the moving field and is adjusted."""
     from hub.models import quarterback
     at = dt.datetime(2026, 9, 12, 12)
-    sched([("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
-           ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC"),
-           ("frozen-fresh", 5, 3.0, None, "KC", "LV"),
-           ("polled-old", 6, 3.0, None, "LV", "LAC")])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls(
+        [("live", 2, 3.0, None, "KC", "LAC"), ("stale", 18, None, None, "KC", "LV"),
+         ("moving", 3, 3.0, None, "LAC", "LV"), ("both", 4, 3.0, None, "LV", "KC"),
+         ("frozen-fresh", 5, 3.0, None, "KC", "LV"),
+         ("polled-old", 6, 3.0, None, "LV", "LAC")]))
     _snap(tmp_path, 2026, 2, [("live", 6.5)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 18, [("stale", 6.5)], dt.datetime(2026, 8, 20))
     _snap(tmp_path, 2026, 4, [("both", 6.5)], dt.datetime(2026, 8, 20))
@@ -205,8 +218,10 @@ def test_the_two_consumers_of_the_cut_agree_row_by_row(sched, tmp_path):
 
 
 def test_by_source_counts_all_three_and_the_unpriced(sched, tmp_path):
-    sched([("a", 2, 3.0, None), ("b", 18, None, None), ("c", 3, 3.0, None),
-           ("d", 4, None, None)])
+    # Intent unchanged: kickoff set explicitly after the captures (see the helper).
+    sched(_kicking_off_after_the_polls(
+        [("a", 2, 3.0, None), ("b", 18, None, None), ("c", 3, 3.0, None),
+         ("d", 4, None, None)]))
     _snap(tmp_path, 2026, 2, [("a", 6.5)], dt.datetime(2026, 9, 12, 11))
     _snap(tmp_path, 2026, 18, [("b", 6.5)], dt.datetime(2026, 8, 20))
     got = schedule.by_source(schedule.priced_games(2026, at=dt.datetime(2026, 9, 12, 12),
@@ -358,8 +373,8 @@ def test_kickoff_is_carried_in_utc_not_in_the_schedules_own_zone(sched, tmp_path
     this repo has already shipped one of those today."""
     sched([("a", 1, 3.0, None)])
     got = schedule.priced_games(2026, at=dt.datetime(2026, 9, 6), base=tmp_path)
-    # the fixture kicks off 2026-09-20 13:00 ET, which is 17:00 UTC
-    assert got["kickoff"].to_list() == [dt.datetime(2026, 9, 20, 17, 0)]
+    # the fixture kicks off 2026-09-10 20:15 ET, which is 00:15 UTC on the 11th
+    assert got["kickoff"].to_list() == [dt.datetime(2026, 9, 11, 0, 15)]
 
 
 def test_kickoff_converts_rather_than_offsetting_so_november_still_works(sched, tmp_path):

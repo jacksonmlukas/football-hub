@@ -254,9 +254,9 @@ def priced_games(season: int, *, at: datetime | None = None, cache: Path | None 
     # STATED CHOICE: a game with no kickoff in the schedule cannot be shown to be in play and
     # is asked at `moment`, as before -- the ladder would otherwise drop a game for a missing
     # time (`comparable_quotes` makes the opposite choice, because it is a check, not a price).
-    ceilings = games.select("game_id", pl.col("kickoff").alias("ceiling"))
+    price_by = games.select("game_id", pl.col("kickoff").alias("price_by"))
     snaps = store.lines_as_of(moment, season, slate.league, base=base,
-                              ceilings=ceilings).rename(
+                              price_by=price_by).rename(
         {"close_spread": "snapshot_spread", "captured_at": "priced_at"})
     # How long the snapshot's quote had stood still at `moment` (#210), carried onto the row
     # for a reader. Joined on the capture that priced the row, so the two columns describe
