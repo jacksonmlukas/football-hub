@@ -1100,8 +1100,18 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `not_an_input` with their reasons, which moves no digest. Every other declared constant
     reproduces its prior value (the walk alone, before `MIN_UNITS` was re-spelled, read
     `c4606f91`/`5024dd03` on all fifty-two).
+
+    **Moved again 2026-10-15 (#307): `96fee74f` -> `4fad9f78`**, `fitted_digest` `772d3bba` ->
+    `f6b8c28a`, fifty-three covered declarations to fifty-five. Exactly two names entered, and
+    both are read by a prediction: `components.TD_YARDS_RHO` (`fitted`, the copula correlation
+    that pairs a phase's touchdowns with its yards) and `components.CMP_NU_MAX` (`chosen`, where
+    the Conway-Maxwell-Poisson `nu` stops for a dispersion no count of that mean can reach).
+    **A model change**, on the touchdown draw (`docs/td-count-sampler.md`): a prop priced on the
+    two sides of this commit is two prices and the version says so. Removing exactly those two
+    names from the live constants reproduces `772d3bba` and, through `config_digest`,
+    `96fee74f`, so every other declared constant reproduces its prior value.
     """
-    assert config_digest(HubConfig()) == "96fee74f"
+    assert config_digest(HubConfig()) == "4fad9f78"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

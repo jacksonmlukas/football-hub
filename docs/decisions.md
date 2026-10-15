@@ -547,6 +547,11 @@ Yardage is compound -- a week's yards are a sum over catches -- and modelling it
 Gamma reimposes the proportional spread law this layer replaces. The first version did exactly
 that and produced spread growing as mu instead of sqrt(mu).
 
+*Restated 2026-10-15 (#307), prior wording kept above:* the under-dispersed family is the
+Conway-Maxwell-Poisson, not the binomial -- the binomial's trial count was a support ceiling and
+its rounding drifted the dispersion -- and a phase's touchdowns are drawn with its yards.
+`docs/td-count-sampler.md`.
+
 Validated against 760 real player-seasons: mean unbiased to +0.05 ppg, sd 6.05 vs 6.76
 observed -- but 5.3% of the observed figure is within-season role drift, so detrended the gap
 is 2.7%. Skew 0.73 vs 0.60, overstated except at RB where it lands at 0.68 vs 0.67; likely

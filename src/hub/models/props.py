@@ -12,9 +12,10 @@ the object goes first (issue #217).
 component line the pick and projection imply: attempts, carries, targets, receptions, and
 the yards and touchdowns on each. The distribution over one week of any one of those is
 the one `hub.models.components.sample_weeks` already draws on the way to a points total --
-a count with measured dispersion (`COUNT_DISPERSION`, `TD_DISPERSION`) and yards as a Gamma
-compounded on the count (`PER_UNIT_CV`). This module draws the *component* rather than the
-sum, which is the only thing a prop needs that the points draw did not expose. The mean is
+a count with measured dispersion (`COUNT_DISPERSION`, `TD_DISPERSION`), yards as a Gamma
+compounded on the count (`PER_UNIT_CV`) and touchdowns drawn given the yards (#307). This
+module draws the *component* rather than the sum, which is the only thing a prop needs that
+the points draw did not expose. The mean is
 the line's; the spread law and the skew fall out of the count-and-Gamma structure rather
 than being imposed, which is the property `docs/component-projection.md` measured.
 
@@ -137,9 +138,6 @@ _DRAW: dict[str, tuple[str, str]] = {
     "passing_tds": ("pass", "tds"), "rushing_tds": ("rush", "tds"),
     "receiving_tds": ("rec", "tds"),
 }
-_UNITS = {"pass": "attempts", "rush": "carries", "rec": "receptions"}
-_YARDS = {"pass": "passing_yards", "rush": "rushing_yards", "rec": "receiving_yards"}
-_TDS = {"pass": "passing_tds", "rush": "rushing_tds", "rec": "receiving_tds"}
 # The markets where our number and the quote share a unit, so a CLV in points and a bias in
 # yards mean something. Counts are in their own unit; the anytime market has no point.
 YARDS_MARKETS = ("player_pass_yds", "player_rush_yds", "player_reception_yds")
@@ -152,46 +150,6 @@ OVER, UNDER = "over", "under"
 
 # --- the distribution behind one component ---------------------------------------
 
-def _counts(rng: np.random.Generator, mean: float, phi: float, n: int) -> np.ndarray:
-    """`n` counts with mean `mean` and variance `phi * mean` -- the family `hub.models.components`
-    chose from the measured dispersion: negative binomial above Poisson, binomial below."""
-    if mean <= 0:
-        return np.zeros(n, dtype=int)
-    if phi > 1.0:
-        p = 1.0 / phi
-        return rng.negative_binomial(max(mean * p / (1.0 - p), 1e-9), p, n)
-    if phi < 1.0:
-        p = 1.0 - phi
-        trials = round(mean / p)
-        return rng.binomial(max(trials, 1), min(mean / max(trials, 1), 1.0), n)
-    return rng.poisson(mean, n)
-
-
-def _phase_draws(rng: np.random.Generator, line: Mapping[str, float], phase: str,
-                 n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One phase's (units, yards, touchdowns) over `n` weeks, drawn the way `sample_weeks` does.
-
-    Yards are a Gamma compounded on the drawn count -- a week's yardage is the sum of one
-    gain per unit -- so their variance grows with the count rather than with the square of
-    the mean, which is the square-root spread law arriving as an output. A line that carries
-    yards and no count infers one from the phase's typical yards per unit, exactly as the
-    points draw does, so the compound structure holds either way.
-    """
-    mu_y = float(line.get(_YARDS[phase]) or 0.0)
-    mu_u = float(line.get(_UNITS[phase]) or 0.0)
-    if mu_y > 0 and mu_u <= 0:
-        mu_u = mu_y / C.YARDS_PER_UNIT[phase]
-    units = _counts(rng, mu_u, C.COUNT_DISPERSION[phase], n)
-    yards = np.zeros(n)
-    if mu_y > 0 and mu_u > 0:
-        cv = C.PER_UNIT_CV[phase]
-        shape = units / cv ** 2
-        nz = shape > 0
-        yards[nz] = rng.gamma(shape[nz], (mu_y / mu_u) * cv ** 2)
-    tds = _counts(rng, float(line.get(_TDS[phase]) or 0.0), C.TD_DISPERSION[phase], n)
-    return units, yards, tds
-
-
 def stat_draws(line: Mapping[str, float], stat: str, *, n: int = DRAWS,
                seed: int = SEED) -> np.ndarray:
     """`n` weeks of one component for a player with this per-game line.
@@ -201,11 +159,11 @@ def stat_draws(line: Mapping[str, float], stat: str, *, n: int = DRAWS,
     """
     rng = np.random.default_rng(seed)
     if stat == "anytime_td":
-        _, _, rush = _phase_draws(rng, line, "rush", n)
-        _, _, rec = _phase_draws(rng, line, "rec", n)
+        _, _, rush = C.phase_draws(rng, line, "rush", n)
+        _, _, rec = C.phase_draws(rng, line, "rec", n)
         return (rush + rec).astype(float)
     phase, kind = _DRAW[stat]
-    units, yards, tds = _phase_draws(rng, line, phase, n)
+    units, yards, tds = C.phase_draws(rng, line, phase, n)
     return {"units": units.astype(float), "yards": yards, "tds": tds.astype(float)}[kind]
 
 
