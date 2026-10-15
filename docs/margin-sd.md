@@ -511,3 +511,50 @@ out-of-sample reading does not support.
 **Forward pin (#456).** `hub.models.margin`, `hub.models.market` and `hub.season.weekly_forward`
 are unedited; the new module is not in the weekly arm's closure, and the pinned digest is still
 `376fd23b022aa541`.
+
+---
+
+# Restated 2026-10-14: a sd by weeks-out, on the snapshot archive (#249)
+
+Added beside the sections above, which stand unedited. Design:
+[lookahead-margin-sd.md](lookahead-margin-sd.md), pre-registered before any residual was
+computed; code `hub.models.lookahead_margin`; one ledger entry, name `lookahead_margin_sd`.
+
+**The coverage is thin, and the verdict has to be read through that.** The archive spans 50
+days (7.1 weeks), but its snapshots fall in **four calendar weeks** with a **30-day hole**
+(2026-09-07 to 2026-10-06), and only 78 played games (weeks 1-5) have a result. There are **0
+rows past 8 weeks out**. The six-week threshold of #249 is met by the span and not by the
+coverage.
+
+| bucket (weeks out) | n | sd | 95% interval | reading |
+|---|---|---|---|---|
+| b0 [0, 1) | 16 | 12.741 | - | the closing end, `MARGIN_SD`, not gated |
+| b1 [1, 2) | 15 | 12.741 | - | **inherited** (n under 30) |
+| b2 [2, 4) | 44 | 13.018 | [10.27, 15.77] | fitted; ratio 1.02 |
+| b3 [4, 8) | 42 | 10.199 | [7.99, 12.41] | fitted; ratio 0.80 |
+| b4 [8, inf) | 0 | 10.199 (b3's) | - | **inherited, no rows** |
+
+**Verdict, verbatim:** `SHOW: MARGIN_SD stays on every row; the gate could not establish that a
+bucketed sd pays. 0 resolved of 1, 1 abstained (won 0, tied 1, lost 0 of 1 seasons) and no
+season resolved, so this gate can neither adopt nor remove -- absence of evidence, not evidence
+of equivalence.` Held-out gain -0.0005 nats per game-bucket, t interval [-0.0012, +0.0003] over
+4 week clusters.
+
+**What it implies: nothing moves.** The MDE printed (0.0009) is small only because most scored
+rows priced as the incumbent (a thin bucket inherits), so it is not evidence of power; the
+pre-registration's power table is the honest bound, and under it this gate cannot resolve a
+plausible effect in 2026. No bucket's interval excludes `MARGIN_SD` from above. b3's point
+estimate is *narrower* than the close, on 42 rows, an estimate its own interval does not
+separate from 12.741. `MARGIN_SD` stays, `hub.models.market` and the survivor grid are
+untouched, and the survivor consumer (the wider survival product printed beside the old figure,
+live rows byte-identical) is **held** while #379 is dormant. The forward pin
+(`PINNED_ARM_MODULES`) is unmoved. #249 is advanced, not closed.
+
+*2026-10-14, wording (review of #249): which figure is which.* The restatement's **-0.0005**
+is the gate's cluster aggregate: the mean of the 4 week-cluster means (`summarise`,
+`cluster=("week",)`), with its **t interval [-0.0012, +0.0003]** built on 4 clusters. The ledger
+entry's **-0.00038** (printed -0.0004, `m` = 62) is the per-season gain: the pooled mean of the
+75 game-bucket rows, weighted by row rather than by week, with `se` from a bootstrap over the 62
+games. Its **lo/hi [-0.00095, 0.0]** are the percentile bootstrap over the same 4 week
+clusters (printed [-0.0010, +0.0000]), not the t interval. Same data, two aggregations and two
+interval methods; the numbers above stand as written.
