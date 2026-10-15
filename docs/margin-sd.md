@@ -549,3 +549,12 @@ separate from 12.741. `MARGIN_SD` stays, `hub.models.market` and the survivor gr
 untouched, and the survivor consumer (the wider survival product printed beside the old figure,
 live rows byte-identical) is **held** while #379 is dormant. The forward pin
 (`PINNED_ARM_MODULES`) is unmoved. #249 is advanced, not closed.
+
+*2026-10-14, wording (review of #249): which figure is which.* The restatement's **-0.0005**
+is the gate's cluster aggregate: the mean of the 4 week-cluster means (`summarise`,
+`cluster=("week",)`), with its **t interval [-0.0012, +0.0003]** built on 4 clusters. The ledger
+entry's **-0.00038** (printed -0.0004, `m` = 62) is the per-season gain: the pooled mean of the
+75 game-bucket rows, weighted by row rather than by week, with `se` from a bootstrap over the 62
+games. Its **lo/hi [-0.00095, 0.0]** are the percentile bootstrap over the same 4 week
+clusters (printed [-0.0010, +0.0000]), not the t interval. Same data, two aggregations and two
+interval methods; the numbers above stand as written.
