@@ -957,9 +957,11 @@ held a second copy of the sampler and now takes it from `components`, is not in 
 3. *A tripwire.* With every function of the sampler (`sample_weeks`, `moments`, `phase_draws`,
    `draw_counts`, `draw_touchdowns`, `cmp_nu`, `cmp_pmf`) replaced by one that raises, the whole of
    `tests/unit`, `tests/contracts` and `tests/golden` ran, except the three files that exercise the
-   sampler on purpose, and passed -- including #430's identity test
+   sampler on purpose: 5,174 passed, 5 skipped, and the one failure was
+   `test_volume.py::test_a_decomposed_line_can_be_sampled`, which calls `sample_weeks` on purpose
+   and is the only test that reached the tripwire. #430's identity test
    (`tests/unit/test_weekly_projection_move.py`), which reproduces the figures computed on the
-   pre-move code. No 2026 outcome has been read.
+   pre-move code, is among the passes. No 2026 outcome has been read.
 
 **What did move:** `config_digest` `96fee74f` -> `4fad9f78` and `fitted_digest` `772d3bba` ->
 `f6b8c28a`, because `components.TD_YARDS_RHO` and `components.CMP_NU_MAX` entered the covered

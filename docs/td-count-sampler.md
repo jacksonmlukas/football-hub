@@ -139,7 +139,9 @@ Measured by grep over `src/` and `scripts/` and by a tripwire: every function of
 (`sample_weeks`, `moments`, `phase_draws`, `draw_counts`, `draw_touchdowns`, `cmp_nu`, `cmp_pmf`)
 replaced by one that raises, the whole `tests/unit`, `tests/contracts` and `tests/golden` suites
 run except the three files that exercise the sampler on purpose (`test_components.py`,
-`test_props.py`, `test_td_count_sampler.py`).
+`test_props.py`, `test_td_count_sampler.py`). 5,174 passed; the one failure,
+`test_volume.py::test_a_decomposed_line_can_be_sampled`, calls `sample_weeks` on purpose and is the
+only test that reached the tripwire.
 
 - **`hub.models.props` is the only caller in `src/`.** `components.sample_weeks` and
   `components.moments` have no caller outside tests. (`predict.moments`, which the lineup and
