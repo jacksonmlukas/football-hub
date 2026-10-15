@@ -1346,6 +1346,31 @@
       "timestamp": "2026-10-15T00:05:52+00:00",
       "verdict": "NOT-RUNNABLE",
       "width": 0.011328986945833579
+    },
+    {
+      "abstained": 1,
+      "clusters": 4.0,
+      "code_digest": "0c5c3014",
+      "config_digest": "96fee74f",
+      "data_digest": "ce29170a",
+      "gate": "lookahead_margin_sd",
+      "hi": 0.0,
+      "inputs_digest": "d7bedf0b1371a228",
+      "lo": -0.0009544993367253676,
+      "recipe": "edges=1+2+4+8,min_fit_n=30,seasons=2026",
+      "resolved": 0,
+      "seasons": [
+        {
+          "disposition": "tie",
+          "gain": -0.000382446304101837,
+          "m": 62,
+          "se": 0.00045853193798460907,
+          "season": 2026
+        }
+      ],
+      "timestamp": "2026-10-15T02:43:07+00:00",
+      "verdict": "SHOW",
+      "width": 0.0009544993367253676
     }
   ]
 }
