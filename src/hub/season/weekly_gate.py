@@ -66,9 +66,9 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -79,6 +79,7 @@ from hub.config import FANTASY_WEEKS
 from hub.declare import not_an_input
 from hub.fetch.nflverse import reads_of_one_run
 from hub.league import STARTERS, starting_lineup
+from hub.ledger import Ledger
 from hub.ledger import recipe as _recipe
 from hub.models.experiment import (
     SEASON_CLUSTER,
@@ -852,7 +853,13 @@ def treatment_report(effects: Sequence[TreatmentEffect], *, unit: str = UNIT,
     return lines
 
 
-def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - network
+def main(argv: Sequence[str] | None = None, *, assemble: Callable[..., Any] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """The gate's command line. `assemble` and `ledger` are #403's seam: the one network-bound
+    read (`assemble_universe` by default, handed the same keyword arguments) and the ledger the
+    run is written to (`None` is the harness's own file-backed one), so a test drives the whole
+    lifecycle -- scope, inputs inside `unavailable`, compare, `HARNESS.run`, print, write --
+    with injected inputs and an in-memory ledger rather than by patching the module."""
     from hub.draft.cohort import DRAFTS
 
     ap = argparse.ArgumentParser(
@@ -923,8 +930,9 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
     with reads_of_one_run():
         from hub.season.weekly_gate_data import assemble_universe
         try:
-            inputs = assemble_universe(seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
-                                       expected=a.expected, holdout=a.holdout)
+            inputs = (assemble or assemble_universe)(
+                seasons, drafts=a.drafts, seed=a.seed, shrink=a.shrink,
+                expected=a.expected, holdout=a.holdout)
         except Exception as e:
             return unavailable("hub.season.weekly_gate", "the gate's inputs", e)
         # #378: which seasons this run actually scored, stated beside which it was asked for --
@@ -944,7 +952,8 @@ def main(argv: Sequence[str] | None = None) -> int:      # pragma: no cover - ne
         restrict = not a.unrestricted
         paired = compare(inputs, churn=a.churn, z=a.lcb, mask_pool=not a.open_pool,
                          ceiling=a.ceiling, restrict=restrict)
-        run = HARNESS.run(
+        harness = HARNESS if ledger is None else HARNESS._replace(ledger=ledger)
+        run = harness.run(
             paired, show_n=False, void=void_condition(cover), seed=a.seed,
             recipe=run_recipe(seasons=seasons, drafts=a.drafts, seed=a.seed, churn=a.churn,
                               open_pool=a.open_pool, unrestricted=a.unrestricted, lcb=a.lcb,

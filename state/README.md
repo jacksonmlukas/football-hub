@@ -156,6 +156,18 @@ What this repo has spent against two metered third-party accounts:
   (`on other arm source`). **The first run of each gate after this has nothing to compare
   against**, by design, as after #384; none of the existing rows is rewritten.
 
+  **Noted 2026-10-14 (#403): eight gates' `code_digest` moved, on purpose.** #403 gave each
+  gate's `main` its input reader and ledger as keyword arguments, an edit to the module (and so
+  to its closure) with no change to what any arm computes. `config_digest` is `96fee74f` before
+  and after. The next run of each gate below reads **"on other arm source"** against its earlier
+  rows; that is expected and comes from #403's refactor, not from a change of arm. Old to new:
+  `hub.models.coverage` and `hub.models.margin` (one shared closure) `8920d138` to `f51a790e`;
+  `hub.draft.backtest` `60607b4d` to `90c95fd3`; `hub.models.component_error` `cf441c49` to
+  `4e5457f6`; `hub.models.spread` `496bb95b` to `e3a97b9a`; `hub.models.injury` `f2299bcd` to
+  `cbd7a13b`; `hub.models.favourite_longshot` `dd61ab28` to `099cc43f`; `hub.season.weekly_gate`
+  `d9efea7b` to `892cc04f`; `hub.season.lineup_gate` `ecb95cbf` to `9a6c6909`.
+  `hub.models.starter_change` (`01c492db`) did not move.
+
   **Why it moved off one record per gate.** The dict shape it replaced held exactly one row
   per gate name, overwritten on every run — so the file could never say how many times a gate
   had been run, and two runs whose numbers disagreed left only the second one behind. #362

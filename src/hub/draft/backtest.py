@@ -45,7 +45,7 @@ import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import polars as pl
@@ -1372,7 +1372,9 @@ def default_gate_mode(boards: dict[int, Board], realised: dict[int, pl.DataFrame
     return DefaultGateMode(exit_code=0, paired=paired, lines=tuple(lines))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, load: Callable[..., Any] | None = None) -> int:
+    """`load` is #403's seam: the one network-bound read (`walk_forward_inputs` by default,
+    called as `load(seasons, board_as_of, on_season=...)`)."""
     ap = argparse.ArgumentParser(
         prog="hub.draft.backtest",
         description="Championship equity against the market, on realised outcomes.")
@@ -1442,7 +1444,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if pre.exit_code is not None:
             return pre.exit_code
         try:
-            boards, realised = walk_forward_inputs(
+            boards, realised = (load or walk_forward_inputs)(
                 seasons, board_as_of,
                 on_season=lambda yr: print(f"  building the {yr} board as of {yr}-09-01 ..."))
         except Exception as e:

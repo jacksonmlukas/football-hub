@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import erf, sqrt
 from typing import NamedTuple
 
@@ -46,6 +46,7 @@ import polars as pl
 
 from hub.cli import unavailable
 from hub.declare import not_an_input
+from hub.ledger import Ledger
 from hub.ledger import recipe as _recipe
 from hub.models.experiment import Actions, Harness, expanding_seasons
 
@@ -258,7 +259,11 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
     return pl.DataFrame(rows).with_columns(pl.Series("ceiling_diff", ceilings, dtype=pl.Float64))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *,
+         load: Callable[[], pl.DataFrame] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """`load` and `ledger` are #403's seam: the one network-bound read (every season's
+    schedules, `nflverse.load` by default) and the ledger the run is written to."""
     ap = argparse.ArgumentParser(
         prog="hub.models.favourite_longshot",
         description="Gate the favourite-longshot location correction (#465). Measurement only.")
@@ -272,7 +277,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print("  loading schedules ...")
     try:
-        resid = residuals(nflverse.load("schedules", nflverse.every_season()))
+        resid = residuals(load() if load is not None
+                          else nflverse.load("schedules", nflverse.every_season()))
     except Exception as e:
         return unavailable("hub.models.favourite_longshot", "nflverse schedules", e)
     paired = walk_forward(resid)
@@ -298,7 +304,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"\n  Last fit (seasons {window[0]}-{window[-1]}), descriptive: sd "
           f"{final.sd:.3f}, shifts by bucket {EDGES} "
           + ", ".join(f"{d:+.2f}" for d in final.delta))
-    run = HARNESS.run(paired[["season", "diff", "ceiling_diff"]],
+    harness = HARNESS if ledger is None else HARNESS._replace(ledger=ledger)
+    run = harness.run(paired[["season", "diff", "ceiling_diff"]],
                       recipe=_recipe(edges=EDGES, min_games=MIN_SCORED_GAMES,
                                      min_past=MIN_PAST_SEASONS, prior_sd=SHIFT_PRIOR_SD,
                                      trailing=TRAILING))

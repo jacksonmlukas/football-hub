@@ -41,7 +41,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import polars as pl
@@ -361,7 +361,10 @@ def report(card: pl.DataFrame, rounds: Sequence[dict[str, float]],
 
 
 def main(argv: Sequence[str] | None = None, *,
-         ledger: Ledger | None = None) -> int:  # pragma: no cover - network
+         load: Callable[[Sequence[int]], pl.DataFrame] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """`load` and `ledger` are #403's seam: the one network-bound read (`pairs` by default) and
+    the ledger the run is written to, so a test drives the lifecycle with injected pairs."""
     ap = argparse.ArgumentParser(
         prog="hub.models.component_error",
         description="Where the component projection's error lives, priced in fantasy points.")
@@ -376,7 +379,7 @@ def main(argv: Sequence[str] | None = None, *,
 
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     try:
-        d = pairs(seasons)
+        d = (load or pairs)(seasons)
     except Exception as e:
         return unavailable("hub.models.component_error", "the nflverse player seasons", e)
     if d.is_empty():

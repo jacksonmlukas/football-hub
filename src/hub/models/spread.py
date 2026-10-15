@@ -57,7 +57,7 @@ shipped constant is the filtered one and this is its stated direction.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -475,7 +475,11 @@ def verdict(errs: pl.DataFrame, *, runs: dict[str, GateRun] | None = None) -> tu
                     f"{best:.4f} MAE, through the Gate.\n{body}")
 
 
-def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """`load` and `ledger` are #403's seam: the network-bound reader, called as
+    `load(source, seasons, ...)` exactly as `nflverse.load` is (the default), and the ledger the
+    run is written to."""
     p = argparse.ArgumentParser(prog="hub.models.spread", description=__doc__)
     p.add_argument("--fit", action="store_true")
     p.add_argument("--seasons", default="2022,2023,2024,2025")
@@ -486,16 +490,17 @@ def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> 
         return 0
 
     from hub.fetch import nflverse
+    read = load or nflverse.load
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     try:
-        stats = nflverse.load("player_stats", seasons, cols=STAT_COLS)
+        stats = read("player_stats", seasons, cols=STAT_COLS)
     except Exception as e:
         return unavailable("hub.models.spread", "nflverse weekly player stats", e)
     try:
         # Whole, no `cols`: `SNAP_COUNTS`' repair of a whole-percent refresh is decided across
         # every share column in the frame, and narrowing before the contract sees it would
         # take away the columns that can carry the evidence.
-        snaps, xw = nflverse.load("snap_counts", seasons), nflverse.load("ff_playerids", ())
+        snaps, xw = read("snap_counts", seasons), read("ff_playerids", ())
     except Exception as exc:
         print(f"snap counts unavailable ({exc}); usage arm runs without snap share")
         snaps, xw = None, None

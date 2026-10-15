@@ -400,11 +400,14 @@ def test_the_shape_gate_removes_the_skew_free_arm_when_the_skew_is_the_truth(tmp
     assert run.verdict[0] in ("REMOVE", "NOT-RUNNABLE"), run.verdict
 
 
-def test_the_shape_cli_prints_the_block_and_the_verdict(capsys, monkeypatch, tmp_path):
+def test_the_shape_cli_prints_the_block_and_the_verdict(capsys, monkeypatch):
     monkeypatch.setattr(coverage, "_stats", lambda seasons, cache: _drawn(
         n_players=30, seed=26, seasons=(2021, 2022, 2023, 2024, 2025)))
-    monkeypatch.setattr(coverage, "WIDTH_STATE", tmp_path / "w.json")
-    assert coverage.main(["--shape"]) == 0
+    ledger = Ledger(path=None)
+    assert coverage.main(["--shape"], ledger=ledger) == 0
+    written = ledger._read()
+    assert written is not None and [e.name for e in written] == ["interval_shape"], (
+        "the run was not filed to the ledger it was handed (#403)")
     out = capsys.readouterr().out
     assert "skew-free - deployed skew" in out and "MDE at 80% power" in out
     assert coverage.CEILING_ARM in out

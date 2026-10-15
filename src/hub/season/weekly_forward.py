@@ -89,15 +89,15 @@ PINNED_ARM_MODULES: dict[str, str] = {
     "hub.models.base": "8c41cd5f26d1",
     "hub.models.components": "b23c5d7d0c49",
     "hub.models.conformal": "79827e566bba",
-    "hub.models.coverage": "3c2d88cc6908",
-    "hub.models.margin": "8fd45168e983",
+    "hub.models.coverage": "9edc63626e9d",
+    "hub.models.margin": "e22ed895d1ee",
     "hub.models.market": "098baf487556",
     "hub.models.panel": "99d19fba99e0",
     "hub.models.predict": "ddf960a1dfe6",
     "hub.models.scoring_rules": "3c201f3a0d6f",
     "hub.models.volume": "31e5321b1e6d",
     "hub.names": "93e503040186",
-    "hub.season.weekly_gate": "73cc434a55db",
+    "hub.season.weekly_gate": "98f436fcacef",
     "hub.season.weekly_gate_data": "1823ccae01c3",
 }
 

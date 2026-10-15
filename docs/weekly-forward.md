@@ -889,3 +889,36 @@ board for names and ranks, never `missed`. #430's identity test
 **The row now pinned.** `hub.draft.board` `d6aa7628cdd2` (was `65ae0104fb6c`); the other 28 rows
 are as in the latest table above. Closure digest **`376fd23b022aa541`** (was
 `625cf0d04f3404fe`).
+
+## Amended 2026-10-09: three rows re-pinned for the gates' `main` seam (#403; prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; three rows of the latest are superseded.
+
+**What changed.** #403 gives each gate's `main` its network-bound read and its ledger as keyword
+arguments (`assemble=`/`load=` and `ledger=`) so a test can drive the whole command with injected
+inputs. Three modules of the arm's closure carry a gate's `main`: `hub.models.coverage` (a
+`ledger=` argument, used where `main` built `Ledger(WIDTH_STATE)`), `hub.models.margin` (a `load=`
+argument and one conditional where `main` called `nflverse.load`) and `hub.season.weekly_gate`
+(`assemble=` and `ledger=`, and `main`'s `HARNESS.run` called on a harness that carries the
+injected ledger). The edits are inside `main` and in the import lines `main`'s signature needs
+(`Callable`, `Any`, `Ledger`; `hub.ledger` was already in `weekly_gate`'s imports).
+
+**Why the arm's figures are unchanged.** The arm calls `weekly_gate.compare`, `.coverage`,
+`.void_condition` and the constants, `coverage.published_summary` and `margin`'s residual and
+win-probability helpers; none of the three `main`s is called from the closure (`grep` for
+`weekly_gate.main`, `coverage.main`, `margin.main` in `src/` finds no caller outside the
+modules' own `if __name__` guards). Parsing each of the three modules at the parent commit and
+in this change, removing `main`, every docstring and the module-level import lines, the two
+syntax trees are equal (`ast.dump`) for all three, and the import lines differ only by the names
+above. #430's identity test (`tests/unit/test_weekly_projection_move.py`) passes on this tree.
+No 2026 outcome has been read.
+
+**The rows now pinned.**
+
+- `hub.models.coverage` `9edc63626e9d` (was `3c2d88cc6908`)
+- `hub.models.margin` `e22ed895d1ee` (was `8fd45168e983`)
+- `hub.season.weekly_gate` `98f436fcacef` (was `73cc434a55db`)
+
+The other 26 rows are as in the latest table above. Closure digest **`dbccd0d96ad1171a`** (was
+`376fd23b022aa541`).

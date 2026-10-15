@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -561,7 +561,11 @@ def verdict(errs: pl.DataFrame, *, run: GateRun | None = None) -> tuple[str, str
                         f"bench-the-ruled-out.\n{line}")
 
 
-def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame] | None = None,
+         ledger: Ledger | None = None) -> int:
+    """`load` and `ledger` are #403's seam: the network-bound reader, called as
+    `load(source, seasons, ...)` exactly as `nflverse.load` is (the default), and the ledger the
+    run is written to."""
     ap = argparse.ArgumentParser(
         prog="hub.models.injury",
         description="What a weekly injury designation costs, and whether a table beats a rule.")
@@ -575,12 +579,13 @@ def main(argv: Sequence[str] | None = None, *, ledger: Ledger | None = None) -> 
 
     from hub.fetch import nflverse
 
+    read = load or nflverse.load
     seasons = [int(s) for s in a.seasons.split(",") if s.strip()]
     print(f"  loading injuries and weekly stats for {seasons} ...")
     try:
         obs = observations(
-            nflverse.load("injuries", seasons),
-            nflverse.load("player_stats", seasons, cols=STAT_COLS))
+            read("injuries", seasons),
+            read("player_stats", seasons, cols=STAT_COLS))
     except Exception as e:
         return unavailable("hub.models.injury", "nflverse injuries and weekly player stats", e)
     print(f"  {obs.height} designated player-weeks with a usable healthy baseline")

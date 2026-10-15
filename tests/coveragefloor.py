@@ -89,7 +89,9 @@ FLOOR: dict[str, int] = {
     "src/hub/live_chain.py": 1,
     "src/hub/models/__init__.py": 0,
     "src/hub/models/base.py": 2,
-    "src/hub/models/component_error.py": 8,
+    # 8 -> 5 by hand (#403): removing `main`'s `pragma: no cover - network` exposed its
+    # statements; the new main tests cover them, leaving 5 missing (lines 91, 120, 124, 130, 291).
+    "src/hub/models/component_error.py": 5,
     "src/hub/models/components.py": 4,
     "src/hub/models/conformal.py": 3,
     "src/hub/models/correlate.py": 2,

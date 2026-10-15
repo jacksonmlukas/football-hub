@@ -1096,8 +1096,8 @@ def test_the_result_says_what_it_covers_and_what_it_leaves_unanswered():
 
 # --- the gate names its own reads, however it is invoked (issue #247) ---------------------
 #
-# `main` is network-bound and `# pragma: no cover` for it; what is driven here is the whole of
-# it with `assemble_universe` replaced by a fixture that records the one read it made. #192
+# What is driven here is the whole of `main` (#403 removed its `# pragma: no cover`) with
+# `assemble_universe` replaced by a fixture that records the one read it made. #192
 # scoped `backtest.main` and `weekly_screen.main` with `reads_of_one_run` and left this gate
 # unwired: called in-process by anything that has already read something -- the one gate run
 # of #135 -- it inherited the enclosing run's reads and published a digest over bytes it never
@@ -1137,3 +1137,98 @@ def test_the_gate_called_in_process_names_only_its_own_reads(monkeypatch, tmp_pa
     assert "over 1 pinned source(s)" in capsys.readouterr().out
     assert sorted(p.source for p in nv.pins_this_run()) == ["ff_rankings", "player_stats"], (
         "the gate's read did not reach the run around it: scoping lost a read")
+
+
+# --- `main` end to end on injected inputs (issue #403) -------------------------------------
+#
+# `main` took its one network read from `weekly_gate_data` by name, so the only way into it was
+# to patch that module, and the checks that "the flag reaches the comparison" read the source
+# instead of running it. `main(assemble=, ledger=)` is the seam: everything else in the
+# lifecycle -- the read scope, `unavailable`, `compare`, `HARNESS.run`, the print, the write --
+# runs as it does in production.
+
+def _main_with(monkeypatch, argv, *, inputs=None, raises=None):
+    ledger = Ledger(path=None)
+    monkeypatch.setattr(G, "HARNESS", G.HARNESS._replace(bootstrap=100))
+
+    def assemble(seasons, **kw):
+        if raises is not None:
+            raise raises
+        return inputs if inputs is not None else _inputs()
+
+    return ledger, G.main(["--run", "--seasons", "2024", "--drafts", "1", *argv],
+                          assemble=assemble, ledger=ledger)
+
+
+def test_main_runs_the_lifecycle_on_injected_inputs_and_writes_one_ledger_entry(
+        monkeypatch, capsys, tmp_path):
+    out = tmp_path / "paired.parquet"
+    ledger, code = _main_with(monkeypatch, ["--out", str(out)])
+    said = capsys.readouterr().out
+    assert code == 0
+    written = ledger._read()
+    assert written is not None and [e.name for e in written] == ["weekly"], (
+        "the run did not reach the ledger it was handed")
+    # The verdict printed is the verdict filed: one run, read twice.
+    assert written[0].verdict == "NOT-RUNNABLE" and "has not measured a ceiling" in said, (
+        "the zero-effect fixture with no ceiling is NOT-RUNNABLE, and the sentence is printed")
+    assert "seasons requested [2024], scored [2024]" in said
+    assert "configuration: seasons=2024 drafts=1" in said
+    assert pl.read_parquet(out).height > 0 and "wrote" in said
+
+
+def test_main_reports_inputs_that_cannot_be_assembled_and_writes_nothing(
+        monkeypatch, capsys):
+    ledger, code = _main_with(monkeypatch, [], raises=OSError("no cache"))
+    assert code == 1
+    assert "hub.season.weekly_gate" in capsys.readouterr().err
+    assert ledger._read() in (None, []), "an unavailable run must not leave a ledger entry"
+
+
+def test_main_hands_the_ceiling_flag_to_the_comparison(monkeypatch, capsys):
+    """Replaces the source-reading check: run it, and see the ceiling arm in the report."""
+    _, code = _main_with(monkeypatch, ["--ceiling"])
+    with_it = capsys.readouterr().out
+    _, code2 = _main_with(monkeypatch, [])
+    without = capsys.readouterr().out
+    assert code == 0 and code2 == 0
+    assert G.HARNESS.ceiling_arm in with_it, "--ceiling was parsed and the arm never reached the report"
+    assert G.HARNESS.ceiling_arm not in without
+
+
+def test_main_names_the_mode_every_flag_puts_the_run_in(monkeypatch, capsys):
+    """The mode label is what a reader pastes with a figure, so each flag that changes the
+    universe or the treatment has to be in it."""
+    _, code = _main_with(monkeypatch, ["--churn", "--open-pool", "--unrestricted",
+                                       "--shrink", "mae", "--expected", "--lcb", "1.0"])
+    said = capsys.readouterr().out
+    assert code == 0
+    assert ("[one add/drop a week, OPEN POOL -- not the gate, UNRESTRICTED -- the pre-#206 "
+            "universe, not the gate, shrink=mae, expected priors, waiver LCB z=1.0]") in said
+    assert "shrink=mae churn=True lcb=1.0 expected=True" in said
+
+
+def test_main_under_holdout_prints_each_seasons_set_and_stops_when_one_is_missing(
+        monkeypatch, capsys):
+    from hub import holdout
+
+    monkeypatch.setattr(holdout, "run_lines", lambda seasons: [f"set for {s}" for s in seasons])
+    ledger, code = _main_with(monkeypatch, ["--holdout"])
+    assert code == 0 and "  set for 2024" in capsys.readouterr().out
+    assert ledger._read() is not None
+
+    def missing(seasons):
+        raise FileNotFoundError("conf/holdout/2024.json")
+
+    monkeypatch.setattr(holdout, "run_lines", missing)
+    ledger, code = _main_with(monkeypatch, ["--holdout"])
+    assert code == 1 and "a hold-out constant set" in capsys.readouterr().err
+    assert ledger._read() in (None, []), "a missing set must stop the run before it reads"
+
+
+def test_main_without_the_flag_prints_help_and_assembles_nothing(capsys):
+    def assemble(seasons, **kw):
+        raise AssertionError("help must not read anything")
+
+    assert G.main([], assemble=assemble) == 0
+    assert "--run" in capsys.readouterr().out
