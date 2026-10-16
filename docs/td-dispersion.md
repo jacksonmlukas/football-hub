@@ -316,3 +316,13 @@ the number is reported as measured, and the pre-registration named it before the
   `docs/td-count-sampler.md` section 9 carries the restated tables.
 * **Left open, deliberately**: a refit of `PER_UNIT_CV` and `COUNT_DISPERSION` at the corrected
   touchdown law, which is the candidate this result points at, and which is its own gated change.
+
+## 13. Amended 2026-10-15 (#473): the open item in section 12 is closed as a diagnosis (prior text kept)
+
+Section 12's last bullet leaves "a refit of `PER_UNIT_CV` and `COUNT_DISPERSION` at the corrected
+touchdown law" as the candidate. `docs/td-count-sampler.md` section 10 ran the diagnosis first and
+**supersedes the sentence in section 12 that puts the overshoot in those constants**: about half of
+the table's overshoot is the table's own method (a planted null whose truth is the shipped sampler
+reads +11% / +20% / +32% at 30 / 35 / 40), and the rest is the upper tail of the unit-count law at a
+variance that is right; no setting of the two constants calibrates the tail without cutting the 20
+and 25 point weeks. No refit was registered. The constant this document adopted is unchanged.
