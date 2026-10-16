@@ -232,3 +232,64 @@ the law that is scored; real counts also move their mean week to week, which the
 not carry, so the real effect will be smaller than a planted one at the same dispersion. The
 simulation sizes the instrument, not the result. The expected verdict under the issue's claim is
 therefore ADOPT if the claim is right, and not SHOW for want of power.
+
+## 11. The result (run once, 2026-10-15; one Ledger entry, `state/gate-width.json`)
+
+`uv run python -m hub.models.td_dispersion --fit` at commit `3a3d611c`, config digest `4fad9f78`,
+data digest `17123a2e`, code digest `e290352b`, 1,987 qualifying player-season-phases over
+2019-2025, six held-out seasons (2020-2025), 20,367 held-out player-weeks.
+
+**The verdict line, verbatim:**
+
+> ADOPT: TD_DISPERSION is replaced by the refit (docs/td-dispersion.md section 6). It won in every resolved season (6 resolved of 6, 0 abstained; won 6, tied 0, lost 0 of 6 seasons) and the t interval [+0.011, +0.014] excludes zero.
+
+| | refit minus shipped, nats per player-week |
+|---|---|
+| mean paired difference | **+0.01233** (95% bootstrap [+0.01128, +0.01344]; t [+0.01087, +0.01380]) |
+| MDE at 80% power | +0.00195 |
+| ceiling (a dispersion fitted to the held-out season itself) | +0.01367 |
+| the refit's share of the ceiling | 90% |
+
+| season | gain | se | player-clusters | disposition |
+|---|---|---|---|---|
+| 2020 | +0.01414 | 0.00421 | 252 | win |
+| 2021 | +0.01445 | 0.00341 | 251 | win |
+| 2022 | +0.01114 | 0.00305 | 235 | win |
+| 2023 | +0.01111 | 0.00306 | 233 | win |
+| 2024 | +0.01129 | 0.00351 | 241 | win |
+| 2025 | +0.01187 | 0.00270 | 230 | win |
+
+The estimator on every season loaded (pooled within-player-season variance over mean), with a
+player-cluster 95% interval, beside the 2022-25 figure and the constant shipped:
+
+| phase | 2019-25 | interval | 2022-25 | shipped |
+|---|---|---|---|---|
+| rec | **0.971** | [0.950, 0.994] | 0.966 | 0.83 |
+| rush | **0.986** | [0.949, 1.027] | 0.970 | 0.86 |
+| pass | **0.826** | [0.790, 0.868] | 0.844 | 0.85 |
+
+The 2022-25 column reproduces the issue's figures to within a few thousandths (0.962 / 0.957 /
+0.842; the difference is the sample thresholds of section 1). By position (a diagnostic, the
+constant is keyed by phase): rec RB 1.016, TE 0.996, WR 0.955; rush QB 0.991, RB 0.980 (TE 1.403 on
+very few touchdowns); pass QB 0.826 (TE 1.273 on trick plays).
+
+**What was and was not adopted.** Rec and rush, which the issue flagged, move to 0.97 and 0.99.
+Pass, which the issue read as unchanged (0.842 against 0.85), moves 0.85 to 0.83 because the
+registered estimator reads every season, and its interval [0.790, 0.868] contains the old
+constant: that move is inside the noise of the figure and is adopted because the pre-registration
+adopts the estimator as one triple, not because the pass phase was tested alone. (The gate is on
+the three jointly; it cannot say which phase earned the gain, and section 1 chose it so.) The
+adopted values are the registered estimator, rounded to two decimals: **rec 0.97, rush 0.99,
+pass 0.83**.
+
+**Diagnostic, not read by the rule.** The unfloored mean difference is +0.176 to +0.276 nats a
+player-week in every season: twenty times the floored one, and the reason amendment 1 exists.
+Those nats are the weeks the shipped constants' unreachable region calls impossible (a mean under
+`1 - 0.83 = 0.17` is the narrowest law there is), which the higher constants make reachable down
+to a mean of 0.03 (rec) and 0.01 (rush). The floored gain is the part that is not that.
+
+**Biases, as named in section 2.** The shipped constants had seen 2022-25 (against the refit); the
+leave-one-out mean carries estimation noise a log score reads as dispersion (toward the higher
+constants). The gain is in every season including 2020 and 2021, which the shipped constants had
+not seen, and is 90% of what any constant could earn on these rows, so the second bias is not
+what is carrying it alone; it is not removed either, and the number is reported as measured.
