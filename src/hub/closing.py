@@ -27,6 +27,7 @@ figure with its n and an interval and no verdict word; nothing pre-registered re
 
     uv run python -m hub.closing --report        # reads the archive, spends nothing
     uv run python -m hub.closing --capture       # one gated call if a kickoff is imminent
+    uv run python -m hub.closing --due           # exit 0 if one is due; spends nothing
 """
 from __future__ import annotations
 
@@ -51,18 +52,18 @@ from hub.models.market import MARGIN_SD, normal_cdf
 # minutes, so a window of fifteen gives at least two chances before the kickoff) and small
 # enough that the lead is a close, not a morning line.
 CLOSE_WINDOW_MIN = not_an_input(
-    15, "when a capture is taken; it decides what is archived, never what a prediction says")
+    15, "decides when a capture is taken and archived; it changes no prediction, forecast or model")
 
 # A capture is called a true close only within this many minutes of kickoff. Wider than the
 # window so a cycle missed by one loop beat still counts, and no wider: past it the row says
 # its lead and is not the close.
 TRUE_CLOSE_LEAD_MIN = not_an_input(
-    30, "labels an archived capture; reaches no prediction")
+    30, "only labels an archived capture as a close or not; no prediction reads it")
 
 # The most close-window calls in any seven days. A normal NFL week has six or seven distinct
 # kickoff times; ten is the cap with slack for an international game or a double-header.
 CLOSE_CALLS_PER_WEEK = not_an_input(
-    10, "a spending ceiling on the poller; reaches no prediction")
+    10, "a spending ceiling on the odds poller; it changes no prediction or model")
 
 
 class CloseBudgetExceeded(Exception):
@@ -141,7 +142,10 @@ def calls_in_week(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime) 
 def kickoff_table(season: int) -> pl.DataFrame:
     """`game_id`, `kickoff` for the season, from the schedule (a network read, no credits)."""
     from hub import schedule
-    sched = odds._schedule(season)
+    from hub.fetch import nflverse
+    # Not `odds._schedule`, which refreshes: a close loop asks every few minutes and kickoff
+    # times do not move between cycles, so the runner's cached read is the right one.
+    sched = nflverse.load("schedules", [season]).filter(pl.col("season") == season)
     if not {"gameday", "gametime"} <= set(sched.columns):
         return pl.DataFrame(schema={"game_id": pl.Utf8, "kickoff": pl.Datetime})
     return sched.select("game_id", schedule.kickoff_expr())
@@ -178,6 +182,13 @@ def capture(season: int = SEASON_AHEAD, *, now: datetime | None = None,
           f"one call, {cost} credits ({used + 1} of {CLOSE_CALLS_PER_WEEK} this week)")
     (fetch or odds.snapshot)(season, state_path=state_path, base=base, floor=floor, now=when)
     return 1
+
+
+def is_due(season: int = SEASON_AHEAD, *, now: datetime | None = None,
+           base: Path | None = None) -> bool:
+    """Whether a close capture is due now. Reads the archive and schedule; spends nothing."""
+    when = now or datetime.now(UTC).replace(tzinfo=None)
+    return not due(store.lines(season, base=base), kickoff_table(season), when).is_empty()
 
 
 # --- closing-line value -----------------------------------------------------------------
@@ -325,8 +336,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--report", action="store_true", help="summarise closes; spends nothing")
     ap.add_argument("--capture", action="store_true",
                     help="one gated odds call if a kickoff is within the window")
+    ap.add_argument("--due", action="store_true",
+                    help="exit 0 if a capture is due, 1 if not, 2 if that cannot be told; "
+                         "spends nothing")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     a = ap.parse_args(argv)
+    if a.due:
+        try:
+            return 0 if is_due(a.season) else 1
+        except Exception as e:
+            print(f"hub.closing: cannot tell whether a capture is due ({type(e).__name__}: {e})",
+                  file=sys.stderr)
+            return 2
     if a.capture:
         try:
             capture(a.season)

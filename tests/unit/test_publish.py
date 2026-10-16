@@ -2219,9 +2219,12 @@ def _timed_sched(game_id, result):
 
 
 def _write_line(base, when, spread):
-    store.write(pl.DataFrame({"game_id": ["g1"], "close_spread": [spread],
-                              "captured_at": [when]}),
-                "lines", "nfl", 2026, 1, base=base, name=f"snap-{when:%Y%m%dT%H%M%S}")
+    store.write_snapshot(
+        pl.DataFrame({"game_id": ["g1"], "close_spread": [spread], "spread_price": [-110.0],
+                      "close_total": [44.5], "total_price": [-110.0], "ml_home_prob": [None],
+                      "captured_at": [when], "polls_unmoved": [1], "unmoved_since": [when]},
+                     schema=store.SNAPSHOT_COLUMNS),
+        2026, 1, when, base=base)
 
 
 def test_the_record_carries_descriptive_closing_line_value_with_its_lead(site, base):

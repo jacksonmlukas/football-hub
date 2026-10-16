@@ -577,7 +577,8 @@ def track_record(base: Path | None = None, out: Path | None = None,
 def _closing_line_value(df: pl.DataFrame, base: Path | None) -> list[dict[str, Any]] | None:
     """One CLV block per season of scored predictions that has any archived close (#495).
 
-    Read from the committed odds archive (`state/odds/`), which a runner has. A season with
+    Read from the committed odds archive (`state/odds/`) and nothing else: it is the archive of
+    record, it is what a runner has, and it keeps this off the gitignored store. A season with
     no archive, a schedule without kickoff times, or an archive that cannot be read drops the
     block rather than the record (graceful degradation). Descriptive: `hub.closing.clv` says
     so in the block, with its n and interval and no verdict.
@@ -587,11 +588,12 @@ def _closing_line_value(df: pl.DataFrame, base: Path | None) -> list[dict[str, A
     from hub import closing
     blocks: list[dict[str, Any]] = []
     try:
+        archive = store.committed_lines(base)
         for season, rows in _by_season(df):
-            if season is None:
+            if season is None or archive.is_empty():
                 continue
             kicks = rows.select("game_id", "kickoff").unique("game_id")
-            got = closing.closes(store.lines(season, base=base), kicks)
+            got = closing.closes(archive.filter(pl.col("season") == season), kicks)
             if got.is_empty():
                 continue
             blocks.append({"season": season, **closing.clv(rows, got)})
