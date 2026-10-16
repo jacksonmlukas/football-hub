@@ -376,6 +376,42 @@ def test_the_tail_path_runs_offline(capsys):
     assert ">= 30: observed" in capsys.readouterr().out
 
 
+def test_the_pure_half_of_the_gate_writes_nothing():
+    t = _seasons(TRUTH, seasons=(2019, 2020, 2021), seed=7)
+    paired = T.walk_forward(t, ceiling=TRUTH)
+    run = T.gate_run(paired, seed=1)
+    assert run.lines == [] and run.verdict[0] in {"ADOPT", "SHOW", "NOT-RUNNABLE", "REMOVE"}
+
+
+def test_the_simulation_runs_across_worker_processes():
+    out = T.simulate(TRUTH, {"rec": 6, "rush": 4, "pass": 3}, (2019, 2020, 2021), 2, workers=2,
+                     seed=3)
+    assert out["reps"] == 2.0 and 0.0 <= out["adopt"] <= 1.0
+
+
+def test_the_power_path_prints_both_scenarios(monkeypatch, capsys):
+    seen = []
+
+    def fake(truth, per_phase, seasons, reps, **kw):
+        seen.append(dict(truth))
+        return {"reps": float(reps), "adopt": 0.5, "adopt_se": 0.1, "not_runnable": 0.25,
+                "not_runnable_se": 0.1, "remove": 0.0, "remove_se": 0.0, "mean": 0.01,
+                "se": 0.001, "mde": 0.003, "ceiling": 0.02}
+
+    monkeypatch.setattr(T, "simulate", fake)
+    assert T.main(["--power", "--reps", "3"]) == 0
+    text = capsys.readouterr().out
+    assert "N (truth = the incumbent)" in text and "P (truth = the issue's figures)" in text
+    assert seen[0] == dict(T.INCUMBENT) and seen[1] == {"rec": 0.96, "rush": 0.96, "pass": 0.84}
+
+
+def test_a_source_with_one_season_has_no_held_out_season(capsys):
+    stats = _full_stats(seasons=(2024,))
+    assert T.main(["--fit", "--seasons", "2024"], load=lambda *a, **k: stats,
+                  ledger=Ledger(path=None)) == 0
+    assert "no held-out season" in capsys.readouterr().out
+
+
 def test_an_unreadable_source_is_reported_not_raised(capsys):
     def boom(*a, **k):
         raise OSError("no network")
