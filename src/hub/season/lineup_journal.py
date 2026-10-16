@@ -4,7 +4,7 @@
 provisionally from week 8, "until a forward-gated model beats it", and "the journal's forward
 record" is what reopens that. So three sources are written down every week, side by side:
 
-- `mu`   -- the current rule: `hub.season.roster.lock`'s best lineup by projected points.
+- `mu`   -- the current rule: `hub.season.roster.lock`'s best lineup by mu.
 - `ecr`  -- the best lineup by weekly expert consensus rank, from the committed pre-kickoff
             capture (`hub.fetch.consensus`; a capture taken at or after the deadline is not read).
 - `espn` -- the best lineup by ESPN's own projection for the scoring period.
