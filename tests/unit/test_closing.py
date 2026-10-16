@@ -233,3 +233,58 @@ def test_the_earliest_published_row_per_game_is_the_one_compared():
 def test_nothing_published_or_no_close_is_an_empty_figure_not_an_error():
     assert closing.clv(pl.DataFrame(), _close("g", 6.0, 12))["n"] == 0
     assert closing.clv(_preds(("g", 0.6, _min(3000))), pl.DataFrame())["n"] == 0
+
+
+# --- the CLI ------------------------------------------------------------------------------
+
+def test_due_exits_zero_when_due_one_when_not_and_two_when_it_cannot_tell(monkeypatch):
+    monkeypatch.setattr(closing, "kickoff_table", lambda season: _kicks(("g", KICK)))
+    monkeypatch.setattr(closing.store, "lines", lambda season, base=None: _arc())
+    monkeypatch.setattr(closing, "datetime", _Clock(_min(10)))
+    assert closing.main(["--due"]) == 0
+    monkeypatch.setattr(closing, "datetime", _Clock(_min(300)))
+    assert closing.main(["--due"]) == 1
+
+    def boom(season):
+        raise OSError("no schedule")
+    monkeypatch.setattr(closing, "kickoff_table", boom)
+    assert closing.main(["--due"]) == 2
+
+
+class _Clock:
+    """`datetime` with `now` pinned; everything else is the real class."""
+
+    def __init__(self, at):
+        self._at = at
+
+    def now(self, tz=None):
+        return self._at.replace(tzinfo=tz)
+
+    def __getattr__(self, name):
+        return getattr(dt.datetime, name)
+
+
+def test_capture_cli_refuses_with_a_sentence_and_exit_one(monkeypatch, capsys):
+    def refuse(season, **kw):
+        raise closing.CloseBudgetExceeded("cap reached")
+    monkeypatch.setattr(closing, "capture", refuse)
+    assert closing.main(["--capture"]) == 1
+    assert "cap reached" in capsys.readouterr().err
+
+
+def test_capture_cli_reports_an_unreachable_market_as_unavailable(monkeypatch):
+    def down(season, **kw):
+        raise OSError("down")
+    monkeypatch.setattr(closing, "capture", down)
+    assert closing.main(["--capture"]) != 0
+
+
+def test_report_summarises_the_closes_and_spends_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(closing, "kickoff_table", lambda season: _kicks(("g", KICK)))
+    monkeypatch.setattr(closing.store, "lines",
+                        lambda season, base=None: _arc(("g", _min(12), 3.0)))
+    assert closing.main(["--report"]) == 0
+    assert "1 games with a last pre-kickoff capture" in capsys.readouterr().out
+    monkeypatch.setattr(closing.store, "lines", lambda season, base=None: _arc())
+    assert closing.main(["--report"]) == 0
+    assert "none archived" in capsys.readouterr().out
