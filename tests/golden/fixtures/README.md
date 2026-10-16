@@ -47,6 +47,8 @@ sentence stop agreeing.
 | `cfbd_lines.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `odds_spreads.synthetic.json` | **Hand-built** from The Odds API's documented response shape |
 | `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
+| `bigten_page_sidearm.html` | **Captured** 2026-10-16, the availability-reports page as served since 2026-10-07 (archive page `4814b76d3a0e98c2`), trimmed to its article; a tracking token is redacted — see below |
+| `bigten_page_nextdata.synthetic.html` | **Hand-built** page of the earlier Next.js `__NEXT_DATA__` shape; the archive holds none (#499) |
 | `pool_payload.synthetic.json` | **Hand-built** payload of the shape `hub.fetch.pool` assumes the pool host returns: the shape is documented nowhere in this repo and no `POOL_SESSION` exists on this machine — see below |
 | `nfeloqb_qb_elos.synthetic.json` | **Hand-built** rows in 538's published `qb_elo` schema, the shape `hub.fetch.nfeloqb` assumes `greerreNFL/nfeloqb`'s `qb_elos.csv` carries: no pull has been made from this repo — see below |
 | `nfeloqb_qb_elos.json` | **Captured** 2026-09-12: the last 300 rows of `greerreNFL/nfeloqb`'s `qb_elos.csv` (seasons 2025–2026), including two played 2026 games the source had not yet filled a quarterback in for — the shape the synthetic rows guessed, confirmed; the synthetic file stays for the behavioural tests that depend on its arranged tenure runs |
@@ -344,3 +346,12 @@ carries 200 players and the frozen consensus page carries 16 of them, so 88% of 
 cells come back unranked against roughly 64% in a real run. `coverage` reports `unranked` and
 `join_failure` as two numbers for exactly this reason — only the second is what `VOID_FLOOR`
 reads, and only the second is asserted.
+
+**The Big Ten page fixtures (#499).** `bigten_page_sidearm.html` keeps the whole `<article>`
+(headline and both iframes -- the parser reads the headline and every iframe `src`) and
+drops the roughly 385KB of navigation and scripts around it. The first iframe's mail-security
+wrapper carried a token naming a vendor employee's mailbox in its `data=` and `sdata=` query
+values; both are replaced with `REDACTED`, and the parser reads only the wrapper's `url=`.
+`bigten_page_nextdata.synthetic.html` is hand-built because every page in the 2026 archive is
+the newer shape; it mirrors the record `tests/unit/test_fetch_bigten.py` builds. Neither is
+JSON, so the provenance flags in `test_every_contract_is_applied.py` do not see them.
