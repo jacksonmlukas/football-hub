@@ -58,7 +58,7 @@ CLI_MODULES = (
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.audit_ready",
+    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
     "hub.models.coverage",
@@ -275,6 +275,9 @@ ABSENT_INPUT = [
     # the run history -- both exit non-zero rather than reading absence as "nothing to do".
     ("hub.live_chain", []),
     ("hub.watchdog_gap", ["--repo", "o/r", "--live-yml", "{tmp}/nope.yml"]),
+    # The escalation scan (#498): a missing artifact directory is a sentence and exit 2, so
+    # the workflow never reads "could not look" as "nothing escalated" and closes the incident.
+    ("hub.escalate", ["--site-data", "{tmp}/nope"]),
     # The audit precondition (#417): no published artifacts to read is a named refusal.
     ("hub.audit_ready", ["--season", "2026", "--week", "4", "--site", "{tmp}"]),
     ("hub.instrument_check", ["--week", "4", "--from", "2026-09-30", "--until", "2026-10-02",

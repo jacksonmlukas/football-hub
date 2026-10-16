@@ -37,7 +37,7 @@ from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
-from hub.season.roster import degenerate, lock
+from hub.season.roster import degenerate, lock, withheld_reason
 
 if TYPE_CHECKING:
     # Typing only. `survivor` imports the real module locally, the way every other
@@ -824,7 +824,10 @@ def roster(out: Path | None = None,
             # expect him to play, `can_start` whether the league will let him.
             "can_start": r.get("can_start", True),
             "missing_games": r.get("missing_games", 0),
+            # His team has no game this week (#490): the mechanical half of `can_start`.
+            "on_bye": r.get("on_bye", False),
         })
+    held = set(lk.withheld)
     # Dated from the parquet, not from this run. The roster CLI serves last-good when ESPN is
     # unreachable and no longer rewrites the file, so this mtime is the last *successful*
     # sync -- and the page ages the panel from `generated_at`. Stamping now instead is how
@@ -836,6 +839,12 @@ def roster(out: Path | None = None,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench,
                         week=wk, ecr_reason=ecr_reason, espn_week_reason=espn_reason,
+                        # Why each withheld player is: "bye", "on injured reserve", or ESPN's
+                        # missed-games projection (#490). Beside `withheld`, not inside it, so
+                        # readers of the list of names are unchanged.
+                        withheld_reasons={r["player"]: withheld_reason(r)
+                                          for r in df.iter_rows(named=True)
+                                          if r["player"] in held},
                         # The prior sync's decision and the stamp it was made at (#355): the
                         # page's "what changed since the last regen" reads this and nothing else.
                         previous=_previous_decision(out or SITE, stamp))

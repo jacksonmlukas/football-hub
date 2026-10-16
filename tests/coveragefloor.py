@@ -65,6 +65,7 @@ FLOOR: dict[str, int] = {
     "src/hub/draft/season.py": 0,
     "src/hub/draft/state.py": 6,
     "src/hub/draft/tune.py": 13,
+    "src/hub/escalate.py": 1,
     "src/hub/exhibits/__init__.py": 0,
     "src/hub/exhibits/championship_equity.py": 0,
     "src/hub/exhibits/leverage.py": 1,
