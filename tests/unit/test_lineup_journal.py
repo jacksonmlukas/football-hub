@@ -14,6 +14,7 @@ from hub.fetch import consensus
 from hub.names import player_key
 from hub.season import lineup_journal as J
 
+_REAL_NOW = J._now          # the autouse fixture below replaces it for every test
 SEASON, WEEK = 2026, 7
 FIRST = date(2026, 10, 25)
 EARLY = datetime(2026, 10, 10, 12, tzinfo=UTC)      # before every week used here starts
@@ -288,6 +289,36 @@ def test_settle_without_a_schedule_leaves_the_week_unscored(tmp_path):
     why = J.settle(SEASON, WEEK, {"a": 1.0}, tmp_path / "j", schedule=None)
     assert "no schedule" in why
     assert _doc(J.journal_path(SEASON, WEEK, tmp_path / "j"))["scored"] is False
+
+
+def test_a_week_missing_from_the_schedule_is_refused_and_left_unscored(tmp_path):
+    got, why = J.record(_roster(), season=SEASON, week=WEEK, base=tmp_path / "j", now=EARLY,
+                        schedule=_schedule(weeks=(6,)), captures=tmp_path / "x")
+    assert got is None and "not in the schedule" in why
+    _rec(_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "x")
+    assert "not in the schedule" in J.settle(SEASON, WEEK, {"a": 1.0}, tmp_path / "j",
+                                             schedule=_schedule(weeks=(6,)))
+
+
+def test_settling_a_week_with_no_entry_says_so(tmp_path):
+    assert "no journal entry" in _settle(SEASON, WEEK, {"a": 1.0}, tmp_path / "j")
+
+
+def test_the_real_clock_is_timezone_aware():
+    assert _REAL_NOW().tzinfo is not None
+
+
+def test_the_cli_needs_a_verb():
+    with pytest.raises(SystemExit):
+        J.main([])
+
+
+def test_an_ecr_that_ranks_nobody_on_the_roster_is_null_with_a_reason(tmp_path):
+    _capture(tmp_path / "cons", drop=tuple(p[0] for p in PLAYERS[1:]))   # one ranked, not a lineup
+    got, _ = _rec(_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "cons")
+    assert _doc(got)["sources"]["ecr"]["lineup"] is None
+    only_unmatched = J._best(_roster(), {"zzz": 1.0}, "ECR")
+    assert only_unmatched["lineup"] is None and "ranks none" in only_unmatched["reason"]
 
 
 def test_the_cli_without_a_roster_says_so_and_fails(tmp_path, capsys):
