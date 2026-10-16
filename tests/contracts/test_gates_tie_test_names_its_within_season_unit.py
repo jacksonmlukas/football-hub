@@ -45,6 +45,9 @@ DECLARED_UNITS: dict[str, tuple[str, ...]] = {
     # #343: the three comparisons that reached the Gate by hand before this.
     "hub.models.spread.HARNESS": ("player_id",),
     "hub.models.component_error.HARNESS": ("player_id",),
+    # #472 (2026-10-15): the TD_DISPERSION refit; one row per held-out player-week, the player
+    # is rule 3's unit.
+    "hub.models.td_dispersion.HARNESS": ("player_id",),
     # #360 (2026-10-07): the player, rule 3's unit. The type comparison's declared no-op
     # (`season`) is discharged, and the retention-vs-`out_zero` gate that replaces the
     # `verdict` argmin reads the same unit.

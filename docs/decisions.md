@@ -547,6 +547,10 @@ Yardage is compound -- a week's yards are a sum over catches -- and modelling it
 Gamma reimposes the proportional spread law this layer replaces. The first version did exactly
 that and produced spread growing as mu instead of sqrt(mu).
 
+*Restated again 2026-10-15 (#472), prior wording kept above:* the touchdown dispersions were
+refit on 2019-25 and the gate of `docs/td-dispersion.md` adopted them: 0.83 (pass), 0.99 (rush),
+0.97 (rec), where "0.83-0.86" stood.
+
 *Restated 2026-10-15 (#307), prior wording kept above:* the under-dispersed family is the
 Conway-Maxwell-Poisson, not the binomial -- the binomial's trial count was a support ceiling and
 its rounding drifted the dispersion -- and a phase's touchdowns are drawn with its yards.

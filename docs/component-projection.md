@@ -67,6 +67,11 @@ that, and using one left simulated spread ~13% light.
 Touchdowns are **under**dispersed, being bounded by a small number of scoring chances.
 Poisson overstated them, which overstated skew.
 
+> **Restated again 2026-10-15 (#472); the table above stands as written.** The touchdown
+> dispersions were refit on 2019-25 and read ADOPT in the gate of `docs/td-dispersion.md`:
+> pass 0.83, rush 0.99, rec 0.97 (they were 0.85, 0.86, 0.83), so the row's "0.83 - 0.86" is now
+> "0.83 - 0.99".
+
 > **Restated 2026-10-15 (#307); the table above stands as written.** The family for the
 > touchdown rows is the Conway-Maxwell-Poisson, not the binomial: the binomial's trial count was
 > its support, so a WR1 could not score three touchdowns in a game, and its rounding moved the

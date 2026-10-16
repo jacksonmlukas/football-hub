@@ -114,6 +114,7 @@ FLOOR: dict[str, int] = {
     "src/hub/models/starter_change.py": 1,
     "src/hub/models/starter_events.py": 1,
     "src/hub/models/starter_study.py": 4,
+    "src/hub/models/td_dispersion.py": 0,
     "src/hub/models/volume.py": 1,
     "src/hub/models/weekly_screen.py": 0,
     "src/hub/names.py": 0,

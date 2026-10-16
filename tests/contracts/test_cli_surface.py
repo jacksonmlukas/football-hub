@@ -65,6 +65,7 @@ CLI_MODULES = (
     "hub.models.correlate", "hub.models.eval", "hub.models.injury", "hub.models.margin",
     "hub.models.favourite_longshot",
     "hub.models.ratings", "hub.models.spread", "hub.models.starter_change",
+    "hub.models.td_dispersion",
     "hub.models.component_error", "hub.models.props", "hub.models.lookahead_margin",
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
@@ -289,6 +290,7 @@ ABSENT_INPUT = [
     ("hub.models.props", ["--report", "--base", "{tmp}"]),
     ("hub.models.ratings", ["--fit"]),
     ("hub.models.spread", ["--fit"]),
+    ("hub.models.td_dispersion", ["--fit"]),
     # The starter-change readers (#221, #291). `--cache` keeps the nfeloqb read off the
     # developer's `data/raw/` and `--store` the archive read off the developer's store, so a
     # fresh clone meets no cached file and says so.

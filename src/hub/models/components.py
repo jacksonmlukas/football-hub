@@ -157,8 +157,14 @@ COUNT_DISPERSION: dict[str, float] = fitted(
 # family is the Conway-Maxwell-Poisson, whose `nu` is solved so the variance over mean is this
 # number at the mean being drawn (#307; it was a binomial of `round(mean / (1 - phi))` trials,
 # which has a ceiling a few counts above the mean and drifts off the number it holds).
+#
+# **Refit 2026-10-15 (#472), `docs/td-dispersion.md`**: 0.85 / 0.86 / 0.83 -> 0.83 / 0.99 / 0.97
+# (pass / rush / rec). The same measurement made on 2019-25, a pooled within-player-season
+# variance over mean, read 0.826 / 0.986 / 0.971, and the refit predicted held-out weekly counts
+# better than the old constants in six of six seasons (gate ADOPT, +0.0123 nats a player-week,
+# t interval [+0.011, +0.014]). The text above is the reasoning of the constants it replaced.
 TD_DISPERSION: dict[str, float] = fitted(
-    {"pass": 0.85, "rush": 0.86, "rec": 0.83})
+    {"pass": 0.83, "rush": 0.99, "rec": 0.97})
 
 # The largest Conway-Maxwell-Poisson `nu` the solver will return: where a dispersion is below
 # what any count of that mean can reach (0.83 at a mean under 0.17), `nu` runs to this and the
