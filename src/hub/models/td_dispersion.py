@@ -93,6 +93,16 @@ SCORE_FLOOR = not_an_input(
     1e-3, "the floor a count's probability is scored at in the walk-forward log score; it sizes "
           "a measurement and nothing predicts from it")
 
+# The constants the gate was registered against and run against (docs/td-dispersion.md): the
+# comparison "refit against the shipped constants" is a statement about these three numbers.
+# #472 changed `components.TD_DISPERSION`, so this is no longer the live value and the gate does
+# not read the live one: re-running it reproduces the run in the Ledger, and a later refit would
+# name its own incumbent.
+INCUMBENT: dict[str, float] = not_an_input(
+    {"pass": 0.85, "rush": 0.86, "rec": 0.83},
+    "the constants the gate of docs/td-dispersion.md was registered and run against, kept so "
+    "the run reproduces after components.TD_DISPERSION moved")
+
 WITHIN: tuple[str, ...] = ("player_id",)
 CEILING_ARM = "a dispersion fitted to the held-out season itself"
 ACTIONS = Actions(
@@ -242,7 +252,7 @@ def walk_forward(table: pl.DataFrame, *, incumbent: Mapping[str, float] | None =
     strictly before the one scored. `ceiling` is a fixed dispersion per phase for a caller that
     knows it (a planted truth); absent, it is searched on the held-out season itself.
     """
-    shipped = dict(components.TD_DISPERSION if incumbent is None else incumbent)
+    shipped = dict(INCUMBENT if incumbent is None else incumbent)
     schema = pl.Schema({"season": pl.Int64, "player_id": pl.Utf8, "week": pl.Int64,
                         "diff": pl.Float64, "ceiling_diff": pl.Float64})
     frames: list[pl.DataFrame] = []
@@ -425,12 +435,12 @@ def _estimator_report(table: pl.DataFrame, since: int = 2022) -> list[str]:
     recent = fit_dispersion(table, [s for s in table["season"].unique().to_list() if s >= since])
     by_pos = fit_dispersion(table, by_position=True)
     lines = ["", "The estimator on every season loaded, with a player-cluster 95% interval:",
-             f"  {'phase':<6}{'all seasons':>13}{'interval':>20}{f'{since}+':>9}{'shipped':>9}"]
+             f"  {'phase':<6}{'all seasons':>13}{'interval':>20}{f'{since}+':>9}{'registered':>11}"]
     for p in PHASES:
         lo, hi = fit_interval(table, p)
         lines.append(f"  {p:<6}{all_fit.get(p, float('nan')):>13.3f}"
                      f"{f'[{lo:.3f}, {hi:.3f}]':>20}{recent.get(p, float('nan')):>9.3f}"
-                     f"{components.TD_DISPERSION[p]:>9.2f}")
+                     f"{INCUMBENT[p]:>11.2f}")
     lines += ["", "By position (a diagnostic; the constant is keyed by phase):"]
     for (p, pos), v in sorted(by_pos.items()):
         lines.append(f"  {p:<6}{pos:<4}{v:>8.3f}")
@@ -453,7 +463,7 @@ def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame]
 
     if a.power:
         per_phase = {"rec": 165, "rush": 78, "pass": 36}
-        scen = {"N (truth = shipped)": dict(components.TD_DISPERSION),
+        scen = {"N (truth = the incumbent)": dict(INCUMBENT),
                 "P (truth = the issue's figures)": {"rec": 0.96, "rush": 0.96, "pass": 0.84}}
         held_out = seasons
         for name, truth in scen.items():
@@ -478,14 +488,14 @@ def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame]
 
     if a.tails:
         fit = fit_dispersion(phase_table(stats))
-        new = {ph: round(fit.get(ph, components.TD_DISPERSION[ph]), 2) for ph in PHASES}
+        new = {ph: round(fit.get(ph, INCUMBENT[ph]), 2) for ph in PHASES}
         recent = [s for s in seasons if s >= 2022]
-        r = tail_calibration(stats, recent, {"shipped": dict(components.TD_DISPERSION),
+        r = tail_calibration(stats, recent, {"registered": dict(INCUMBENT),
                                              "refit": new})
         print(f"{r['player_seasons']} player-seasons, {r['player_weeks']} player-weeks, "
               f"{recent[0]}-{recent[-1]}")
         for t in TAIL_LINES:
-            print(f"  >= {t}: observed {r['observed'][t]}, shipped {r['shipped'][t]}, "
+            print(f"  >= {t}: observed {r['observed'][t]}, registered {r['registered'][t]}, "
                   f"refit {r['refit'][t]}")
         return 0
 
@@ -499,7 +509,7 @@ def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame]
     # Everything that can fail on the data is computed before the Ledger is written, so a
     # crash cannot leave one entry behind and invite a second run.
     report = _estimator_report(table)
-    raw = walk_forward(table, floor=_FLOOR, ceiling=dict(components.TD_DISPERSION))
+    raw = walk_forward(table, floor=_FLOOR, ceiling=dict(INCUMBENT))
     by_season = (raw.group_by("season").agg(pl.col("diff").mean()).sort("season"))
     diag = ["", "The unfloored mean refit-minus-shipped, nats per player-week (a diagnostic; "
             "the rule reads the floored score):"]

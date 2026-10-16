@@ -283,13 +283,36 @@ adopted values are the registered estimator, rounded to two decimals: **rec 0.97
 pass 0.83**.
 
 **Diagnostic, not read by the rule.** The unfloored mean difference is +0.176 to +0.276 nats a
-player-week in every season: twenty times the floored one, and the reason amendment 1 exists.
+player-week in every season: fifteen to twenty-two times the floored one, and the reason
+amendment 1 exists.
 Those nats are the weeks the shipped constants' unreachable region calls impossible (a mean under
 `1 - 0.83 = 0.17` is the narrowest law there is), which the higher constants make reachable down
 to a mean of 0.03 (rec) and 0.01 (rush). The floored gain is the part that is not that.
 
 **Biases, as named in section 2.** The shipped constants had seen 2022-25 (against the refit); the
 leave-one-out mean carries estimation noise a log score reads as dispersion (toward the higher
-constants). The gain is in every season including 2020 and 2021, which the shipped constants had
-not seen, and is 90% of what any constant could earn on these rows, so the second bias is not
-what is carrying it alone; it is not removed either, and the number is reported as measured.
+constants). The gain is as large in 2020 and 2021, seasons before the 2022-25 data the shipped
+constants were measured on, as in 2022-25, so the first bias is not hiding a larger effect in the
+later seasons. The second bias is not separately quantified and the rule does not subtract it:
+the number is reported as measured, and the pre-registration named it before the run.
+
+## 12. After the verdict: what was done, and what the secondary table said
+
+* `components.TD_DISPERSION` is **pass 0.83, rush 0.99, rec 0.97** (was 0.85, 0.86, 0.83), still
+  declared `fitted`. `config_digest(HubConfig())` `4fad9f78` -> `839ceda9`, `fitted_digest`
+  `f6b8c28a` -> `9f2d0b0c` (measured before and after; restoring the old three values reproduces
+  both prior digests). The gate's incumbent is kept as `td_dispersion.INCUMBENT`, the three
+  constants it was registered and run against, so the run reproduces after the constant moved.
+* **The forward arm does not read the constant**: `docs/weekly-forward.md`, amended 2026-10-15,
+  with the closure re-pinned (`hub.models.components` `d42ac69f7717`, closure `69a09cab8e72c77d`).
+* **The secondary table (section 2a) says the opposite of what the issue hoped.** On #307's
+  649 player-seasons, the sampler's expected weeks at 30 / 35 / 40 or more points go from 398 / 164
+  / 64 (15% / 20% / 23% over the observed 345 / 136 / 52) to 428 / 184 / 76 (24% / 36% / 45%
+  over). The refit predicts the touchdown count better and widens the tail overshoot. The gate was
+  registered on the count and the table as descriptive, so the action is the pre-registered one,
+  and the finding is that the overshoot at 30+ points is not caused by the touchdown dispersion;
+  it is in `PER_UNIT_CV`, `COUNT_DISPERSION` or `TD_YARDS_RHO` (the last re-measured at the new
+  dispersion: it still implies 0.349 / 0.369 / 0.478 against the observed 0.349 / 0.372 / 0.477).
+  `docs/td-count-sampler.md` section 9 carries the restated tables.
+* **Left open, deliberately**: a refit of `PER_UNIT_CV` and `COUNT_DISPERSION` at the corrected
+  touchdown law, which is the candidate this result points at, and which is its own gated change.

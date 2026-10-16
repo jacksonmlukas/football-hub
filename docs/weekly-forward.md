@@ -972,3 +972,46 @@ live constants reproduces both prior values). That is the model version's label 
 **The row now pinned.** `hub.models.components` `75740834610f` (was `b23c5d7d0c49`); the other 28
 rows are as in the latest table above. Closure digest **`a2a3e8720e86c13b`** (was
 `dbccd0d96ad1171a`).
+
+## Amended 2026-10-15: `hub.models.components` re-pinned for #472's `TD_DISPERSION` refit (prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; the `hub.models.components` row of the latest is superseded.
+
+**What changed.** #472 (`docs/td-dispersion.md`): one declared constant of `hub.models.components`
+moved by value, `TD_DISPERSION` {pass 0.85, rush 0.86, rec 0.83} -> {pass 0.83, rush 0.99,
+rec 0.97}, with the comment above it. Nothing else in the module moved, and the closure's set is
+unchanged -- 29 modules, the same names; `hub.models.td_dispersion`, the new gate module, imports
+`components` and is imported by nothing in the closure, so it is not in it, and neither is
+`hub.models.props`.
+
+**Why the arm's figures are unchanged.** Three measurements, each of a different thing.
+
+1. *What the module's other names are.* Parsing `components.py` at `098be9c` (the commit before the
+   change) and in this one, removing every docstring and replacing each call of `fitted`, `chosen`
+   and `not_an_input` by its first argument, the two syntax trees agree (`ast.dump`) for 42 of the
+   43 top-level names; the one that differs is `TD_DISPERSION`.
+2. *What the closure reads from it.* `grep` over `src/` and `scripts/` for `TD_DISPERSION` finds
+   exactly one read by key, `components.phase_draws` (`TD_DISPERSION[phase]`), and a docstring in
+   `hub.models.props`; `phase_draws` is called by `components.sample_weeks` and by
+   `props.stat_draws` only. The same grep for the other names of the sampler (`sample_weeks`,
+   `phase_draws`, `draw_counts`, `draw_touchdowns`, `cmp_nu`, `cmp_pmf`) finds them in
+   `components`, `hub.models.props`, the new `hub.models.td_dispersion` and two docstrings in
+   `hub.models.volume` -- none of them a module of the closure that calls them. Section 4 of
+   `docs/td-count-sampler.md` (#307) reached the same conclusion for the whole sampler.
+3. *A tripwire on the constant itself.* `components.TD_DISPERSION` replaced by a `dict` that raises
+   (and logs the test) on `[]` and `.get`, and the whole of `tests/unit`, `tests/contracts` and
+   `tests/golden` run, except the four files that exercise the sampler on purpose
+   (`test_components.py`, `test_props.py`, `test_td_count_sampler.py`, `test_td_dispersion.py`).
+   TRIPWIRE-RESULT
+   #430's identity test (`tests/unit/test_weekly_projection_move.py`) is among the tests run.
+   No 2026 outcome has been read.
+
+**What did move:** `config_digest` `4fad9f78` -> `839ceda9` and `fitted_digest` `f6b8c28a` ->
+`9f2d0b0c` (recorded in `tests/unit/test_config.py`; restoring the three old values to the live
+constant reproduces both prior values). That is the model version's label and the prop log's
+`version()`, and not a number the arm computes.
+
+**The row now pinned.** `hub.models.components` `d42ac69f7717` (was `75740834610f`); the other 28
+rows are as in the latest table above. Closure digest **`69a09cab8e72c77d`** (was
+`a2a3e8720e86c13b`).

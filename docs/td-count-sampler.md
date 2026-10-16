@@ -209,3 +209,75 @@ Two names entered the digest: `components.TD_YARDS_RHO` (`fitted`) and `componen
 (`chosen`). `fitted_digest` `772d3bba` -> `f6b8c28a`, `config_digest(HubConfig())` `96fee74f` ->
 `4fad9f78`; removing exactly those two names from the live constants reproduces both prior values.
 A ledger entry written before this change is of a different key and is not compared with one after.
+
+## 9. Amended 2026-10-15 (#472): `TD_DISPERSION` refit; sections 3, 5 and 6 restated (prior text kept)
+
+Every table and sentence above stands as the record of #307. `docs/td-dispersion.md` is the
+pre-registration and the result: the gate read **ADOPT** (six of six held-out seasons, +0.0123
+nats of held-out log score per player-week, t interval [+0.011, +0.014]) and
+`components.TD_DISPERSION` is now **pass 0.83, rush 0.99, rec 0.97** (was 0.85, 0.86, 0.83). The
+estimator on 2019-25 reads 0.826 [0.790, 0.868], 0.986 [0.949, 1.027] and 0.971 [0.950, 0.994]; on
+2022-25 alone, 0.844, 0.970 and 0.966, which is section 6's measurement to within the sample
+thresholds. Section 6's first bullet ("`TD_DISPERSION` is not refit") is superseded by this.
+
+### Section 3, the tail table, restated
+
+The same 649 QB/RB/WR/TE player-seasons and 9,426 player-weeks (2022-25, at least 8 games and 8
+points a game), `sample_weeks` on each player-season's own average line, 4,000 draws a line;
+expected weeks at or above each PPR line, summed. The "registered" row is #307's sampler at the
+constants it was registered against, re-measured here (it reproduces #307's "Conway-Maxwell-Poisson,
+given yards" row to the sampling noise: 1,867 / 900 / 399 / 165 / 64 there).
+
+| points | >= 20 | >= 25 | >= 30 | >= 35 | >= 40 |
+|---|---|---|---|---|---|
+| observed | 1912 | 889 | 345 | 136 | 52 |
+| registered constants (0.85 / 0.86 / 0.83 pass / rush / rec), re-measured | 1864.5 | 898.4 | 398.3 | 163.5 | 63.9 |
+| over (+) or under (-) the observed | -2.5% | +1.1% | +15.4% | +20.2% | +22.9% |
+| **refit constants (0.83 / 0.99 / 0.97)** | **1873.1** | **928.3** | **427.9** | **184.3** | **75.6** |
+| over (+) or under (-) the observed | -2.0% | +4.4% | **+24.0%** | **+35.5%** | **+45.4%** |
+
+**The refit does not close the overshoot, it widens it**: 15% -> 24% at 30 points, 20% -> 36% at
+35, 23% -> 45% at 40 (the same sampling noise, a point or two). Section 3's last paragraph asked
+whether a corrected dispersion closes the gap; the answer is no, and the direction is the one the
+mechanism gives: constants nearer Poisson put more mass on two and three touchdowns, and that mass
+is the upper tail of a week's points. The gate scored the count, which the refit predicts better
+in every season, and the pre-registration (`docs/td-dispersion.md`, section 2) named this table
+as descriptive and not the gate; it is reported here because it is what the issue was about. The
+overshoot at 30+ points is therefore **not** a dispersion error: its cause is in the other fitted
+spreads (`PER_UNIT_CV`, `COUNT_DISPERSION`, `TD_YARDS_RHO`), fitted with the touchdowns apart or at
+the old count law, and it is the open item it was, now with one candidate removed.
+
+**`TD_YARDS_RHO` is not refit.** Its fit target is the sampler's own within-player Pearson
+correlation of yards and touchdowns at the observed one. Re-measured on the same player-seasons
+with 4,000 draws a line, at the unchanged `rho`, before -> after the dispersion moved: rec 0.349 ->
+0.349, rush 0.370 -> 0.369, pass 0.478 -> 0.478 (observed 0.349 / 0.372 / 0.477), so the coupling
+still implies the correlation it was fitted to.
+
+### Section 5, the restatement, redone
+
+The lines of section 5's table are not stored with it and its figures do not reproduce from the
+lines it names, so both columns are re-measured here, at one stated line each and 1,000,000
+draws (seed 7): a 12-point WR (4.65 receptions, 53.9 yards, 0.326 touchdowns: the phase's yards
+per reception and `TD_RATE`), the QB line (34 attempts, 250 yards, 1.7 touchdowns) and the RB line
+(16 carries, 68 yards, 0.55 touchdowns, 3 receptions).
+
+| quantity | before (pass 0.85 / rush 0.86 / rec 0.83) | after (0.83 / 0.99 / 0.97) |
+|---|---|---|
+| a WR1's P(3+ receiving touchdowns in a week), mean 0.36 | 0.00133 | 0.00495 (the Poisson: 0.00595) |
+| realised touchdown variance over mean, worst case over means 0.2-6.0 | 0.002% off the constant | 0.003% off the constant |
+| `sample_weeks`, the 12-point WR: sd / skew / median-over-mean / P(>= 30) | 7.166 / 0.811 / 0.904 / 1.77% | 7.345 / 0.924 / 0.892 / 2.17% |
+| `sample_weeks`, the QB line: sd / skew / P(>= 30) | 6.933 / 0.546 / 4.14% | 6.880 / 0.536 / 4.02% |
+| `sample_weeks`, the RB line: sd / skew / median-over-mean / P(>= 30) | 6.771 / 0.823 / 0.922 / 1.84% | 7.017 / 0.946 / 0.903 / 2.34% |
+| sd over sqrt(mean), the 12-point WR (`docs/weekly-spread.md` measured 2.0) | 2.069 | 2.121 |
+| mean of every draw | unchanged | unchanged |
+| `player_pass_tds` P(over 1.5) / P(over 0.5) / sd, the QB line | 0.5214 / 0.8478 / 1.2028 | 0.5232 / 0.8520 / 1.1883 |
+| `player_anytime_td`, a WR (5 receptions, 62 yards, 0.38 touchdowns) | 0.3475 | 0.3259 |
+| `player_anytime_td`, an RB (16 carries, 68 yards, 0.55 touchdowns, 3 receptions, 22 yards, 0.12 touchdowns) | 0.5156 | 0.4912 |
+| yards, receptions, carries and attempts props | | **unchanged for a given seed** (checked: a QB's pass-yards and a WR's receiving-yards price are equal to the last digit) |
+| the draft gate, arm B, the weekly gate and the forward arm | | **unchanged** (section 4; `docs/weekly-forward.md`, 2026-10-15 amendment) |
+
+The anytime prices fall because the rushing and receiving constants went from 0.86 and 0.83 to
+0.99 and 0.97: a narrower law puts more of its mass on exactly one touchdown, so "at least one"
+was priced high. No gate in `src/` reads these, and the prop log is a scorecard; no stored price is
+restated. `config_digest` `4fad9f78` -> `839ceda9`, `fitted_digest` `f6b8c28a` -> `9f2d0b0c`: one
+name moved by value, `components.TD_DISPERSION` (`tests/unit/test_config.py`).

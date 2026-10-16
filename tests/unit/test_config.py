@@ -1110,8 +1110,16 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     two sides of this commit is two prices and the version says so. Removing exactly those two
     names from the live constants reproduces `772d3bba` and, through `config_digest`,
     `96fee74f`, so every other declared constant reproduces its prior value.
+
+    **Moved again 2026-10-15 (#472): `4fad9f78` -> `839ceda9`**, `fitted_digest` `f6b8c28a` ->
+    `9f2d0b0c`, fifty-five covered declarations unchanged. One name moved, by value:
+    `components.TD_DISPERSION` {pass 0.85, rush 0.86, rec 0.83} -> {pass 0.83, rush 0.99,
+    rec 0.97}. **A model change**, on the touchdown draw and so on every touchdown prop price
+    (`docs/td-dispersion.md`): the gate of that document read ADOPT, six of six held-out seasons.
+    Restoring the old three values to the live constants reproduces `f6b8c28a` and `4fad9f78`,
+    so no other declared constant moved.
     """
-    assert config_digest(HubConfig()) == "4fad9f78"
+    assert config_digest(HubConfig()) == "839ceda9"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

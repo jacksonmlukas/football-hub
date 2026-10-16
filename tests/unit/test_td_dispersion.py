@@ -216,7 +216,7 @@ def test_the_week_scored_does_not_enter_its_own_mean():
     got = T.walk_forward(t, ceiling={"rec": 0.9, "rush": 0.9, "pass": 0.9})
     row = got.filter((pl.col("player_id") == "star") & (pl.col("week") == 8))
     m = np.array([(5 - 5 + T.PRIOR_GAMES * rate) / 8])
-    shipped = C.TD_DISPERSION["rec"]
+    shipped = T.INCUMBENT["rec"]
     fit = T.fit_dispersion(past)["rec"]
     want = (T.count_logpmf(np.array([5]), m, fit, T.SCORE_FLOOR)
             - T.count_logpmf(np.array([5]), m, shipped, T.SCORE_FLOOR))[0]
@@ -255,7 +255,7 @@ def test_the_gate_adopts_a_planted_real_improvement():
 def test_the_gate_does_not_adopt_a_null():
     """Truth is the incumbent's own constants: there is nothing to find, and the refit, which
     has to estimate them, cannot be better than them."""
-    truth = dict(C.TD_DISPERSION)
+    truth = dict(T.INCUMBENT)
     t = _seasons(truth, seasons=(2019, 2020, 2021, 2022, 2023), seed=4)
     paired = T.walk_forward(t, ceiling=truth)
     run = T.HARNESS.decide(paired, seed=1, bootstrap=200)
@@ -302,7 +302,7 @@ def test_a_published_run_writes_one_ledger_entry():
 def test_the_simulation_adopts_a_real_improvement_and_not_a_null():
     per_phase = {"rec": 30, "rush": 15, "pass": 8}
     seasons = (2019, 2020, 2021, 2022, 2023)
-    null = T.simulate(dict(C.TD_DISPERSION), per_phase, seasons, 3, seed=10)
+    null = T.simulate(dict(T.INCUMBENT), per_phase, seasons, 3, seed=10)
     wide = T.simulate({"rec": 1.4, "rush": 1.4, "pass": 1.4}, per_phase, seasons, 3, seed=10)
     assert null["adopt"] <= 1 / 3
     assert wide["adopt"] >= 2 / 3
@@ -351,6 +351,7 @@ def test_the_tail_table_counts_weeks_at_each_line_and_restores_the_constants():
     assert r["player_seasons"] == 90 and r["player_weeks"] == 90 * 14
     assert r["observed"][20] >= r["observed"][40]
     assert r["shipped"][20] >= r["shipped"][40]
+    assert r["wide"][30] >= r["shipped"][30]
     assert dict(C.TD_DISPERSION) == before
 
 
