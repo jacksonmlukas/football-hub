@@ -411,7 +411,9 @@ def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cove
     if board is None:
         board, source = readable()
         print(f"  board: {source}")
-    return build(roster_rows(my_team(league_settings().league)), board, _this_week())
+    league = league_settings().league
+    return build(roster_rows(my_team(league), week=getattr(league, "current_week", None)),
+                 board, _this_week())
 
 
 def _this_week() -> WeekGames | None:  # pragma: no cover - network

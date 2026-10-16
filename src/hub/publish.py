@@ -822,9 +822,19 @@ def roster(out: Path | None = None,
     best = set(lk.best_lineup)
     bad = degenerate(df, lk)
 
+    # The other two sources beside `mu` (#492): weekly consensus rank and ESPN's projection for
+    # the scoring period. Null with a reason, never zero, when either is missing.
+    from hub.names import player_key
+    from hub.season import lineup_journal
+    wk = lineup_journal.roster_week(df)
+    ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
+    _, espn_reason = lineup_journal.espn_weekly(df)
+
     rows = []
     for r in df.iter_rows(named=True):
         rows.append({
+            "ecr": ecr_by_key.get(r.get("key") or player_key(r["player"])),
+            "espn_week_proj": r.get("espn_week_proj"),
             "player": r["player"], "pos": r["pos"], "nfl_team": r["nfl_team"],
             "mu": r["mu"], "sd": r["sd"], "projected": r["projected"],
             "starting": r["starting"], "best_start": r["player"] in best,
@@ -848,6 +858,7 @@ def roster(out: Path | None = None,
                         as_of=stamp,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench,
+                        week=wk, ecr_reason=ecr_reason, espn_week_reason=espn_reason,
                         # Why each withheld player is: "bye", "on injured reserve", or ESPN's
                         # missed-games projection (#490). Beside `withheld`, not inside it, so
                         # readers of the list of names are unchanged.
