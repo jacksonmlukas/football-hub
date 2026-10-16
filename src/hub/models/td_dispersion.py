@@ -174,6 +174,8 @@ def fit_interval(table: pl.DataFrame, phase: str, *, seed: int = 0,
     per = ps.group_by("player_id").agg(pl.col("ss").sum(), pl.col("dof").sum(),
                                        pl.col("s").sum(), pl.col("n").sum())
     ss, dof, s, n = (per[c].to_numpy().astype(float) for c in ("ss", "dof", "s", "n"))
+    if per.is_empty():
+        return float("nan"), float("nan")
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, per.height, size=(resamples, per.height))
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -285,7 +287,8 @@ _PLANT_SD = not_an_input({"rec": 0.22, "rush": 0.30, "pass": 0.45},
                          "the shape of a planted table for a simulation; no prediction reads it")
 _PLANT_GRID = not_an_input(0.02, "the grain planted means are rounded to, so the sampler's "
                                  "per-mean solve is shared across players")
-_PLANT_GAMES = not_an_input((8, 17), "the games a planted player-season plays")
+_PLANT_GAMES = not_an_input((8, 17), "the range of games a planted player-season plays, as a "
+                                     "real one does")
 
 
 def planted_table(truth: Mapping[str, float], seasons: Sequence[int],
@@ -475,7 +478,7 @@ def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame]
 
     if a.tails:
         fit = fit_dispersion(phase_table(stats))
-        new = {ph: round(fit[ph], 2) for ph in PHASES}
+        new = {ph: round(fit.get(ph, components.TD_DISPERSION[ph]), 2) for ph in PHASES}
         recent = [s for s in seasons if s >= 2022]
         r = tail_calibration(stats, recent, {"shipped": dict(components.TD_DISPERSION),
                                              "refit": new})
@@ -493,9 +496,18 @@ def main(argv: Sequence[str] | None = None, *, load: Callable[..., pl.DataFrame]
     if paired.is_empty():
         print("no held-out season")
         return 0
+    # Everything that can fail on the data is computed before the Ledger is written, so a
+    # crash cannot leave one entry behind and invite a second run.
+    report = _estimator_report(table)
+    raw = walk_forward(table, floor=_FLOOR, ceiling=dict(components.TD_DISPERSION))
+    by_season = (raw.group_by("season").agg(pl.col("diff").mean()).sort("season"))
+    diag = ["", "The unfloored mean refit-minus-shipped, nats per player-week (a diagnostic; "
+            "the rule reads the floored score):"]
+    diag += [f"  {int(r['season'])}: {r['diff']:+.5f}" for r in by_season.iter_rows(named=True)]
     run = gate_run(paired, publish=True, seasons=seasons, ledger=ledger)
     print("\n".join(run.lines))
-    print("\n".join(_estimator_report(table)))
+    print("\n".join(report))
+    print("\n".join(diag))
     print(f"\n{run.verdict[0]}: {run.verdict[1]}")
     return 0
 

@@ -210,3 +210,25 @@ thousand is scored as one in a thousand. It is applied to both arms and to the c
 identically. The unfloored mean difference is printed beside the verdict as a diagnostic and
 is not read by the rule. Everything else in sections 1-9 stands.
 
+**Amendment 2, 2026-10-15, the power simulation of section 4, run on the module as committed in
+amendment 1 and before any real held-out season was scored.** `uv run python -m hub.models.td_dispersion
+--power --reps 24` (6 workers): 24 planted walk-forwards a scenario, seven planted seasons
+(six held out), 165 / 78 / 36 player-seasons a season in rec / rush / pass, 8-17 games each,
+per-game means from a Gamma typical of the phase, counts drawn by `components.draw_counts`, the
+ceiling arm the planted truth, `experiment.gate` at 200 bootstrap resamples.
+
+| scenario | ADOPT | NOT-RUNNABLE | REMOVE | mean gain | se | MDE | ceiling |
+|---|---|---|---|---|---|---|---|
+| N: truth = the shipped constants | 0/24 | 24/24 | 0/24 | -0.00023 | 0.00024 | 0.00082 | +0.00000 |
+| P: truth = 0.96 / 0.96 / 0.84 (the issue's figures) | 24/24 | 0/24 | 0/24 | +0.00729 | 0.00076 | 0.00258 | +0.00777 |
+
+Read: **the gate has power against the improvement the issue alleges** -- 24 of 24, so a lower
+95% bound of about 0.86 -- and an MDE (0.0026 nats a player-week) a third of the ceiling it is
+alleged to reach. **Under the null the only reachable branch is NOT-RUNNABLE**, because the
+ceiling is zero when the incumbent is the truth: there is nothing to adopt, and the gate says so
+rather than printing a SHOW. Size is zero in 24 (an upper bound of about 0.12). **The honesty
+caveat:** the planted counts have a fixed mean for a player-season, so a planted truth is exactly
+the law that is scored; real counts also move their mean week to week, which the scored law does
+not carry, so the real effect will be smaller than a planted one at the same dispersion. The
+simulation sizes the instrument, not the result. The expected verdict under the issue's claim is
+therefore ADOPT if the claim is right, and not SHOW for want of power.
