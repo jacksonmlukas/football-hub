@@ -196,4 +196,17 @@ secondary tables, and writes the one ledger entry.
 
 ## 10. Amendments (dated; added only before the run)
 
-*(none yet)*
+**Amendment 1, 2026-10-15, after the module was written and its first planted-data smoke test,
+before any real held-out season was scored: the log score is floored at one in a thousand.** The
+section 2 metric as first written is the unfloored log pmf. On a *planted* table (counts drawn at
+a known dispersion; no real outcome read) it was dominated by a handful of weeks: where the mean is
+below `1 - phi` the Conway-Maxwell-Poisson at the constant is the narrowest law there is (#307,
+section 1), a two-touchdown week at a mean of 0.05 has probability about 1e-30 under it, and that
+week scores minus seventy nats. The paired difference between two constants was then mostly the
+question of which one makes such a week impossible, a property of the unreachable region and not of
+the level of the dispersion, and the season mean of it was a few rows. **The metric is now the log
+pmf floored at 1e-3** (`td_dispersion.SCORE_FLOOR`): a count the law calls rarer than one in a
+thousand is scored as one in a thousand. It is applied to both arms and to the ceiling arm
+identically. The unfloored mean difference is printed beside the verdict as a diagnostic and
+is not read by the rule. Everything else in sections 1-9 stands.
+
