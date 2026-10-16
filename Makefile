@@ -51,6 +51,9 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # unreachable the CLI serves last-good and the panel says so, and the rest of the slate is not
 # about your team.
 	-uv run python -m hub.season.roster --write
+# The lineup each source (mu, weekly ECR, ESPN weekly) would set, and what each scored (#492).
+# Optional and idempotent per week: offline or already-journalled, it changes nothing.
+	-uv run python -m hub.season.lineup_journal --record --settle
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
 
 pool:           ## This week's survivor pick priced against the field, across the concentration axis
