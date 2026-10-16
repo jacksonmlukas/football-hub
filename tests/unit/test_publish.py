@@ -2190,3 +2190,18 @@ def test_a_minority_withheld_that_leaves_no_lineup_is_flagged_and_a_thin_roster_
     thin = tmp_path / "thin.parquet"
     _roster_frame([("Chase", "WR", 19.7)]).write_parquet(thin)
     assert isinstance(publish.roster(out=site / "other", path=thin), dict)
+
+
+def test_a_bye_player_is_withheld_with_the_reason_bye(site, tmp_path):
+    """#490: the panel names why a player is withheld, and a bye is not 'unavailable'."""
+    rows = [*_FILLS_EVERY_SLOT, ("Spare", "WR", 5.0)]
+    frame = _roster_frame(rows).with_columns(
+        (pl.col("player") == "Chase").alias("on_bye"))
+    src = tmp_path / "roster.parquet"
+    frame.write_parquet(src)
+    payload = publish.roster(out=site, path=src)
+    assert isinstance(payload, dict)
+    assert "Chase" in payload["withheld"]
+    assert payload["withheld_reasons"] == {"Chase": "bye"}
+    assert [r["on_bye"] for r in payload["rows"] if r["player"] == "Chase"] == [True]
+    assert "Chase" not in payload["start"]

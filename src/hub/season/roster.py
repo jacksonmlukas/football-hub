@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -59,6 +60,56 @@ NOT_STARTING = frozenset({BENCH, INJURED_RESERVE})
 NO_SLATE = frozenset({"D/ST"})
 
 
+class WeekGames(NamedTuple):
+    """What the NFL schedule says about the week the lineup is being set for (#490, #491).
+
+    `bye` are the teams with no game that week; `remaining` is, per team, how many games are
+    still to be played from now (regular season only). Both are keyed by the schedule's own
+    abbreviations (`playoff_sos.canon_team`'s vocabulary), so a roster row joins through the
+    same canon `attach_bye` uses.
+    """
+    week: int
+    bye: frozenset[str]
+    remaining: Mapping[str, int]
+
+
+REGULAR_SEASON_WEEKS = 18
+
+
+def week_games(games: pl.DataFrame, at: datetime | None = None) -> WeekGames | None:
+    """The lineup week and its byes from a schedule frame; None when no week is open.
+
+    The week is the first one with a game still to kick off (`at`, naive UTC), so Thursday
+    night's finished game does not close the week while Sunday's is ahead, and a team that
+    plays Thursday or Monday is *in* the week -- a bye is a team absent from the week's
+    fixtures, not a team without a game on Sunday. A game with no kickoff in the schedule
+    counts as ahead while it has no result. After the regular season there is no bye to name.
+    """
+    from hub.draft.playoff_sos import canon_team
+    moment = at or datetime.now(UTC).replace(tzinfo=None)
+    reg = games.filter(pl.col("week") <= REGULAR_SEASON_WEEKS)
+    has_ko = "kickoff" in reg.columns
+    has_res = "result" in reg.columns
+    ahead_ko = (pl.col("kickoff") > pl.lit(moment)) if has_ko else pl.lit(False)
+    no_ko = pl.col("kickoff").is_null() if has_ko else pl.lit(True)
+    unplayed = pl.col("result").is_null() if has_res else pl.lit(True)
+    ahead = reg.filter(ahead_ko.fill_null(False) | (no_ko & unplayed))
+    if ahead.is_empty():
+        return None
+    week = int(cast(int, ahead["week"].min()))
+
+    def teams(frame: pl.DataFrame) -> list[str]:
+        both = frame["home_team"].to_list() + frame["away_team"].to_list()
+        return [t for t in (canon_team(x) for x in both) if t]
+
+    everyone = set(teams(reg))
+    playing = set(teams(reg.filter(pl.col("week") == week)))
+    remaining: dict[str, int] = dict.fromkeys(everyone, 0)
+    for t in teams(ahead):
+        remaining[t] += 1
+    return WeekGames(week, frozenset(everyone - playing), remaining)
+
+
 def _standard(games: pl.Series) -> float | None:
     """The games-count most voting players share: the mode of the rounded ratios, the larger
     one on a tie. None when nobody voted."""
@@ -71,7 +122,8 @@ def _standard(games: pl.Series) -> float | None:
     return float(cast(float, top[0]))
 
 
-def availability(espn: pl.DataFrame) -> pl.DataFrame:
+def availability(espn: pl.DataFrame,
+                 remaining: Mapping[str, int] | None = None) -> pl.DataFrame:
     """How many games ESPN expects each player to play, and whether that is all of them.
 
     **`injury_status` does not carry suspensions.** Josh Jacobs was served a six-game ban and
@@ -104,6 +156,14 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     This is a **season-level** signal and says nothing about *which* games are missed. It is
     therefore only safe in one direction: a player short of a full slate is not
     presumed available, and no claim is made about when a full-slate player plays.
+
+    **The standard is the schedule's where it is known (#491).** ESPN's total covers the games
+    a player's team still has to play, and a team past its bye has one more of those than a
+    team before it. The roster's mode is therefore a count for *some* of the teams: once most
+    byes have passed it is the post-bye count and every healthy player whose bye is still
+    ahead reads one game short -- withheld, with no lineup. `remaining` (per canonical team,
+    from `week_games`) is what each player's team actually has left; a player whose team is
+    not in it (a free agent, a team the canon does not know) keeps the roster-mode standard.
     """
     if espn.is_empty():
         return espn.with_columns(pl.lit(None, dtype=pl.Float64).alias("espn_games"),
@@ -118,7 +178,14 @@ def availability(espn: pl.DataFrame) -> pl.DataFrame:
     if full is None:                      # ESPN published no projections at all
         return out.with_columns(pl.lit(0, dtype=pl.Int64).alias("missing_games"),
                                 pl.lit(True).alias("available"))
-    missing = (pl.lit(full) - pl.col("espn_games")).round(0)
+    standard = pl.lit(full)
+    if remaining and "nfl_team" in out.columns:
+        from hub.draft.playoff_sos import canon_team
+        left = {t: float(n) for t, n in remaining.items()}
+        own = (pl.col("nfl_team").map_elements(canon_team, return_dtype=pl.Utf8)
+                 .replace_strict(left, default=None, return_dtype=pl.Float64))
+        standard = pl.coalesce(own, standard)
+    missing = (standard - pl.col("espn_games")).round(0)
     if "pos" in out.columns:
         missing = pl.when(pl.col("pos").is_in(sorted(NO_SLATE))).then(0.0).otherwise(missing)
     return out.with_columns(
@@ -168,7 +235,8 @@ def market(joined: pl.DataFrame) -> pl.DataFrame:
                   .with_columns(predict_blend()))
 
 
-def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
+def build(espn: pl.DataFrame, board: pl.DataFrame,
+          week: WeekGames | None = None) -> pl.DataFrame:
     """Attach the board's projection to each rostered player and take its moments.
 
     Joined on `player_key` rather than on ESPN's player id, because the board is built from
@@ -191,7 +259,8 @@ def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
     # projects kickers and defences perfectly happily, so refreshing first and asking after
     # let a D/ST in at 4.6 points and put it in the lineup.
     have = pl.any_horizontal(*[pl.col(c).is_not_null() for c in cols]) if cols else pl.lit(False)
-    scoped = availability(joined).with_columns(have.alias("projected"))
+    scoped = availability(joined, week.remaining if week else None).with_columns(
+        have.alias("projected"))
     out = moments(market(scoped))
     return out.with_columns(
         pl.when(pl.col("projected")).then(pl.col("mu")).otherwise(None).alias("mu"),
@@ -201,7 +270,18 @@ def build(espn: pl.DataFrame, board: pl.DataFrame) -> pl.DataFrame:
         # whether we expect him to play. Three neighbouring ideas with three names: see
         # CONTEXT.md, which keeps them apart on purpose.
         (pl.col("slot") != INJURED_RESERVE).alias("can_start"),
+        _on_bye(week),
     ).sort(["projected", "mu"], descending=[True, True], nulls_last=True)
+
+
+def _on_bye(week: WeekGames | None) -> pl.Expr:
+    """Whether the player's team has no game in the lineup week. False where the schedule is
+    unknown or the team cannot be placed: not knowing is not a bye."""
+    if week is None:
+        return pl.lit(False).alias("on_bye")
+    from hub.draft.playoff_sos import canon_team
+    return (pl.col("nfl_team").map_elements(canon_team, return_dtype=pl.Utf8)
+              .is_in(sorted(week.bye)).fill_null(False).alias("on_bye"))
 
 
 class Lock(NamedTuple):
@@ -252,6 +332,11 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
     # league will not start. Guarded on presence because `roster.parquet` on disk predates
     # the column and the Sunday panel reads it.
     eligible = proj.filter(pl.col("can_start")) if "can_start" in proj.columns else proj
+    # A bye is as mechanical as injured reserve: no game, no points, and `include_unavailable`
+    # is a judgment override that does not reach it (#490). Written by `build` from the week's
+    # schedule; absent on a parquet that predates the column.
+    if "on_bye" in eligible.columns:
+        eligible = eligible.filter(~pl.col("on_bye"))
     pool = eligible if include_unavailable or "available" not in eligible.columns \
         else eligible.filter(pl.col("available"))
     withheld = ([] if pool.height == proj.height
@@ -274,6 +359,16 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
     chosen, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
     return Lock(set_total, best_total, best_total - set_total,
                 sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
+
+
+def withheld_reason(row: Mapping[str, object]) -> str:
+    """Why a player is not startable, in the order the causes are mechanical: injured reserve,
+    then his team's bye, then ESPN's own games projection."""
+    if row.get("slot") == INJURED_RESERVE:
+        return "on injured reserve"
+    if row.get("on_bye"):
+        return "bye"
+    return f"ESPN projects {row.get('missing_games', 0)} missed games"
 
 
 # More than this share of the projected candidates withheld is not a lineup call.
@@ -316,7 +411,20 @@ def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cove
     if board is None:
         board, source = readable()
         print(f"  board: {source}")
-    return build(roster_rows(my_team(league_settings().league)), board)
+    return build(roster_rows(my_team(league_settings().league)), board, _this_week())
+
+
+def _this_week() -> WeekGames | None:  # pragma: no cover - network
+    """The schedule's word on this week, or None -- and a roster without it, said aloud: a
+    sync must not fail for want of a schedule, but it must not pass for having checked byes."""
+    from hub.config import SEASON_AHEAD
+    from hub.schedule import SLATES
+    try:
+        return week_games(SLATES["nfl"](SEASON_AHEAD, None).games)
+    except Exception as e:                       # graceful degradation, per CLAUDE.md
+        print(f"hub.season.roster: schedule unavailable ({e}); byes and games remaining "
+              f"are NOT checked this run", file=sys.stderr)
+        return None
 
 
 def write(df: pl.DataFrame, path: Path | None = None) -> Path:
@@ -394,13 +502,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     if lk.withheld:
         # Per player, because the two reasons are different and the note below is only true
         # of one of them. Printing it over an IR-ed player would explain the wrong thing.
-        why = {r["player"]: ("on injured reserve" if r["slot"] == INJURED_RESERVE
-                             else f"ESPN projects {r['missing_games']} missed games")
-               for r in df.iter_rows(named=True)}
+        why = {r["player"]: withheld_reason(r) for r in df.iter_rows(named=True)}
         print("\n  withheld -- cannot be started this week:")
         for pl_name in lk.withheld:
             print(f"    {pl_name}  ({why.get(pl_name, 'unavailable')})")
-        if any(why.get(n) != "on injured reserve" for n in lk.withheld):
+        if any(why.get(n, "").startswith("ESPN") for n in lk.withheld):
             print("  ESPN's injury field does not carry suspensions; its games projection "
                   "does.")
 

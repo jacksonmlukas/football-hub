@@ -693,3 +693,139 @@ def test_a_write_killed_before_the_replace_leaves_the_last_good_roster_byte_iden
         R.write(newer, p)
     monkeypatch.undo()
     assert p.read_bytes() == before
+
+
+# --- byes (#490) and the games a team still has (#491) -----------------------
+#
+# Eight teams, nine weeks, byes in pairs. Week 6's Sunday is 2026-10-18, as in 2026; the first
+# game of each week is Thursday night and the last is Monday night, so "plays Thursday" and
+# "plays Monday" are both on the schedule and neither is a bye.
+
+from datetime import datetime, timedelta  # noqa: E402
+
+_TEAMS = ["CIN", "MIA", "DAL", "GB", "KC", "LAR", "JAX", "BUF"]
+_BYES = {"CIN": 3, "MIA": 3, "DAL": 4, "GB": 4, "KC": 5, "LAR": 5, "JAX": 9, "BUF": 9}
+_WK6_BYES = _BYES | {"CIN": 6, "MIA": 6, "DAL": 3, "GB": 3}
+
+
+def _sched(byes=None, weeks=9):
+    byes = byes or _BYES
+    rows = []
+    for w in range(1, weeks + 1):
+        sunday = datetime(2026, 10, 18, 17, 0) + timedelta(days=7 * (w - 6))
+        playing = [t for t in _TEAMS if byes.get(t) != w]
+        pairs = list(zip(playing[::2], playing[1::2], strict=True))
+        for i, (h, a) in enumerate(pairs):
+            ko = (sunday - timedelta(days=2, hours=16, minutes=45) if i == 0
+                  else sunday + timedelta(days=1, hours=7, minutes=15) if i == len(pairs) - 1
+                  else sunday)
+            rows.append({"week": w, "home_team": h, "away_team": a, "kickoff": ko,
+                         "result": None})
+    return pl.DataFrame(rows, schema={"week": pl.Int64, "home_team": pl.Utf8,
+                                      "away_team": pl.Utf8, "kickoff": pl.Datetime,
+                                      "result": pl.Float64})
+
+
+def _byes_roster(week, mine, *, total=lambda team, left: 10.0 * left):
+    """`mine` is (name, pos, nfl team, mu); ESPN's total covers the games the team has left
+    from the lineup week, which is how the live payload reads."""
+    players = []
+    for n, pos, team, _ in mine:
+        p = _Player(n, pos, slot=("WR" if pos == "WR" else pos), pro=team)
+        p.projected_avg_points = 10.0
+        p.projected_total_points = total(team, week.remaining.get(team, 12) if week else 12)
+        players.append(p)
+    board = _board(player=[m[0] for m in mine], proj_blend=[m[3] for m in mine],
+                   pos=[m[1] for m in mine])
+    return R.build(E.roster_rows(_Team([], players)), board, week)
+
+
+_WK6 = datetime(2026, 10, 14, 12, 0)             # the Wednesday of week 6, the clock pinned
+_SQUAD6 = [("Ja'Marr Chase", "WR", "CIN", 20.6), ("Denzel Boston", "WR", "DAL", 11.0),
+           ("Rashee Rice", "WR", "KC", 14.9), ("Jordan Love", "QB", "GB", 14.9),
+           ("Mark Andrews", "TE", "BUF", 9.2), ("Jacobs", "RB", "GB", 15.5),
+           ("Tuten", "RB", "DAL", 8.8), ("Collins", "WR", "KC", 14.4),
+           ("McLaurin", "WR", "GB", 10.6)]
+
+
+def test_the_week_six_bye_is_named_and_the_bye_player_is_not_started():
+    """The #490 reproduction: Chase's team has no game in week 6, and the lock started him."""
+    week = R.week_games(_sched(_WK6_BYES), _WK6)
+    assert week is not None and week.week == 6 and week.bye == {"CIN", "MIA"}
+    df = _byes_roster(week, _SQUAD6)
+    lk = R.lock(df)
+    assert "Ja'Marr Chase" not in lk.start and "Ja'Marr Chase" not in lk.best_lineup
+    assert lk.withheld == ["Ja'Marr Chase"]
+    row = df.filter(pl.col("player") == "Ja'Marr Chase").row(0, named=True)
+    assert R.withheld_reason(row) == "bye"
+    # The override is for a number you are declining; a team with no game has no number.
+    assert R.lock(df, include_unavailable=True).withheld == ["Ja'Marr Chase"]
+
+
+def test_without_the_schedule_the_same_roster_starts_him():
+    """The control for the join: the same frame, built without the week, is the defect."""
+    df = _byes_roster(None, _SQUAD6)
+    assert "Ja'Marr Chase" in R.lock(df).best_lineup
+
+
+def test_a_thursday_or_monday_team_is_in_the_week_not_on_bye():
+    sched = _sched(_WK6_BYES)
+    wk6 = sched.filter(pl.col("week") == 6).sort("kickoff")
+    thursday, monday = wk6.row(0, named=True), wk6.row(-1, named=True)
+    # Friday morning, after Thursday night's kickoff: the week is still week 6.
+    week = R.week_games(sched, datetime(2026, 10, 16, 9, 0))
+    assert week is not None and week.week == 6
+    assert {thursday["home_team"], thursday["away_team"],
+            monday["home_team"], monday["away_team"]}.isdisjoint(week.bye)
+    # Thursday's game is behind us, so it is not "still to play" -- but he is not on bye.
+    assert week.remaining[thursday["home_team"]] == 3
+
+
+def test_the_week_rolls_after_monday_night_and_the_old_bye_team_plays():
+    sched = _sched(_WK6_BYES | {"JAX": 7, "BUF": 7})
+    week = R.week_games(sched, datetime(2026, 10, 20, 12, 0))
+    assert week is not None and week.week == 7 and week.bye == {"JAX", "BUF"}
+
+
+def test_no_open_week_names_no_bye():
+    assert R.week_games(_sched(), datetime(2027, 1, 1)) is None
+
+
+def test_a_team_the_schedule_cannot_place_is_not_on_bye():
+    week = R.week_games(_sched(), _WK6)
+    df = _byes_roster(week, [("Ja'Marr Chase", "WR", "", 20.6)])
+    assert not df["on_bye"][0]
+
+
+# #491: ESPN's total covers the games a team has left, and a team past its bye has one more.
+
+def test_a_player_whose_bye_is_ahead_is_not_short_of_a_slate_the_roster_mode_invented():
+    """Six of eight teams are past their bye in week 6, so the roster mode is the post-bye
+    count and the one healthy JAX player reads one game short. Withheld by the old standard;
+    available by the schedule's. The CIN player is the one after his bye."""
+    week = R.week_games(_sched(), _WK6)
+    assert week is not None and week.remaining["CIN"] == 4 and week.remaining["JAX"] == 3
+    squad = [("Ja'Marr Chase", "WR", "CIN", 20.6), ("Rashee Rice", "WR", "KC", 14.9),
+             ("Jacobs", "RB", "GB", 15.5), ("Tuten", "RB", "MIA", 8.8),
+             ("Mark Andrews", "TE", "JAX", 9.2)]
+
+    def espn_total(team, _left):
+        return 10.0 * week.remaining[team]
+
+    by_mode = _byes_roster(None, squad, total=espn_total)
+    assert not by_mode.filter(pl.col("player") == "Mark Andrews")["available"][0]
+    df = _byes_roster(week, squad, total=espn_total)
+    got = dict(zip(df["player"], df["available"], strict=True))
+    assert got["Mark Andrews"], "healthy, bye ahead"
+    assert got["Ja'Marr Chase"], "healthy, bye behind"
+    assert R.lock(df).withheld == []
+
+
+def test_a_suspension_is_still_caught_against_the_schedules_standard():
+    week = R.week_games(_sched(), _WK6)
+    assert week is not None
+    squad = [("Ja'Marr Chase", "WR", "CIN", 20.6), ("Mark Andrews", "TE", "JAX", 9.2)]
+    df = _byes_roster(week, squad,
+                      total=lambda team, left: 10.0 * (left - (2 if team == "JAX" else 0)))
+    got = dict(zip(df["player"], df["missing_games"], strict=True))
+    assert got == {"Ja'Marr Chase": 0, "Mark Andrews": 2}
