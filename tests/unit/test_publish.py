@@ -220,6 +220,9 @@ def test_the_record_carries_the_weekly_interval_coverage(site, base, monkeypatch
     assert isinstance(got, dict)
     assert got["interval_coverage"]["verdict"] == "UNDER-COVERS"
     assert got["interval_coverage"]["centre"] == "prior"
+    assert got["interval_coverage"]["about"] == "player_weeks"          # #507
+    assert got["game_band"]["kind"] == "fixed_normal"
+    assert got["game_band"]["half_width"] == pytest.approx(16.33)
     on_page = json.loads((site / "track_record.json").read_text())
     assert on_page["interval_coverage"]["gate_cov80"] == pytest.approx(0.774)
 
