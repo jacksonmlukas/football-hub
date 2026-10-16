@@ -1,0 +1,137 @@
+{
+ "captured_at": "2026-10-16T15:20:18.474938",
+ "rows": [
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 2.5,
+   "close_total": 42.5,
+   "game_id": "2026_06_HOU_JAX",
+   "polls_unmoved": 1,
+   "spread_price": -115.00000000000001,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -1.0,
+   "close_total": 52.0,
+   "game_id": "2026_06_CHI_ATL",
+   "polls_unmoved": 2,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-15T15:31:17.765559"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -3.5,
+   "close_total": 41.0,
+   "game_id": "2026_06_BAL_CLE",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -107.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -3.5,
+   "close_total": 39.0,
+   "game_id": "2026_06_CAR_PHI",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 7.0,
+   "close_total": 44.5,
+   "game_id": "2026_06_TEN_IND",
+   "polls_unmoved": 4,
+   "spread_price": -105.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-12T20:01:21.836177"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 7.0,
+   "close_total": 43.5,
+   "game_id": "2026_06_NYJ_NE",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -0.0,
+   "close_total": 46.0,
+   "game_id": "2026_06_NO_NYG",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -2.5,
+   "close_total": 39.5,
+   "game_id": "2026_06_PIT_TB",
+   "polls_unmoved": 2,
+   "spread_price": -105.0,
+   "total_price": -105.0,
+   "unmoved_since": "2026-10-15T15:31:17.765559"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 12.5,
+   "close_total": 51.5,
+   "game_id": "2026_06_ARI_LA",
+   "polls_unmoved": 4,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-12T20:01:21.836177"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": -4.5,
+   "close_total": 53.5,
+   "game_id": "2026_06_BUF_LV",
+   "polls_unmoved": 3,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-14T15:41:52.312630"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 8.0,
+   "close_total": 41.5,
+   "game_id": "2026_06_LAC_KC",
+   "polls_unmoved": 1,
+   "spread_price": -109.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 1.0,
+   "close_total": 53.0,
+   "game_id": "2026_06_DAL_GB",
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  },
+  {
+   "captured_at": "2026-10-16T15:20:18.474938",
+   "close_spread": 7.5,
+   "close_total": 51.5,
+   "game_id": "2026_06_WAS_SF",
+   "polls_unmoved": 1,
+   "spread_price": -107.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-16T15:20:18.474938"
+  }
+ ],
+ "season": 2026,
+ "week": 6
+}
