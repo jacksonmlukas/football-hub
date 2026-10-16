@@ -544,7 +544,7 @@ function trackRecordBody(tr) {
   // The other half of the record (#289, #293): whether the weekly player interval covers
   // what it claims, and where the survivor price holds by spread. Null when no measurement
   // has been committed, and then the record renders without it rather than not at all.
-  const coverage = intervalCoverageBody(tr.interval_coverage);
+  const coverage = gameBandNote(tr.game_band) + intervalCoverageBody(tr.interval_coverage);
 
   // The framing, which decides how everything under it is read and is the whole of what
   // this panel withholds. `n_preregistered` is counted from the commit history (#422): 0 until a
@@ -600,6 +600,15 @@ function trackRecordBody(tr) {
        scored on its own curve.</p>` : "") + coverage;
 }
 
+// The game margin's band (#507): fixed and normal, not fitted to games and not conformalised,
+// so no coverage figure on this record is about it. Null before the publisher carried it.
+function gameBandNote(gb) {
+  if (!gb || gb.half_width == null) return "";
+  return `<p class="legend">Game margin: a fixed normal ${esc(pct(gb.level))} band of
+    ±${esc(fmt(gb.half_width, 2))} points (${esc(fmt(gb.z, 4))} × ${esc(fmt(gb.sd, 3))}),
+    not conformalised and not scored for coverage here.</p>`;
+}
+
 // The weekly interval's coverage and the survivor price by spread bucket, under the
 // calibration curve (#289, #293). `ic` is `hub.models.coverage.published_summary` as the
 // publisher wrote it into `track_record.json`: the last *committed* measurement, not a
@@ -633,7 +642,11 @@ function intervalCoverageBody(ic) {
   const auditNote = ic.audit
     ? " Audit look " + ic.audit.look + " of " + ic.audit.looks + ": " + ic.audit.marginal + "."
     : " The binding verdict is taken at audits; none has been taken yet.";
-  const weekly = `<p class="legend">Weekly interval, labelled 80%: covers ${esc(pct(ic.gate_cov80))}
+  // What the figure is about (#507): player-weeks of the QB/RB/WR/TE projection, never games.
+  // This sits on the game record, so the sentence names its own unit instead of borrowing the
+  // page's. An artifact from before the publisher's `about` field is player-weeks all the same.
+  const weekly = `<p class="legend">Player-week interval (the weekly player projection, not game
+    margins), labelled 80%: covers ${esc(pct(ic.gate_cov80))}
     of ${esc(pop)} against the claimed ${esc(pct(ic.gate_claim))}
     (±${esc(pct(ic.band))}) — this week's read ${esc(ic.verdict)}, measured ${esc(ic.generated_at)}.${esc(auditNote)}</p>`;
   // The current season's completed weeks, beside the backtest and never pooled with it (#423):

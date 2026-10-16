@@ -652,6 +652,14 @@
       "min_bucket": 50,
       "key": "e4a71ee41a94",
       "generated_at": "2026-10-10T18:24:25+00:00"
-    }
+    },
+    "about": "player_weeks"
+  },
+  "game_band": {
+    "kind": "fixed_normal",
+    "level": 0.8,
+    "sd": 12.741,
+    "z": 1.2816,
+    "half_width": 16.33
   }
 }
