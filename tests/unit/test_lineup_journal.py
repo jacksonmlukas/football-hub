@@ -186,3 +186,48 @@ def test_an_unreadable_capture_degrades_to_a_reason(tmp_path, bad):
     p.write_text(bad)
     ranks, reason = J.ecr_ranks(SEASON, WEEK, tmp_path / "cons")
     assert ranks == {} and reason is not None and "unreadable" in reason
+
+
+# --- the CLI -------------------------------------------------------------------
+
+def test_the_cli_records_a_week_and_a_second_run_leaves_it(tmp_path, capsys):
+    roster = tmp_path / "roster.parquet"
+    _roster().write_parquet(roster)
+    args = ["--record", "--roster", str(roster), "--out", str(tmp_path / "j")]
+    assert J.main(args) == 0
+    assert J.main(args) == 0
+    out = capsys.readouterr().out
+    assert "journalled" in out and "already journalled" in out
+    assert len(J.read(J.SEASON_AHEAD, tmp_path / "j")) == 1
+
+
+def test_the_cli_without_a_roster_says_so_and_fails(tmp_path, capsys):
+    assert J.main(["--record", "--roster", str(tmp_path / "nope.parquet")]) == 1
+    assert "no roster" in capsys.readouterr().err
+
+
+def test_the_cli_settles_only_weeks_the_roster_has_moved_past(tmp_path, monkeypatch):
+    season = J.SEASON_AHEAD
+    base = tmp_path / "j"
+    for wk in (6, 7):
+        J.record(_roster(week=wk), season=season, week=wk, base=base, captures=tmp_path / "x")
+    roster = tmp_path / "roster.parquet"
+    _roster(week=7).write_parquet(roster)
+    monkeypatch.setattr(J, "_realised_points", lambda s, w: {player_key("Qa One"): 20.0})
+    assert J.main(["--settle", "--roster", str(roster), "--out", str(base)]) == 0
+    scored = {d["week"]: d["scored"] for d in J.read(season, base)}
+    assert scored == {6: True, 7: False}, "week 7 is the current week: not final yet"
+
+
+def test_a_failed_realised_read_leaves_the_week_unscored(tmp_path, monkeypatch, capsys):
+    base = tmp_path / "j"
+    J.record(_roster(week=6), season=J.SEASON_AHEAD, week=6, base=base, captures=tmp_path / "x")
+    roster = tmp_path / "roster.parquet"
+    _roster(week=7).write_parquet(roster)
+
+    def boom(s, w):
+        raise OSError("offline")
+    monkeypatch.setattr(J, "_realised_points", boom)
+    assert J.main(["--settle", "--roster", str(roster), "--out", str(base)]) == 0
+    assert J.read(J.SEASON_AHEAD, base)[0]["scored"] is False
+    assert "not settled" in capsys.readouterr().err

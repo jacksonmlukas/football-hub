@@ -41,6 +41,7 @@ import polars as pl
 
 from hub import atomic
 from hub.config import SEASON_AHEAD
+from hub.declare import not_an_input
 from hub.names import player_key
 from hub.paths import ROSTER_PARQUET, STATE_DIR
 
@@ -49,7 +50,9 @@ SOURCES = ("mu", "ecr", "espn")
 
 # ECR is a rank (lower is better) and the lineup search maximises a total, so the search is
 # handed a score that falls as the rank rises. The constant only has to exceed any rank.
-_RANK_CEILING = 1000.0
+_RANK_CEILING = not_an_input(
+    1000.0, "an offset turning a rank (lower is better) into a score to maximise; any value "
+            "above the largest rank gives the same lineup")
 
 
 def journal_path(season: int, week: int, base: Path | None = None) -> Path:
@@ -231,28 +234,33 @@ def _realised_points(season: int, week: int) -> dict[str, float]:  # pragma: no 
     return {r["player"]: float(r["points"]) for r in got.iter_rows(named=True)}
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin CLI
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="hub.season.lineup_journal")
     ap.add_argument("--record", action="store_true", help="journal this week's three lineups")
     ap.add_argument("--settle", action="store_true",
                     help="write realised points for journalled weeks that have finished")
+    ap.add_argument("--roster", default=None, help="override the roster parquet read")
+    ap.add_argument("--out", default=None, help="override the journal directory")
     a = ap.parse_args(list(argv) if argv is not None else None)
     if not (a.record or a.settle):
         ap.error("say --record, --settle, or both")
-    if not ROSTER_PARQUET.exists():
-        print("hub.season.lineup_journal: no roster.parquet; nothing to do", file=sys.stderr)
-        return 0
-    df = pl.read_parquet(ROSTER_PARQUET)
+    src = Path(a.roster) if a.roster else ROSTER_PARQUET
+    base = Path(a.out) if a.out else None
+    if not src.exists():
+        print(f"hub.season.lineup_journal: no roster at {src}; run "
+              "`python -m hub.season.roster --write` first", file=sys.stderr)
+        return 1
+    df = pl.read_parquet(src)
     if a.record:
-        print(f"  {record(df)[1]}")
+        print(f"  {record(df, base=base)[1]}")
     if a.settle:
         current = roster_week(df)
-        for doc in read(SEASON_AHEAD):
+        for doc in read(SEASON_AHEAD, base):
             wk = int(doc["week"])
             if doc.get("scored") or current is None or wk >= current:
                 continue          # a week is final only once the roster has moved past it
             try:
-                print(f"  {settle(SEASON_AHEAD, wk, _realised_points(SEASON_AHEAD, wk))}")
+                print(f"  {settle(SEASON_AHEAD, wk, _realised_points(SEASON_AHEAD, wk), base)}")
             except Exception as e:                   # offline: the entry stays unscored
                 print(f"  week {wk}: not settled ({type(e).__name__}: {e})", file=sys.stderr)
     return 0
