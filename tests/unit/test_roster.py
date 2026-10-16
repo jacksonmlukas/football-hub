@@ -836,3 +836,48 @@ def test_the_withheld_reason_names_the_mechanical_cause_before_espns_projection(
     assert R.withheld_reason({"slot": "WR", "on_bye": True}) == "bye"
     assert R.withheld_reason({"slot": "WR", "on_bye": False, "missing_games": 6}) \
         == "ESPN projects 6 missed games"
+
+
+def test_espns_spellings_are_not_read_as_a_bye_against_the_schedules():
+    """ESPN says LAR, WSH, JAC; nflverse says LA, WAS, JAX. A join on the raw strings would
+    find no game for three teams that play -- a bye for each, and a roster of withheld."""
+    teams = ["CIN", "MIA", "DAL", "KC", "LA", "WAS", "JAX", "GB"]
+    rows = []
+    for w in range(1, 10):
+        playing = [t for t in teams if not (w == 6 and t in ("LA", "WAS"))]
+        rows += [{"week": w, "home_team": h, "away_team": a,
+                  "kickoff": datetime(2026, 10, 18, 17, 0) + timedelta(days=7 * (w - 6)),
+                  "result": None} for h, a in zip(playing[::2], playing[1::2], strict=True)]
+    sched = pl.DataFrame(rows, schema={"week": pl.Int64, "home_team": pl.Utf8,
+                                       "away_team": pl.Utf8, "kickoff": pl.Datetime,
+                                       "result": pl.Float64})
+    week = R.week_games(sched, _WK6)
+    assert week is not None and week.bye == {"LA", "WAS"}
+    squad = [("Ja'Marr Chase", "WR", "LAR", 20.6), ("Rashee Rice", "WR", "WSH", 14.9),
+             ("Jordan Love", "QB", "JAC", 14.9), ("Mark Andrews", "TE", "CIN", 9.2)]
+    df = _byes_roster(week, squad)
+    got = dict(zip(df["player"], df["on_bye"], strict=True))
+    assert got == {"Ja'Marr Chase": True, "Rashee Rice": True, "Jordan Love": False,
+                   "Mark Andrews": False}
+
+
+def test_a_roster_parquet_written_before_on_bye_existed_still_locks():
+    df = _byes_roster(None, _SQUAD6).drop("on_bye")
+    assert "on_bye" not in df.columns
+    lk = R.lock(df)
+    assert lk.gain is not None and "Ja'Marr Chase" in lk.best_lineup
+
+
+def test_a_schedule_standard_that_withholds_everyone_is_not_a_lineup_call():
+    """The planted failure for #491: if ESPN's games disagreed with the schedule for the
+    whole roster, every player would read short. `lock` withholds them (no lineup), and
+    `degenerate` is what makes that heard -- never a silent empty lineup."""
+    week = R.week_games(_sched(_WK6_BYES), _WK6)
+    assert week is not None
+    # Every team has two to four games left here; ESPN says one for all of them.
+    df = _byes_roster(week, [m for m in _SQUAD6 if m[2] != "CIN"],
+                      total=lambda team, left: 10.0)
+    assert not df["available"].any()
+    lk = R.lock(df)
+    assert lk.gain is None and lk.best_lineup == []
+    assert (why := R.degenerate(df, lk)) is not None and "withheld" in why
