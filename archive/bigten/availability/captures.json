@@ -138,5 +138,33 @@
   "bytes": 13473,
   "path": "2026/w07/2026-10-15T0130Z.parquet",
   "new_content": true
+ },
+ {
+  "deadline": "2026-10-16T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-16T06:08:41+00:00",
+  "season": 2026,
+  "kind": "page",
+  "url": "https://bigten.org/fb/availability-reports/",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "4814b76d3a0e98c2ccb7c81cffad8ca8bb6b69b3b1533c15eb5449b29841338d",
+  "bytes": 388604,
+  "path": "availability/2026/page/4814b76d3a0e98c2.html",
+  "new_content": true
+ },
+ {
+  "deadline": "2026-10-16T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-16T06:08:41+00:00",
+  "season": 2026,
+  "kind": "lines",
+  "url": "cfbd:/lines?year=2026&week=7",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "0beee00cb73b1e6fb21ebcd4ac94241a00ee8e24f979e82d9aeb429eb8e63da9",
+  "bytes": 13643,
+  "path": "2026/w07/2026-10-16T0130Z.parquet",
+  "new_content": true
  }
 ]
