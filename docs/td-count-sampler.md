@@ -281,3 +281,138 @@ The anytime prices fall because the rushing and receiving constants went from 0.
 was priced high. No gate in `src/` reads these, and the prop log is a scorecard; no stored price is
 restated. `config_digest` `4fad9f78` -> `839ceda9`, `fitted_digest` `f6b8c28a` -> `9f2d0b0c`: one
 name moved by value, `components.TD_DISPERSION` (`tests/unit/test_config.py`).
+
+## 10. Amended 2026-10-15 (#473): the 30+/35+/40+ overshoot, diagnosed; no constant is refit (prior text kept)
+
+Sections 3 and 9 stand as the record of what was measured. Section 9's last paragraph says the
+overshoot "is in the other fitted spreads (`PER_UNIT_CV`, `COUNT_DISPERSION`, `TD_YARDS_RHO`)".
+That sentence is **superseded** by this section; it is the diagnosis #473 asked for, run before any
+refit was designed. **It is in-sample throughout** (the 649 QB/RB/WR/TE player-seasons, 9,426
+player-weeks, 2022-25, each sampled on its own season-average line); nothing here is held out and
+nothing here is a gate. All figures were measured on a copy of `data/` made into a worktree for the
+purpose (the scripts are one-shot and live outside the repo; the procedure is stated so it can be
+rerun).
+
+### 10.1 The table's own method reads high when the sampler is exactly right
+
+A control (`docs/method.md` rule 18) the table never had: plant weeks whose truth *is* the shipped
+sampler, on the real lines (`phase_draws` per player-season, as many weeks as the player played),
+take the average line of the planted weeks, and read the same table. Eight independent plants:
+
+| points | >= 20 | >= 25 | >= 30 | >= 35 | >= 40 |
+|---|---|---|---|---|---|
+| table, real data (section 9, refit constants) | -2.0% | +4.4% | **+24.0%** | **+35.5%** | **+45.4%** |
+| table, truth = the shipped sampler (mean of 8 plants; sd across plants) | +2.1% (0.7) | +6.4% (2.5) | **+11.1%** (4.5) | **+20.3%** (5.0) | **+32.3%** (13.4) |
+| real minus planted-null | -4 | -2 | +13 | +15 | +13 (1 sd) |
+
+So roughly half of the 30+ and 35+ overshoot, and all of the 40+ one to within its noise, is the
+method: the line is the average of the very weeks it is then asked to explain, and the tail
+probability is convex in the line. (The two candidate causes, self-inclusion and convexity in a
+noisy mean, are not separated here.) What the sampler does overshoot is **about 13-15% at 30 and
+35 points, with 20-25 slightly under**: a shape that is lighter-tailed than the sampler's.
+
+### 10.2 The variance constants are not the fault
+
+Pooled within-player-season moments, observed against the sampler at the same lines (4,000 draws a
+line), per phase: the constants already reproduce the observed spreads.
+
+| phase | units var/mean obs / sim | yards variance sim over obs | TD var/mean obs / sim | corr(units, yards) obs / sim | corr(yards, TDs) obs / sim |
+|---|---|---|---|---|---|
+| pass (142 player-seasons) | 2.67 / 2.45 | 0.95 | 0.84 / 0.83 | 0.71 / 0.84 | 0.47 / 0.47 |
+| rush (219) | 2.11 / 2.38 | 1.05 | 0.97 / 0.99 | 0.72 / 0.72 | 0.36 / 0.38 |
+| rec (453) | 1.19 / 1.20 | 1.01 | 0.96 / 0.97 | 0.76 / 0.82 | 0.35 / 0.35 |
+
+The yards-per-unit CV implied by the observed within-player yards variance (given the observed
+unit variance) is 1.01 / 1.51 / 0.77 against `PER_UNIT_CV` 1.00 / 1.47 / 0.76. The one visible miss
+is rush `COUNT_DISPERSION`, 2.39 against 2.11 observed.
+
+### 10.3 Where it sits: the unit counts' upper tail
+
+Swapping one component of the sampler for the player's own observed weeks, in the causal order
+units, then yards given units, then touchdowns given yards, on the same lines (8,000 draws a line;
+a node is "units / yards / touchdowns", `e` observed weeks resampled whole, `s` simulated):
+
+| node (U, Y, T) | >= 30 | >= 35 | >= 40 |
+|---|---|---|---|
+| observed | 345 | 136 | 52 |
+| `sss`, the sampler | 429 | 186 | 76 |
+| `ess`, units observed | 388 | 158 | 61 |
+| `ees`, units and yards observed | 367 | 139 | 50 |
+| `eee`, everything observed (the benchmark) | 335 | 135 | 50 |
+
+The benchmark is itself 3% under the observed (resampling a player's ~15 weeks shrinks the variance
+by (n-1)/n), so every step carries a floor, measured by running the same chain on the two planted
+nulls of 10.1 (weeks at 30 / 35 / 40; two plants):
+
+| step, weeks removed | real data | planted null (the floor) | net |
+|---|---|---|---|
+| units, >= 30 / 35 / 40 | 40.0 / 28.6 / 15.5 | 11.7-15.4 / 6.9-10.0 / 5.6-6.8 | **+25 / +20 / +9** |
+| yards given units | 21.0 / 18.6 / 11.6 | 8.6-11.5 / 10.7-11.2 / 6.3-8.1 | +11 / +8 / +4 |
+| touchdowns given yards | 32.2 / 5.7 / -0.2 | 7.4-31.7 / 10.2-16.4 / 17.2-20.6 | not resolved: the floor spans the real figure at 30 and exceeds it at 35 and 40 |
+
+**The excess the sampler carries over the floor is in the unit counts, then in yards given units.
+The touchdown step is not resolved at 30+ and is zero or negative at 35+ and 40+; neither
+`TD_DISPERSION` nor `TD_YARDS_RHO` is where it is.** The component marginals say the same thing,
+observed against sampler, real minus the planted-null overshoot of the same cut:
+
+| cut | real over | net of the null |
+|---|---|---|
+| pass attempts >= 45 / >= 50 | +39% / +49% | +30% / +40% |
+| rush carries >= 25 / >= 30 | +26% / +90% | +17% / +76% |
+| rec receptions >= 10 / >= 12 | +14% / +15% | +10% / +6% |
+| pass yards >= 350 / >= 400 | +45% / +119% | +33% / +99% |
+| rec yards >= 125 / >= 150 | +14% / +27% | +11% / +16% |
+| rush TDs >= 3 | +52% | +44% (rare: about 33 observed weeks) |
+| pass TDs >= 2, 3; rush TDs >= 1, 2; rec TDs >= 1 | within +-5% | within +-5% |
+
+The count law at a matched variance has a heavier upper tail than the games do: a negative
+binomial with variance over mean 2.4 puts mass on 50 attempts and 30 carries that real games, which
+a score and a clock bound, do not reach. The variance is right (10.2) and the tail is not, which is
+a property of the family and not of its constant. The yards inherit it (a Gamma compounded on the
+count).
+
+### 10.4 No constant fixes it
+
+`COUNT_DISPERSION - 1` scaled by k and `PER_UNIT_CV` by c, expected weeks at 20 / 25 / 30 / 35 / 40
+(3,000 draws a line), against the observed scaled by the planted-null overshoot of 10.1 (the
+target: 1952 / 946 / 383 / 164 / 69):
+
+| k, c | >= 20 | >= 25 | >= 30 | >= 35 | >= 40 |
+|---|---|---|---|---|---|
+| 1.00, 1.00 (shipped) | 1874 | 928 | 427 | 186 | 77 |
+| 0.75, 0.90 | 1848 | 896 | 405 | 171 | 68 |
+| 0.50, 0.90 | 1825 | 879 | 390 | 162 | 64 |
+| 0.50, 0.80 | 1816 | 865 | 379 | 156 | 60 |
+
+The settings that reach the 30+ targets halve the unit overdispersion that 10.2 shows is right and
+leave 20 and 25 points 6-7% **under**: a constant that cuts the tail cuts the middle with it. A
+gated refit of `PER_UNIT_CV` or `COUNT_DISPERSION` on tail calibration would adopt a trade, not a
+repair, and a refit on the held-out log score of weekly points would be fitting the same two
+numbers to a family whose tail is the wrong shape. **No refit is registered, run or adopted;**
+`PER_UNIT_CV`, `COUNT_DISPERSION`, `TD_DISPERSION` and `TD_YARDS_RHO` are unchanged, nothing in
+`src/` moves, `config_digest` is `839ceda9` as before, and the forward arm is not touched.
+
+### 10.5 The controls (rule 18)
+
+The decomposition was run on planted weeks with the excess put in one component (truth sampler =
+shipped, except the one named), chain steps at weeks removed, >= 30:
+
+| planted | units | yards given units | touchdowns given yards |
+|---|---|---|---|
+| nothing (two plants) | 11.7-15.4 | 8.6-11.5 | 7.4-31.7 |
+| truth units Poisson (`COUNT_DISPERSION` 1.0) | **70.9** | 10.9 | 23.3 |
+| truth yards-per-unit CV halved | 10.8 | **46.0** | 21.4 |
+| truth touchdowns drawn apart from yards (`TD_YARDS_RHO` 0) | 17.8 | 12.6 | **113.3** |
+
+Each planted component takes the largest share, and the other two stay in the null band. The first
+design of the decomposition scored touchdowns observed against yards simulated as a node, which
+carried the sampler's own coupling into the "observed" touchdowns; the touchdown plant was then split
+between yards and touchdowns (58 and 53 weeks). The control caught it, and the chain above, which
+only observes touchdowns once the yards are observed, is the replacement.
+
+### 10.6 What is open
+
+The family of the unit counts: an overdispersed law with a bounded upper tail (as #307 replaced a
+binomial of a ceiling with the Conway-Maxwell-Poisson for the touchdown count), scored on held-out
+weekly units, is its own gated change and is not a constant refit. Any further claim about the
+tail should be made with a leave-one-out line, not the season average the weeks were part of.
