@@ -403,6 +403,7 @@ def _record_body(node: str, tr: dict) -> str:
         _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}"),
         _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
         _lift(r"function trackRecordBody\(tr\) \{[\s\S]*?\n\}"),
+        _lift(r"function gameBandNote\(gb\) \{[\s\S]*?\n\}"),
         _lift(r"function intervalCoverageBody\(ic\) \{[\s\S]*?\n\}"),
     ])
     return _run(node, f"{lifted}\nconsole.log(trackRecordBody({json.dumps(tr)}));")
@@ -441,6 +442,24 @@ def test_the_record_shows_the_interval_claim_beside_its_verdict(node):
     out = _record_body(node, dict(PER_SEASON, interval_coverage=COVERAGE))
     assert "77.4%" in out and "77.0%" in out and "COVERS" in out
     assert "labelled 80%" in out and "10,536" in out
+
+
+GAME_BAND = {"kind": "fixed_normal", "level": 0.8, "sd": 12.741, "z": 1.2816, "half_width": 16.33}
+
+
+def test_player_interval_coverage_is_labelled_as_player_weeks_not_games(node):
+    """#507: the 77.4% is n player-weeks of the QB/RB/WR/TE projection, on a page about games.
+    The line names its unit, and the game margin's own band is stated as fixed and normal."""
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=COVERAGE, game_band=GAME_BAND))
+    assert "Player-week interval" in out and "not game" in out and "77.4%" in out
+    assert "Weekly interval" not in out
+    assert "fixed normal 80.0% band" in out and "±16.33" in out
+    assert "not conformalised" in out
+
+
+def test_a_record_without_a_game_band_still_renders(node):
+    out = _record_body(node, dict(PER_SEASON, interval_coverage=COVERAGE))
+    assert "Player-week interval" in out and "fixed normal" not in out
 
 
 def test_the_record_says_a_whole_board_figure_is_over_the_whole_board(node):
@@ -504,7 +523,7 @@ def test_a_record_with_no_coverage_measurement_still_renders(node):
     """The committed `track_record.json` carries `interval_coverage: null` until the slate
     next runs; the record must render its calibration without it."""
     out = _record_body(node, dict(PER_SEASON, interval_coverage=None))
-    assert "<svg" in out and "Weekly interval" not in out and "spread" not in out
+    assert "<svg" in out and "Player-week interval" not in out and "spread" not in out
 
 
 def test_the_coverage_block_escapes_its_interpolations():

@@ -563,9 +563,29 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # of player-weeks -- and it is None when none has been made, which is the graceful
         # degradation `CLAUDE.md` requires: a missing research artifact drops a field, it
         # does not take the page down.
-        interval_coverage=coverage.published_summary(),
+        interval_coverage=_about_player_weeks(coverage.published_summary()),
+        # What bounds a *game*, said so the page need not infer it from the player block
+        # above (#507): the margin is not conformalised, its 80% band is the fixed normal one.
+        game_band=_game_band(),
     )
     return _publish(out, "track_record", payload, count_key="n_scored")
+
+
+def _about_player_weeks(ic: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Stamp the coverage block with what it measures (#507).
+
+    `hub.models.coverage` scores the weekly player projection (n = player-weeks), not a game.
+    The record that carries it is a game record, so the block says what it is about and the
+    page labels the figure from this field rather than from its position on the page.
+    """
+    return None if ic is None else {**ic, "about": "player_weeks"}
+
+
+def _game_band() -> dict[str, Any]:
+    """The game margin's interval: a fixed normal band, not a fitted or conformal one (#507)."""
+    from hub.models.market import MARGIN_SD, Z_80
+    return {"kind": "fixed_normal", "level": 0.8, "sd": MARGIN_SD, "z": Z_80,
+            "half_width": round(Z_80 * MARGIN_SD, 2)}
 
 
 class _Registration(NamedTuple):
