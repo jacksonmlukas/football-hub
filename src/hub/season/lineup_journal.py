@@ -161,12 +161,67 @@ def lineups(df: pl.DataFrame, ecr: Mapping[str, float], ecr_reason: str | None,
 
 # --- the journal ----------------------------------------------------------------
 
+# What the two checks read off the schedule: the consensus ask plus the final scores.
+SCHEDULE_COLS = ("game_id", "season", "week", "game_type", "home_team", "away_team",
+                 "gameday", "home_score", "away_score")
+
+
+def _now() -> datetime:
+    """The clock the CLI judges kickoff by; a seam so a test can pin it."""
+    return datetime.now(UTC)
+
+
+def _schedule(season: int) -> pl.DataFrame | None:  # pragma: no cover - network
+    from hub.fetch import nflverse
+    try:
+        return nflverse.load("schedules", [season], cols=list(SCHEDULE_COLS))
+    except Exception:                                # offline: the checks refuse, they don't guess
+        return None
+
+
+def refuse_after_kickoff(schedule: pl.DataFrame | None, week: int, now: datetime) -> str | None:
+    """Why `week` may not be journalled now, or None if its first game has not started.
+
+    `mu` is re-fitted on whatever has happened, so an entry written after the week's first
+    game compares a pre-kickoff ranking with a number that has seen results. The boundary is
+    `hub.fetch.consensus.deadline_for` -- midnight Eastern at the start of the first game
+    day -- the same one a consensus capture is held to. A schedule that cannot be read refuses
+    too: the entry is the forward record, and an unverifiable one is not a pre-kickoff one.
+    """
+    from hub.fetch import consensus
+    if schedule is None:
+        return f"week {week}: no schedule to check kickoff against; not journalled"
+    first = consensus.first_game_days(schedule).get(week)
+    if first is None:
+        return f"week {week}: not in the schedule; not journalled"
+    if now >= consensus.deadline_for(first):
+        return (f"week {week}: first game day {first} has started; a lineup journalled now "
+                "is not a pre-kickoff one, so nothing was written")
+    return None
+
+
+def week_incomplete(schedule: pl.DataFrame | None, week: int) -> str | None:
+    """Why `week` cannot be scored yet, or None if every scheduled game has a final score."""
+    if schedule is None:
+        return f"week {week}: no schedule to check completeness against; left unscored"
+    games = schedule.filter((pl.col("game_type") == "REG") & (pl.col("week") == week))
+    if games.is_empty():
+        return f"week {week}: not in the schedule; left unscored"
+    open_games = games.filter(pl.col("home_score").is_null() | pl.col("away_score").is_null())
+    if open_games.height:
+        return (f"week {week}: {open_games.height} of {games.height} games not final; "
+                "left unscored")
+    return None
+
+
 def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = None,
            base: Path | None = None, captures: Path | None = None,
-           now: datetime | None = None) -> tuple[Path | None, str]:
+           now: datetime | None = None,
+           schedule: pl.DataFrame | None = None) -> tuple[Path | None, str]:
     """Write this week's entry, or say why not. Returns `(path, note)`.
 
-    An existing entry is left exactly as it is (idempotent per week).
+    An existing entry is left exactly as it is (idempotent per week). A week whose first game
+    has started is refused (`refuse_after_kickoff`); `now` is the clock, so a test can pin it.
     """
     wk = week if week is not None else roster_week(df)
     if wk is None:
@@ -174,6 +229,11 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     path = journal_path(season, wk, base)
     if path.exists():
         return path, f"week {wk} already journalled; left as it was"
+    now = now or datetime.now(UTC)
+    # GUARD no-record-after-kickoff: a week already under way is never journalled
+    if why := refuse_after_kickoff(schedule, wk, now):
+        return None, why
+    # /GUARD
     ecr, ecr_reason = ecr_ranks(season, wk, captures)
     espn, espn_reason = espn_weekly(df)
     got = lineups(df, ecr, ecr_reason, espn, espn_reason)
@@ -193,8 +253,12 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
 
 
 def settle(season: int, week: int, points: Mapping[str, float],
-           base: Path | None = None) -> str:
+           base: Path | None = None, schedule: pl.DataFrame | None = None) -> str:
     """Write each lineup's realised points into the week's entry, once.
+
+    Only a complete week is scored: every scheduled game must be final in `schedule`
+    (`week_incomplete`). nflverse loads a week as it goes, so non-empty points can still be
+    missing Monday night, and a week frozen short is the forward record wrong for good.
 
     `points` is `{player_key: PPR points}` for the played week. A rostered player absent from
     it scored nothing (did not play) and is counted in `n_no_row` so a name-matching break shows.
@@ -205,6 +269,10 @@ def settle(season: int, week: int, points: Mapping[str, float],
     doc = json.loads(path.read_text(encoding="utf-8"))
     if doc.get("scored"):
         return f"week {week}: already scored; left as it was"
+    # GUARD settle-only-complete-weeks: a week with games still to be final stays unscored
+    if why := week_incomplete(schedule, week):
+        return why
+    # /GUARD
     if not points:
         return f"week {week}: no realised points available yet"
     realised: dict[str, Any] = {}
@@ -251,8 +319,9 @@ def main(argv: Sequence[str] | None = None) -> int:
               "`python -m hub.season.roster --write` first", file=sys.stderr)
         return 1
     df = pl.read_parquet(src)
+    sched = _schedule(SEASON_AHEAD)
     if a.record:
-        print(f"  {record(df, base=base)[1]}")
+        print(f"  {record(df, base=base, schedule=sched, now=_now())[1]}")
     if a.settle:
         current = roster_week(df)
         for doc in read(SEASON_AHEAD, base):
@@ -260,7 +329,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if doc.get("scored") or current is None or wk >= current:
                 continue          # a week is final only once the roster has moved past it
             try:
-                print(f"  {settle(SEASON_AHEAD, wk, _realised_points(SEASON_AHEAD, wk), base)}")
+                got = settle(SEASON_AHEAD, wk, _realised_points(SEASON_AHEAD, wk), base,
+                             schedule=sched)
+                print(f"  {got}")
             except Exception as e:                   # offline: the entry stays unscored
                 print(f"  week {wk}: not settled ({type(e).__name__}: {e})", file=sys.stderr)
     return 0
