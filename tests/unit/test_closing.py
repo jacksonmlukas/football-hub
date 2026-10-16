@@ -288,3 +288,24 @@ def test_report_summarises_the_closes_and_spends_nothing(monkeypatch, capsys):
     monkeypatch.setattr(closing.store, "lines", lambda season, base=None: _arc())
     assert closing.main(["--report"]) == 0
     assert "none archived" in capsys.readouterr().out
+
+
+def test_predictions_for_games_without_a_close_give_an_empty_figure():
+    got = closing.clv(_preds(("other", 0.6, _min(3000))), _close("g", 6.0, 12))
+    assert got["n"] == 0
+
+
+def test_kickoff_table_reads_kickoffs_from_the_schedule_and_degrades_without_times(monkeypatch):
+    from hub.fetch import nflverse
+    sched = pl.DataFrame({"game_id": ["g"], "season": [2026], "gameday": ["2026-10-18"],
+                          "gametime": ["13:00"]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched)
+    got = closing.kickoff_table(2026)
+    assert got["kickoff"].to_list() == [KICK]
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: sched.drop("gametime"))
+    assert closing.kickoff_table(2026).is_empty()
+
+
+def test_capture_cli_returns_zero_when_a_gated_capture_completes(monkeypatch):
+    monkeypatch.setattr(closing, "capture", lambda season, **kw: 1)
+    assert closing.main(["--capture"]) == 0

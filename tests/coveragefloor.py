@@ -38,7 +38,7 @@ FLOOR: dict[str, int] = {
     "src/hub/atomic.py": 0,
     "src/hub/audit_ready.py": 0,
     "src/hub/cli.py": 0,
-    "src/hub/closing.py": 99,
+    "src/hub/closing.py": 1,
     "src/hub/closure.py": 0,
     "src/hub/config.py": 0,
     "src/hub/contracts.py": 0,

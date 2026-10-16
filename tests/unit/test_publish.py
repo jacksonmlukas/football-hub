@@ -2258,3 +2258,33 @@ def test_a_record_with_no_archived_close_has_no_clv_block_and_still_publishes(
     _scored_one(base, monkeypatch, site)
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_scored_games_with_a_kickoff_but_no_archive_publish_no_clv_block(site, base):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_only_post_kickoff_captures_publish_no_clv_block(site, base):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    _write_line(base, dt.datetime(2026, 10, 18, 17, 30), 6.0)      # in play: never a close
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_an_unreadable_archive_drops_the_clv_block_not_the_record(site, base, monkeypatch):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    serve(schedules=_timed_sched("g1", 7))
+
+    def broken(base=None):
+        raise ValueError("corrupt snapshot")
+    monkeypatch.setattr(publish.store, "committed_lines", broken)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["closing_line_value"] is None and got["n_scored"] == 1
