@@ -194,9 +194,16 @@ jobs:
       # events GITHUB_TOKEN is documented to be able to trigger -- the recursion guard that
       # blocks token-made *pushes* from starting a workflow, and that `pages.yml` already
       # works around with `workflow_run`, does not apply to it.
+      #
+      # **Each cycle also asks whether a close odds capture is due** (#495): `CYCLE_HOOK` runs
+      # `close-dispatch.sh`, which spends nothing itself and dispatches `odds-close.yml` only
+      # when a kickoff is within 15 minutes with no capture in that window. This job stays
+      # read-only; the dispatched workflow holds the write and the credits.
       - name: Refresh the overlay through the window
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOSE_SYNC_REF: ${{ github.ref_name }}
+          CYCLE_HOOK: .github/scripts/close-dispatch.sh gh workflow run odds-close.yml --repo ${{ github.repository }}
         run: |
           .github/scripts/live-loop.sh \
             "$(( ${{ inputs.minutes || 115 }} * 60 ))" \

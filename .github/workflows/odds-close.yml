@@ -1,0 +1,70 @@
+name: odds-close
+
+# One odds capture just before a kickoff, so each game has a close with a lead time that is
+# actually near kickoff (#495). Dispatched only -- never scheduled -- by the game-window loop
+# (`live.yml`), which runs during the windows and so is the one thing here that is awake at
+# kickoff. The scheduled `poll_odds` runs start 4-8.5h late (#468) and cannot do this job.
+#
+# **Why a dispatched workflow and not a step in the loop.** The loop's token is read-only
+# (`tests/contracts/test_window_coverage.py` holds that), and a capture has to be committed or
+# it dies with the runner. The loop already holds `actions: write` to dispatch `pages.yml`, so
+# it dispatches this the same way, and this holds the `contents: write`.
+#
+# **What it costs.** `hub.closing --capture` spends nothing unless a kickoff is within 15
+# minutes with no capture inside that window yet, so a dispatch the loop repeats (it checks
+# every cycle) is a no-op after the first. One call returns the whole season, so it is one call
+# per distinct kickoff time: three credits a call (spreads, totals, h2h; one region), about
+# six or seven calls in a normal week, never more than ten (`hub.closing.CLOSE_CALLS_PER_WEEK`)
+# -- 18-21 credits a week, at most 30. `hub.fetch.odds.CREDIT_FLOOR` still refuses below 75.
+#
+# Best-effort by design: a window missed leaves the game's close at its last earlier capture,
+# published with its true lead time and not called the close (`hub.closing.closes`). A failed
+# run here changes no prediction and no other job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialised, never cancelled: a second dispatch waits, then finds the window already covered
+# and spends nothing. Cancelling one mid-call would spend the credit and lose the capture.
+concurrency:
+  group: odds-close
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+
+      - name: Capture the line if a kickoff is imminent
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: uv run python -m hub.closing --capture
+
+      # `state/` carries the capture under `state/odds/` and the credit balance
+      # `state/odds.json`. The rebase keeps our newer balance on a conflict with a poll that
+      # committed meanwhile (`-X theirs` is *our* commit during a rebase); snapshot files are
+      # uniquely named and cannot conflict.
+      - name: Commit the capture
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "nothing captured; no commit"
+            exit 0
+          fi
+          git commit -m "odds: close capture ($(date -u +%Y-%m-%dT%H:%MZ))"
+          for attempt in 1 2 3; do
+            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" || { git rebase --abort || true; }
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 5
+          done
+          echo "::warning::the close capture could not be pushed; it is lost with the runner"
+          exit 1

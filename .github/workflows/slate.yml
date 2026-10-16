@@ -38,8 +38,9 @@ on:
   # Captures are stamped with their real time and nothing assumes the slot time;
   # `hub.instrument_check.GRACE` is 9h for this reason (was 6h). See docs/decisions.md.
   #
-  # Six polls a week is twelve odds credits (two markets x one region a poll), about 52 a
-  # month against 500 -- `hub.fetch.odds` refuses below a floor of 75 before spending one, so
+  # Six polls a week is eighteen odds credits (three markets -- spreads, totals, h2h, #495 --
+  # x one region a poll), about 78 a month against 500; the near-kickoff close captures
+  # (`odds-close.yml`) add about 90 and the study about 89 -- `hub.fetch.odds` refuses below a floor of 75 before spending one, so
   # an over-eager cadence cannot drain the month. The maintainer approved the spend.
   schedule:
     - cron: "0 11 * * 3"

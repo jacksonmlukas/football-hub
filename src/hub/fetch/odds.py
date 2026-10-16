@@ -155,9 +155,9 @@ class Poll:
 # Saturday are the original two; Thursday, Friday, Sunday-morning and Monday are the new
 # ones, and Thursday and Sunday-morning are the two #370 names by name.
 #
-# Cost is `len(MARKETS) * len(REGIONS)` a poll -- two credits today -- so six polls is 12 a
-# week, and a year runs 52.18 weeks to twelve months: 12 x 52.18 / 12 is about 52 credits a
-# month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 75
+# Cost is `len(MARKETS) * len(REGIONS)` a poll -- three credits since h2h joined (#495) -- so
+# six polls is 18 a week, and a year runs 52.18 weeks to twelve months: 18 x 52.18 / 12 is
+# about 78 credits a month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 75
 # regardless of how it got there. The maintainer approved the spend. `tests/contracts/
 # test_odds_schedule.py` holds `slate.yml`'s odds-polling crons to exactly this tuple, the
 # way `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
