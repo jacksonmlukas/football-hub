@@ -767,3 +767,25 @@ def test_the_cli_answers_watch_with_the_one_line_the_workflow_reads(season, tmp_
     assert out.startswith("inside 2026-10-03T1500Z ok "), out
     assert bigten.main(["--watch", "--status-path", str(tmp_path / "missing.json")]) == 0
     assert capsys.readouterr().out.strip() == "unreachable"
+
+
+# --- the Sidearm shape (#499) ---------------------------------------------------
+
+SIDEARM_PAGE = (b'<main><article class="article-wrapper sportfile">'
+                b'<h1 class="article-headline">2026 Big Ten Football Availability Reports</h1>'
+                b'<div class="article-content"><iframe src="https://app.hdintelligence.com/'
+                b'?type=archive"></iframe></div></article></main>')
+
+
+def test_a_sidearm_page_is_parsed_and_its_embed_is_declined_not_fetched(web, season, tmp_path):
+    """The reports are behind a vendor app, not on the page: parsed, nothing followed, the
+    vendor's host in the stamp, and the run still degraded rather than green."""
+    web[bigten.PAGE] = SIDEARM_PAGE
+    cap = bigten.capture(now=FIRST_RUN, skip_lines=True)
+    assert cap.fetched and cap.parsed and cap.error is None
+    assert [r["kind"] for r in cap.rows] == ["article"]
+    assert cap.rows[0]["report_updated_at"] is None
+    assert [k["host"] for k in cap.skipped] == ["app.hdintelligence.com"]
+    got = bigten.record_run(cap, now=FIRST_RUN, path=tmp_path / "bigten.json")
+    assert got["stale"] and "linked no report documents" in got["reason"]
+    assert got["skipped"]["hosts"] == ["app.hdintelligence.com"]

@@ -72,7 +72,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import polars as pl
 
@@ -307,15 +307,31 @@ _NEXT_DATA = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
 _HREF = re.compile(r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
 _TAGS = re.compile(r"<[^>]+>")
+# The second shape (#499), served from 2026-10-07: a Sidearm ASP.NET page with no
+# `__NEXT_DATA__` at all. The article is server-rendered HTML -- a headline and a content div --
+# and the reports are not on the page: the content is an iframe onto the conference's report
+# vendor. The first iframe is the vendor URL wrapped in a mail-security redirect.
+_SIDEARM_ARTICLE = re.compile(
+    r'<article\b[^>]*\barticle-wrapper\b[^>]*>(.*?)</article>', re.S | re.I)
+_SIDEARM_HEADLINE = re.compile(
+    r'<h1\b[^>]*\barticle-headline\b[^>]*>(.*?)</h1>', re.S | re.I)
+_SIDEARM_CONTENT = re.compile(
+    r'<div\b[^>]*\barticle-content\b[^>]*>(.*)</div>', re.S | re.I)
+_IFRAME_SRC = re.compile(r'<iframe\b[^>]*\bsrc="([^"]+)"', re.S | re.I)
 
 
 @dataclass(frozen=True)
 class Article:
     """The CMS record behind the page: what the conference last said, and when."""
     title: str
-    updated_at: str
+    # None on the Sidearm shape, which carries no timestamp: the page does not say when the
+    # conference last changed it, and the archive records that rather than inventing one.
+    updated_at: str | None
     body: str
     record: dict[str, Any]
+    # Pages the article embeds rather than links (iframe sources), unwrapped from any
+    # mail-security redirect. Nothing here is fetched; `capture` records what it declined.
+    embeds: tuple[str, ...] = ()
 
     def links(self) -> list[tuple[str, str]]:
         """(absolute url, label) for every anchor in the body, in page order."""
@@ -327,18 +343,60 @@ class Article:
         return out
 
 
+def _unwrap(src: str) -> str:
+    """The URL inside a `safelinks.protection.outlook.com` redirect, else the URL itself."""
+    src = html.unescape(src)
+    parsed = urlparse(src)
+    if parsed.netloc.lower().endswith("safelinks.protection.outlook.com"):
+        inner = parse_qs(parsed.query).get("url")
+        if inner:
+            return inner[0]
+    return src
+
+
+def _parse_sidearm(text: str) -> Article | None:
+    """The Sidearm shape (#499), or None if the page is not one.
+
+    None means "not this shape"; a page that *is* this shape but whose headline is missing or
+    is not the availability-reports article raises, so a different article on the same
+    template is not archived as the reports.
+    """
+    art = _SIDEARM_ARTICLE.search(text)
+    if not art:
+        return None
+    head = _SIDEARM_HEADLINE.search(art.group(1))
+    if not head:
+        raise PageShapeChanged("sidearm article has no headline")
+    title = " ".join(html.unescape(_TAGS.sub(" ", head.group(1))).split())
+    if not AVAILABILITY_TITLE.search(title):
+        raise PageShapeChanged(
+            "the sidearm article is not the availability-reports article by title")
+    content = _SIDEARM_CONTENT.search(art.group(1))
+    if not content:
+        raise PageShapeChanged("sidearm article lacks its content div")
+    body = content.group(1)
+    embeds = tuple(dict.fromkeys(_unwrap(u) for u in _IFRAME_SRC.findall(body)))
+    record = {"shape": "sidearm", "title": title, "embeds": list(embeds)}
+    return Article(title=title, updated_at=None, body=body, record=record, embeds=embeds)
+
+
 def parse_article(page: bytes) -> Article:
     """The article record out of the page, or `PageShapeChanged` naming what was missing.
 
-    Deliberately narrow. The page is 1.6MB of navigation around a few hundred bytes of
-    content, and the content is a single CMS record with a stable shape -- `title`,
-    `updatedAt`, `body` -- that also carries the conference's own timestamp, which an HTML
-    scrape would not. A rename of any of those raises, and the caller archives the raw page
-    so the bytes survive the parser being wrong.
+    Two shapes are known, both in the archive. The Next.js shape (to 2026-10-06): a single CMS
+    record in `__NEXT_DATA__` with a stable shape -- `title`, `updatedAt`, `body` -- that also
+    carries the conference's own timestamp, which an HTML scrape would not. The Sidearm shape
+    (from 2026-10-07, #499): server-rendered, a headline and an iframe onto the report
+    vendor, no timestamp. Anything else raises, and the caller archives the raw page so the
+    bytes survive the parser being wrong.
     """
-    m = _NEXT_DATA.search(page.decode("utf-8", errors="replace"))
+    text = page.decode("utf-8", errors="replace")
+    m = _NEXT_DATA.search(text)
     if not m:
-        raise PageShapeChanged("no __NEXT_DATA__ script on the page")
+        sidearm = _parse_sidearm(text)
+        if sidearm is not None:
+            return sidearm
+        raise PageShapeChanged("no __NEXT_DATA__ script and no sidearm article on the page")
     try:
         data = json.loads(m.group(1))
     except ValueError as e:
@@ -497,6 +555,12 @@ def capture(*, now: datetime | None = None, season: int = SEASON_AHEAD,
         _keep(cap, kind="article", url=PAGE, label=article.title,
               updated_at=article.updated_at, data=record, ext="json",
               archive=archive, seen=seen, captured_at=stamp)
+        for url in article.embeds:
+            # An embedded app is not a document and is never fetched; recording the refusal
+            # keeps the vendor's host in the stamp, where the maintainer can see where the
+            # reports went.
+            why = admit(url) or "embedded app, not a document"
+            cap.skipped.append({"url": url, "host": urlparse(url).netloc, "why": why})
         for url, label in article.links():
             if (why := admit(url)) is not None:
                 cap.skipped.append({"url": url, "host": urlparse(url).netloc, "why": why})
