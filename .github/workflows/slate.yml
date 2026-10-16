@@ -291,10 +291,12 @@ jobs:
           set +e
           MARKER="<!-- artifact-escalate -->"
           N=$(uv run python -m hub.escalate --report "$RUNNER_TEMP/escalate.md" | sed -n 's/^escalated=//p')
+          # A scan that could not look prints nothing: leave any open incident as it is.
+          [ -n "$N" ] || { echo "::warning::could not check which artifacts escalate"; exit 0; }
           EXISTING=$(gh issue list --repo "${{ github.repository }}" \
             --label incident --state open --json number,body \
             --jq "([.[] | select(.body | contains(\"$MARKER\"))][0].number) // empty" 2>/dev/null)
-          if [ "${N:-0}" != "0" ]; then
+          if [ "$N" != "0" ]; then
             if [ -n "$EXISTING" ]; then
               gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/escalate.md"
             else

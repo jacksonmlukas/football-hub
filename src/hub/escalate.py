@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -63,6 +64,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--site-data", type=Path, default=Path("site/data"))
     ap.add_argument("--report", type=Path, default=None)
     args = ap.parse_args(argv)
+    if not args.site_data.is_dir():
+        # Not "nothing escalated": a missing directory has established nothing, and the
+        # workflow must not read silence here as a reason to close an open incident.
+        print(f"hub.escalate: {args.site_data} is not a directory; nothing could be checked",
+              file=sys.stderr)
+        return 2
     items = escalated(args.site_data)
     print(f"escalated={len(items)}")
     if items and args.report:

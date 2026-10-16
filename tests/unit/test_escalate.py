@@ -43,3 +43,9 @@ def test_the_cfbd_record_as_committed_on_2026_10_14_is_caught(tmp_path):
     _put(tmp_path, "cfbd.json", {"name": "cfbd", "fetched": False, "stale": True,
                                  "unfetched_since": "2026-10-06", "escalate": True})
     assert [i["artifact"] for i in escalate.escalated(tmp_path)] == ["cfbd.json"]
+
+
+def test_a_missing_directory_is_a_refusal_not_zero(tmp_path, capsys):
+    assert escalate.main(["--site-data", str(tmp_path / "nope")]) == 2
+    out = capsys.readouterr()
+    assert "escalated=" not in out.out and "not a directory" in out.err
