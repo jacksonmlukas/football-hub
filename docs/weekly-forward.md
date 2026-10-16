@@ -1003,8 +1003,14 @@ unchanged -- 29 modules, the same names; `hub.models.td_dispersion`, the new gat
    (and logs the test) on `[]` and `.get`, and the whole of `tests/unit`, `tests/contracts` and
    `tests/golden` run, except the four files that exercise the sampler on purpose
    (`test_components.py`, `test_props.py`, `test_td_count_sampler.py`, `test_td_dispersion.py`).
-   TRIPWIRE-RESULT
-   #430's identity test (`tests/unit/test_weekly_projection_move.py`) is among the tests run.
+   5,162 passed, 4 skipped; the unmarked suites hold 24 `golden` tests that the default markers
+   deselect, and those were run under the same tripwire on their own: 23 passed, 1 skipped, no
+   hit. Of the two failures in the unmarked run, one is
+   `test_volume.py::test_a_decomposed_line_can_be_sampled`, which calls `sample_weeks` on
+   purpose and is the **only test the tripwire's log records reaching the constant**; the other is
+   `test_coverage_floor.py::test_every_module_has_a_committed_floor`, which failed because the new
+   gate module had no coverage-floor entry yet when the run began (since added; unrelated to the
+   constant). #430's identity test (`tests/unit/test_weekly_projection_move.py`) is among the tests run.
    No 2026 outcome has been read.
 
 **What did move:** `config_digest` `4fad9f78` -> `839ceda9` and `fitted_digest` `f6b8c28a` ->
