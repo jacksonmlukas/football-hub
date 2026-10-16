@@ -316,7 +316,9 @@ def fetch(board: pl.DataFrame | None = None) -> pl.DataFrame:  # pragma: no cove
     if board is None:
         board, source = readable()
         print(f"  board: {source}")
-    return build(roster_rows(my_team(league_settings().league)), board)
+    league = league_settings().league
+    return build(roster_rows(my_team(league), week=getattr(league, "current_week", None)),
+                 board)
 
 
 def write(df: pl.DataFrame, path: Path | None = None) -> Path:
