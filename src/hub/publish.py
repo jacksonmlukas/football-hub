@@ -567,8 +567,39 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # What bounds a *game*, said so the page need not infer it from the player block
         # above (#507): the margin is not conformalised, its 80% band is the fixed normal one.
         game_band=_game_band(),
+        # Descriptive closing-line value (#495): published probability against the close's,
+        # with the close's lead time to kickoff stated. None when no close is archived.
+        closing_line_value=_closing_line_value(df, base),
     )
     return _publish(out, "track_record", payload, count_key="n_scored")
+
+
+def _closing_line_value(df: pl.DataFrame, base: Path | None) -> list[dict[str, Any]] | None:
+    """One CLV block per season of scored predictions that has any archived close (#495).
+
+    Read from the committed odds archive (`state/odds/`), which a runner has. A season with
+    no archive, a schedule without kickoff times, or an archive that cannot be read drops the
+    block rather than the record (graceful degradation). Descriptive: `hub.closing.clv` says
+    so in the block, with its n and interval and no verdict.
+    """
+    if not df.height or "kickoff" not in df.columns:
+        return None
+    from hub import closing
+    blocks: list[dict[str, Any]] = []
+    try:
+        for season, rows in _by_season(df):
+            if season is None:
+                continue
+            kicks = rows.select("game_id", "kickoff").unique("game_id")
+            got = closing.closes(store.lines(season, base=base), kicks)
+            if got.is_empty():
+                continue
+            blocks.append({"season": season, **closing.clv(rows, got)})
+    except Exception as e:
+        print(f"  track_record: closing-line value unavailable ({type(e).__name__}: {e})",
+              flush=True)
+        return None
+    return blocks or None
 
 
 def _about_player_weeks(ic: dict[str, Any] | None) -> dict[str, Any] | None:
