@@ -1873,6 +1873,31 @@ def test_the_roster_table_shows_nfl_team_on_every_row(node):
         assert tds[heads.index("team")] == row["nfl_team"], row["player"]
 
 
+def _cells(body: str, label: str) -> list[str]:
+    heads = re.findall(r"<th>([^<]*)</th>", body)
+    rows = re.findall(r"<tr>((?:<td[^>]*>[^<]*</td>)+)</tr>", body)
+    return [re.findall(r"<td[^>]*>([^<]*)</td>", r)[heads.index(label)] for r in rows]
+
+
+def test_the_roster_table_shows_weekly_ecr_and_espn_beside_mu_and_a_dash_when_absent(node):
+    """#492. A published value is shown; a null is a dash, never a zero."""
+    ros = dict(SWAP_ROSTER, rows=[
+        _row("Ranked WR", "WR", "CIN", ecr=4.0, espn_week_proj=17.46),
+        _row("Unranked RB", "RB", "GB", ecr=None, espn_week_proj=None),
+        _row("Old Parquet TE", "TE", "DAL")])           # a roster.json from before the fields
+    body = _render(node, {"roster": ros})["panels"]["p-roster"]["body"]
+    heads = re.findall(r"<th>([^<]*)</th>", body)
+    assert heads.index("ecr") == heads.index("+/-") + 1
+    assert _cells(body, "ecr")[:3] == ["4", "—", "—"]
+    assert _cells(body, "espn wk")[:3] == ["17.5", "—", "—"]
+
+
+def test_a_hostile_value_in_the_weekly_columns_cannot_inject_markup(node):
+    ros = dict(SWAP_ROSTER, rows=[_row("X", "WR", "CIN", ecr=HOSTILE, espn_week_proj=HOSTILE)])
+    body = _render(node, {"roster": ros})["panels"]["p-roster"]["body"]
+    assert "<script>" not in body
+
+
 @parent_only
 def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_red(node, tmp_path):
     text = PAGE.read_text()

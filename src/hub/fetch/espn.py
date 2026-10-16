@@ -472,10 +472,30 @@ ROSTER_SCHEMA: dict[str, Any] = {
     "player": pl.Utf8, "key": pl.Utf8, "pos": pl.Utf8, "espn_id": pl.Int64,
     "nfl_team": pl.Utf8, "slot": pl.Utf8, "injury_status": pl.Utf8,
     "espn_avg": pl.Float64, "espn_total": pl.Float64,
+    # ESPN's projection for one scoring period (#492). Null, never 0.0, when the period is
+    # unknown or ESPN carried none for this player: a zero would sort as a real prediction.
+    "espn_week": pl.Int64, "espn_week_proj": pl.Float64,
 }
 
 
-def roster_rows(team: Any) -> pl.DataFrame:
+def weekly_projection(player: Any, week: int | None) -> float | None:
+    """ESPN's own projection for scoring period `week`, or None if it carries none.
+
+    `espn_api` files every stat block under its `scoringPeriodId`: period 0 is the season
+    (the `espn_avg`/`espn_total` pair), 1..18 are weeks, and a block holds `projected_points`
+    only when its `statSourceId` was the projection. Read by the period asked for and never
+    by "the first block", because the season block sits beside the weekly ones and is an
+    order of magnitude larger. A non-positive projection is no projection (a player ESPN has
+    written off reads 0.0).
+    """
+    if week is None or week < 1:
+        return None
+    got = (getattr(player, "stats", None) or {}).get(week) or {}
+    v = got.get("projected_points")
+    return float(v) if isinstance(v, (int, float)) and v > 0 else None
+
+
+def roster_rows(team: Any, week: int | None = None) -> pl.DataFrame:
     """One row per rostered player, as data rather than as a vendor object.
 
     `espn_avg` and `espn_total` are ESPN's own two projections. Their *ratio* is the only
@@ -483,6 +503,9 @@ def roster_rows(team: Any) -> pl.DataFrame:
     reported Josh Jacobs `DAY_TO_DAY` through a six-game ban, and only
     `projected_total_points / projected_avg_points` -- 11.0 where the rest of the roster was
     17.0 -- gave it away. `hub.season.roster.availability` reads it off these two columns.
+
+    `week` is the scoring period whose projection `espn_week_proj` carries (#492); None leaves
+    both of those columns null.
     """
     from hub.names import player_key
     rows = []
@@ -498,13 +521,16 @@ def roster_rows(team: Any) -> pl.DataFrame:
             "injury_status": str(getattr(p, "injuryStatus", "") or ""),
             "espn_avg": float(getattr(p, "projected_avg_points", 0.0) or 0.0),
             "espn_total": float(getattr(p, "projected_total_points", 0.0) or 0.0),
+            "espn_week": week,
+            "espn_week_proj": weekly_projection(p, week),
         })
     return pl.DataFrame(rows, schema=ROSTER_SCHEMA)
 
 
 def my_roster(year: int = SEASON_AHEAD) -> pl.DataFrame:  # pragma: no cover - network
     """Your roster, from the league you are logged into."""
-    return roster_rows(my_team(league_settings(year).league))
+    league = league_settings(year).league
+    return roster_rows(my_team(league), week=getattr(league, "current_week", None))
 
 
 # --- league transaction history -------------------------------------------
