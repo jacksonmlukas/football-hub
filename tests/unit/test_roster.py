@@ -829,3 +829,10 @@ def test_a_suspension_is_still_caught_against_the_schedules_standard():
                       total=lambda team, left: 10.0 * (left - (2 if team == "JAX" else 0)))
     got = dict(zip(df["player"], df["missing_games"], strict=True))
     assert got == {"Ja'Marr Chase": 0, "Mark Andrews": 2}
+
+
+def test_the_withheld_reason_names_the_mechanical_cause_before_espns_projection():
+    assert R.withheld_reason({"slot": "IR", "on_bye": True}) == "on injured reserve"
+    assert R.withheld_reason({"slot": "WR", "on_bye": True}) == "bye"
+    assert R.withheld_reason({"slot": "WR", "on_bye": False, "missing_games": 6}) \
+        == "ESPN projects 6 missed games"
