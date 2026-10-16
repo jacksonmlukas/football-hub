@@ -861,7 +861,7 @@ ODDS_SNAPSHOT = Contract(
     # and it is what makes AS_OF_LINES more than a normal join.
     ranges={"close_spread": (-40, 40), "close_total": (20, 100),
             "spread_price": (-2000, 2000), "total_price": (-2000, 2000),
-            "ml_home_prob": (0.0, 1.0), "polls_unmoved": (1, 10000)},
+            "ml_home_prob": (0, 1), "polls_unmoved": (1, 10000)},
     min_rows=1,
 )
 
