@@ -57,7 +57,7 @@ CLI_MODULES = (
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
-    "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
+    "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.free_agents", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
     "hub.fetch.pool", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
@@ -310,6 +310,8 @@ ABSENT_INPUT = [
     ("hub.season.roster", ["--out", "{tmp}/roster.parquet"]),
     ("hub.season.lineup_journal", ["--record", "--roster", "{tmp}/roster.parquet"]),
     ("hub.season.stream", ["--roster", "{tmp}/nope.parquet"]),
+    # The free-agent fetch (#493): no league, no cookie and nothing last-good is a sentence.
+    ("hub.fetch.free_agents", ["--out", "{tmp}/nope.parquet"]),
     ("hub.season.survivor", []),
     # The money layer and its journal (#163). `--store` keeps the pool's last-good read --
     # the journal -- and the journal's own read off the developer's store, so a fresh clone
@@ -564,6 +566,10 @@ REAL_ROOTS_NOT_REDIRECTED: dict[str, str] = {
                       "well as the write, so it reads an absent file. That is a real "
                       "dependency -- if `--out` ever stops moving the read, this case starts "
                       "reading the developer's own roster and this note is wrong.",
+    "FREE_AGENTS_PARQUET": "bound at import by `hub.fetch.free_agents`, and NOT redirected, "
+                           "for the same reason as `ROSTER_PARQUET`: its case is driven with "
+                           "`--out` at a tmp path, which moves the last-good read as well as "
+                           "the write (`refresh` takes the one path for both).",
 }
 
 
