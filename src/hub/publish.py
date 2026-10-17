@@ -538,7 +538,8 @@ def track_record(base: Path | None = None, out: Path | None = None,
     reg = _registration(out, df, seasons)
     # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
     # top level unconditionally, and a missing key and a null one render differently.
-    newest = seasons[0] if seasons else {"bins": [], "log_loss": None, "brier": None, "baselines": None}
+    newest = seasons[0] if seasons else {
+        "bins": [], "log_loss": None, "brier": None, "baselines": None}
     # Through `jsonio.summary` rather than three literal envelope keys, so `shape: "summary"`
     # is written by the writer that knows this record has no rows. Until #227 that fact lived
     # in `NOT_ROW_SHAPED` in the contract instead, where nothing connected it to here.
