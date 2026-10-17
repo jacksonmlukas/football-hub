@@ -310,7 +310,7 @@ def predictions(season: int, week: int, base: Path | None = None,
     if df.is_empty():
         return _keeping(out, name, "the store held no prediction for this week")
     rows = _keeping_published(df.to_dicts(), out / f"{name}.json", season)
-    # Kickoff and the betting market's own price (#482), once per row at this boundary; a row already
+    # Kickoff and the betting market's own price (#482), once per row here; a row already
     # carrying them keeps what it was published with. Degrades to null-with-reason.
     rows = market_row.attach(rows, season, base=base)
 
@@ -476,7 +476,10 @@ def _finished(out: Path) -> pl.DataFrame | None:
         print(f"  schedules unavailable ({type(e).__name__}); track record left as "
               f"published", flush=True)
         return None
-    return preds.join(sched, on="game_id", how="inner")
+    # The row's published `kickoff` (#482) is an offset string for the page; the scoring and
+    # `prereg` read the schedule's own naive-UTC datetime, fetched fresh just above, so the
+    # published one is dropped here rather than colliding with it in the join.
+    return preds.drop("kickoff", strict=False).join(sched, on="game_id", how="inner")
 
 
 def _record_of(finished: pl.DataFrame) -> pl.DataFrame:

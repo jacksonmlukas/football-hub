@@ -2,7 +2,8 @@
 
 The Games view sorts by kickoff and sets the model against the betting market, and it can do neither
 from a row that carries only `home_win_prob`: the schedule is not on the page and, while every
-row's `model` is `market_baseline`, the betting market's price *is* `home_win_prob`, so the page needs
+row's `model` is `market_baseline`, the betting market's price *is* `home_win_prob`, so the page
+needs
 the price as a field of its own to know there is no gap to draw.
 
 **Written at the publish boundary, once per row.** `hub.publish.predictions` calls `attach`
@@ -55,7 +56,7 @@ MARKET_FIELDS = ("kickoff", "kickoff_missing", "market_spread", "market_total", 
 
 
 def _moment(value: Any) -> datetime | None:
-    """A naive UTC datetime from what a row holds: a datetime, or the string a prior publish wrote."""
+    """A naive UTC datetime from a row: a datetime, or the string a prior publish wrote."""
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -107,7 +108,7 @@ def market_fields(row: Mapping[str, Any], kickoff: datetime | None, kickoff_why:
     from hub.models.market import MARGIN_SD, normal_cdf
     out: dict[str, Any] = {
         "kickoff": (kickoff.replace(tzinfo=UTC).isoformat() if kickoff else None),
-        "kickoff_missing": (None if kickoff else (kickoff_why or "the game is not on the schedule")),
+        "kickoff_missing": (None if kickoff else kickoff_why or "the game is not on the schedule"),
         "market_spread": None, "market_total": None, "market_prob": None,
         "market_prob_ml": None, "market_missing": None,
     }
