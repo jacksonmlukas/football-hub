@@ -4,29 +4,22 @@ import { ago, esc } from "../format.js";
 
 // The status line's data (#351): one record per artifact, whole -- name, age, stale, reason,
 // fetched -- so that a reader-facing expansion later changes only how it is drawn. The
-// manifest's artifacts come first; `bigten` and `cfbd` are not in the manifest, so the page
-// loads them itself (`sides`, null where the file is absent) and reports their own `reason`.
-// An absent side file is a named non-fetch with a standing reason, not an error and not
-// absence. Built from data only, so a test can import it.
+// manifest alone is read (#480): it lists `bigten` and `cfbd` beside the rest, each carrying its
+// side file's own `stale` and `reason`. A manifest from before that has no entry for them, and
+// they are then named non-fetches with a standing reason, not errors and not absence. Built
+// from data only, so a test can import it.
 // GUARD status-records-carry-every-artifact [contracts/test_dashboard_escapes.py::test_the_status_records_name_every_manifest_artifact_with_its_age]: the footer's data has an entry, with age, for every artifact the manifest lists.
-export function statusRecords(man, sides) {
+export function statusRecords(man) {
   const out = (man?.artifacts ?? []).map(a => ({
     name: String(a?.name ?? "?"),
-    age: a?.generated_at ? ago(a.generated_at) : "age unknown",
+    age: a?.generated_at ? ago(a.generated_at) : a?.present === false ? "never" : "age unknown",
     stale: !!a?.stale || a?.present === false,
     reason: a?.reason ?? (a?.present === false ? "the artifact is missing" : null),
-    fetched: a?.present !== false,
+    fetched: a?.fetched ?? (a?.present !== false),
   }));
   for (const name of ["bigten", "cfbd"]) {
     if (out.some(r => r.name === name)) continue;
-    const s = sides?.[name] ?? null;
-    out.push(s ? {
-      name,
-      age: s.generated_at ? ago(s.generated_at) : "age unknown",
-      stale: !!s.stale || s.fetched === false,
-      reason: s.reason ?? null,
-      fetched: s.fetched !== false,
-    } : {
+    out.push({
       name, age: "never", stale: true, fetched: false,
       reason: `no ${name}.json has been published`,
     });

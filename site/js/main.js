@@ -24,11 +24,10 @@ export async function render() {
         : "no manifest — run `make slate`";
 
   // The status line is drawn before any panel, so a panel that throws cannot take it with it.
-  const [bigten, cfbd] = await Promise.all([load("bigten"), load("cfbd")]);
   // Guarded (#352): a record that makes the status line throw costs the footer and nothing
   // else -- the panels below it still draw.
   try {
-    document.getElementById("footer").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));
+    document.getElementById("footer").innerHTML = statusLine(statusRecords(man));
   } catch {
     document.getElementById("footer").innerHTML =
       `<p class="status"><span class="down">status line unavailable: an artifact record could not be read</span></p>`;

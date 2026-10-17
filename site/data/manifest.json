@@ -44,6 +44,66 @@
       "stale": false,
       "reason": null,
       "generated_at": "2026-10-14T15:41:59+00:00"
+    },
+    {
+      "name": "bigten",
+      "present": true,
+      "fetched": true,
+      "stale": true,
+      "reason": "the page's shape changed (PageShapeChanged); the raw page is archived and nothing was parsed out of it",
+      "generated_at": "2026-10-16T06:08:42+00:00"
+    },
+    {
+      "name": "cfbd",
+      "present": true,
+      "fetched": false,
+      "stale": true,
+      "reason": "nothing was fetched: TypeError. Its message is on stderr and deliberately not here: a contract violation quotes the payload values that broke it, and this file is committed",
+      "generated_at": "2026-10-14T15:41:51+00:00"
+    }
+  ],
+  "weeks": [
+    {
+      "name": "preds_2026_wk06",
+      "season": 2026,
+      "week": 6,
+      "generated_at": "2026-10-14T15:41:58+00:00"
+    },
+    {
+      "name": "preds_2026_wk05",
+      "season": 2026,
+      "week": 5,
+      "generated_at": "2026-10-10T18:24:39+00:00"
+    },
+    {
+      "name": "preds_2026_wk04",
+      "season": 2026,
+      "week": 4,
+      "generated_at": "2026-10-03T17:53:06+00:00"
+    },
+    {
+      "name": "preds_2026_wk03",
+      "season": 2026,
+      "week": 3,
+      "generated_at": "2026-09-26T17:42:35+00:00"
+    },
+    {
+      "name": "preds_2026_wk02",
+      "season": 2026,
+      "week": 2,
+      "generated_at": "2026-09-19T17:08:18+00:00"
+    },
+    {
+      "name": "preds_2026_wk01",
+      "season": 2026,
+      "week": 1,
+      "generated_at": "2026-09-12T16:54:36+00:00"
+    },
+    {
+      "name": "preds_2025_wk18",
+      "season": 2025,
+      "week": 18,
+      "generated_at": "2026-08-30T02:40:40+00:00"
     }
   ]
 }
