@@ -853,14 +853,15 @@ ODDS_SNAPSHOT = Contract(
     name="odds_snapshot",
     required={"game_id": pl.Utf8, "close_spread": pl.Float64,
               "spread_price": pl.Float64, "close_total": pl.Float64,
-              "total_price": pl.Float64, "captured_at": pl.Datetime,
+              "total_price": pl.Float64, "ml_home_prob": pl.Float64,
+              "captured_at": pl.Datetime,
               "polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime},
     non_null=("game_id", "close_spread", "captured_at", "polls_unmoved", "unmoved_since"),
     # Deliberately NOT unique on game_id: several snapshots per game is the entire point,
     # and it is what makes AS_OF_LINES more than a normal join.
     ranges={"close_spread": (-40, 40), "close_total": (20, 100),
             "spread_price": (-2000, 2000), "total_price": (-2000, 2000),
-            "polls_unmoved": (1, 10000)},
+            "ml_home_prob": (0, 1), "polls_unmoved": (1, 10000)},
     min_rows=1,
 )
 

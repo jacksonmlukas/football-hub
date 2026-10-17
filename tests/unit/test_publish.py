@@ -2208,3 +2208,83 @@ def test_a_bye_player_is_withheld_with_the_reason_bye(site, tmp_path):
     assert payload["withheld_reasons"] == {"Chase": "bye"}
     assert [r["on_bye"] for r in payload["rows"] if r["player"] == "Chase"] == [True]
     assert "Chase" not in payload["start"]
+
+
+# --- closing-line value on the record (issue #495) ------------------------
+
+def _timed_sched(game_id, result):
+    """`_sched` with a kickoff: Sunday 2026-10-18 13:00 Eastern, i.e. 17:00 UTC."""
+    return _sched([game_id], [result]).with_columns(
+        gameday=pl.lit("2026-10-18"), gametime=pl.lit("13:00"))
+
+
+def _write_line(base, when, spread):
+    store.write_snapshot(
+        pl.DataFrame({"game_id": ["g1"], "close_spread": [spread], "spread_price": [-110.0],
+                      "close_total": [44.5], "total_price": [-110.0], "ml_home_prob": [None],
+                      "captured_at": [when], "polls_unmoved": [1], "unmoved_since": [when]},
+                     schema=store.SNAPSHOT_COLUMNS),
+        2026, 1, when, base=base)
+
+
+def test_the_record_carries_descriptive_closing_line_value_with_its_lead(site, base):
+    """The published probability against the close's, n and interval, the lead stated."""
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    _write_line(base, dt.datetime(2026, 10, 18, 16, 48), 6.0)      # 12 minutes before kickoff
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    (block,) = got["closing_line_value"]
+    assert block["season"] == 2026 and block["descriptive"] is True
+    assert block["n_true_close"] == 1 and block["true_close"]["n"] == 1
+    assert block["true_close"]["mean"] > 0                        # the close moved toward the pick
+
+
+def test_a_close_taken_hours_early_is_published_as_early_with_its_lead(site, base):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    _write_line(base, dt.datetime(2026, 10, 18, 11, 0), 6.0)       # six hours before kickoff
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    (block,) = got["closing_line_value"]
+    assert block["n_true_close"] == 0 and block["n_early_close"] == 1
+    assert block["early_close"]["median_lead_minutes"] == 360.0
+
+
+def test_a_record_with_no_archived_close_has_no_clv_block_and_still_publishes(
+        site, base, monkeypatch):
+    _scored_one(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_scored_games_with_a_kickoff_but_no_archive_publish_no_clv_block(site, base):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_only_post_kickoff_captures_publish_no_clv_block(site, base):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    _write_line(base, dt.datetime(2026, 10, 18, 17, 30), 6.0)      # in play: never a close
+    serve(schedules=_timed_sched("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["closing_line_value"] is None
+
+
+def test_an_unreadable_archive_drops_the_clv_block_not_the_record(site, base, monkeypatch):
+    store.write(_preds([("g1", 0.6, 3.0)]), "preds", "nfl", 2026, 1, base=base)
+    publish.predictions(2026, 1, base=base, out=site)
+    serve(schedules=_timed_sched("g1", 7))
+
+    def broken(base=None):
+        raise ValueError("corrupt snapshot")
+    monkeypatch.setattr(publish.store, "committed_lines", broken)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["closing_line_value"] is None and got["n_scored"] == 1

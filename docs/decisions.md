@@ -1085,6 +1085,34 @@ nothing assumes the slot time. No schedule change and no external dispatcher.
 measured 97-126 minute delay). `tests/contracts/test_capture_workflows_say_why.py` holds
 `poll_odds`'s commit step.
 
+**The close is archived with its lead time, CLV is published as descriptive, and h2h is polled
+(2026-10-16, #495).** `hub.closing.closes` returns each game's last capture at or before kickoff
+with `lead_minutes`; it is `is_true_close` only within 30 minutes, and a capture after kickoff is
+never offered. The scheduled polls cannot take a near-kickoff line (they start 4-8.5h late,
+#468), so the game-window loop (`live.yml`, which runs through every NFL window) asks each cycle
+whether a kickoff is within 15 minutes with no capture in that window, and dispatches
+`odds-close.yml` if so: **one call per distinct kickoff time**, not per game, since a call
+returns the whole season. Credit cost, stated: three markets (spreads, totals, h2h) x one region
+= 3 credits a call; a normal week has 6-7 kickoff times (18-21 credits), capped at 10 calls
+(30 credits) by `hub.closing.CLOSE_CALLS_PER_WEEK`, so about 90 a month typical and 130 at the cap.
+The six scheduled polls rise from 2 to 3 credits with h2h (12 to 18 a week, about 78 a month). The
+LLM study keeps its own about 89 a month (#445). Typical total about 257, worst about 297, against
+500 less the floor of 75 (`CREDIT_FLOOR`): 128 or more of headroom, and balance 462 on 2026-10-16.
+**The recorded `last_cost` 6 against a declared 2 is not a wrong declaration**: the request is one
+region and two markets, and the balance fell by exactly 2 a poll from 10-03 to 10-12. `last_cost`
+is the previous stored balance minus the new one, so it includes any other spend on the key between
+polls; about 12 credits went that way between 10-12 and 10-16, unattributed. Counted at up to
+120 a month the worst case is about 328 against 425 usable, so h2h and the cap of 10 stay.
+**h2h is added** (the `MARKETS` tuple; `ml_home_prob` is the per-book proportional de-vig,
+medianed over books, null where no book posted one). The CLV figure on `track_record.json`
+(`closing_line_value`, per season) is `close_prob(pick) - published_prob(pick)` in probability
+points on the side the published probability favours, using the spread-normal conversion on both
+ends so the difference holds no de-vig method; it carries n, a normal-approximation 95% interval,
+and the median lead of any group that is not a true close. **Descriptive and not
+pre-registered**: it asserts nothing and no verdict word is attached. Log loss against the close is
+published beside the prediction's own on the same games. A prediction stamped after the capture
+it is compared with is dropped and counted.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win

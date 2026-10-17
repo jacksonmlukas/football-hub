@@ -102,7 +102,12 @@ SPORT = "americanfootball_nfl"
 # which a comma count waves through and a name check refuses.
 MARKET = "spreads"
 TOTALS_MARKET = "totals"
-MARKETS = (MARKET, TOTALS_MARKET)
+# The moneyline (#495): +1 credit a poll (three markets x one region = three). It exists so the
+# close has a probability that does not assume a normal margin: per-book proportional de-vig,
+# then the median over books, as the LLM prereg does. The spread-normal conversion stays the
+# fallback for a game no book posted a moneyline on.
+H2H_MARKET = "h2h"
+MARKETS = (MARKET, TOTALS_MARKET, H2H_MARKET)
 
 REGION = "us"
 REGIONS = (REGION,)
@@ -150,12 +155,12 @@ class Poll:
 # Saturday are the original two; Thursday, Friday, Sunday-morning and Monday are the new
 # ones, and Thursday and Sunday-morning are the two #370 names by name.
 #
-# Cost is `len(MARKETS) * len(REGIONS)` a poll -- two credits today -- so six polls is 12 a
-# week, and a year runs 52.18 weeks to twelve months: 12 x 52.18 / 12 is about 52 credits a
-# month against the 500 free tier; `CREDIT_FLOOR` above still refuses the next pull below 75
-# regardless of how it got there. The maintainer approved the spend. `tests/contracts/
-# test_odds_schedule.py` holds `slate.yml`'s odds-polling crons to exactly this tuple, the
-# way `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
+# Cost is `len(MARKETS) * len(REGIONS)` a poll -- three credits since h2h joined (#495) -- so
+# six polls is 18 a week, and a year runs 52.18 weeks to twelve months: 18 x 52.18 / 12 is
+# about 78 credits a month against the 500 free tier; `CREDIT_FLOOR` above still refuses the
+# next pull below 75 regardless of how it got there. The maintainer approved the spend.
+# `tests/contracts/test_odds_schedule.py` holds `slate.yml`'s odds-polling crons to exactly this
+# tuple, the way `test_bigten_schedule.py` holds `bigten.yml` to `hub.fetch.bigten.DEADLINES`.
 POLL_SCHEDULE: tuple[Poll, ...] = (
     Poll("wednesday", 3, 11, 0),
     Poll("thursday", 4, 11, 0),
@@ -523,6 +528,35 @@ def _median_game_total(event: Mapping[str, Any]) -> tuple[float | None, float | 
     put every total outside any bound a contract could sanely declare.
     """
     return _median_quote(event, TOTALS_MARKET, OVER)
+
+
+def _implied(price: float) -> float:
+    """Implied probability of one American price, vig included."""
+    return 100.0 / (price + 100.0) if price > 0 else -price / (-price + 100.0)
+
+
+def _median_home_moneyline_prob(event: Mapping[str, Any], home: str, away: str) -> float | None:
+    """The home win probability from the moneyline: de-vigged within each book, then medianed.
+
+    Proportional de-vig per book (home implied / (home + away implied)) *before* the median,
+    because a median of raw prices takes the vig along with it, and different books carry
+    different vig. A book missing either side, or quoting a price that is not American, adds
+    nothing -- absent, never imputed -- and a game with no usable book is None, which the close
+    reads as "use the spread-normal fallback".
+    """
+    probs: list[float] = []
+    for book in event.get("bookmakers") or []:
+        for m in book.get("markets") or []:
+            if m.get("key") != H2H_MARKET:
+                continue
+            sides = {str(o.get("name") or "").lower(): _american(o.get("price"))
+                     for o in m.get("outcomes") or []}
+            ph, pa = sides.get(home.lower()), sides.get(away.lower())
+            if ph is None or pa is None:
+                continue
+            ih, ia = _implied(ph), _implied(pa)
+            probs.append(ih / (ih + ia))
+    return statistics.median(probs) if probs else None
 
 
 # --- staleness (#210) ---------------------------------------------------------
@@ -1119,6 +1153,7 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
         hit = _match_game(ev, index)
         spread, spread_price = _median_home_spread(ev, home_name)
         total, total_price = _median_game_total(ev)
+        ml_home = _median_home_moneyline_prob(ev, home_name, ev.get("away_team", ""))
         if not hit:
             no_game += 1
             continue
@@ -1144,7 +1179,7 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
         game_id, week = hit
         rows.append({"game_id": game_id, "close_spread": spread,
                      "spread_price": spread_price, "close_total": total,
-                     "total_price": total_price,
+                     "total_price": total_price, "ml_home_prob": ml_home,
                      "captured_at": when, "week": int(week)})
 
     # Counted apart. These used to share one tally reported as "no nflverse game for the
@@ -1167,7 +1202,7 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
 
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                                     "spread_price": pl.Float64, "close_total": pl.Float64,
-                                    "total_price": pl.Float64,
+                                    "total_price": pl.Float64, "ml_home_prob": pl.Float64,
                                     "captured_at": pl.Datetime, "week": pl.Int64})
     # GUARD staleness-stamped-against-the-archive: a row says how long its quote has stood
     # still, measured against every poll already stored rather than asserted as new

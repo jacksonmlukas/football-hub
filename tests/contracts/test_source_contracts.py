@@ -424,7 +424,12 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
     """
     import datetime as dt
 
-    from hub.fetch.odds import _median_game_total, _median_home_spread, staleness
+    from hub.fetch.odds import (
+        _median_game_total,
+        _median_home_moneyline_prob,
+        _median_home_spread,
+        staleness,
+    )
 
     events = load("odds_spreads.synthetic.json")
     rows = []
@@ -434,10 +439,13 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
         rows.append({"game_id": "2025_01_DAL_PHI", "close_spread": spread,
                      "spread_price": spread_price, "close_total": total,
                      "total_price": total_price,
+                     # the fixture posts no moneyline: stored null, never fabricated (#495)
+                     "ml_home_prob": _median_home_moneyline_prob(
+                         e, e["home_team"], e["away_team"]),
                      "captured_at": dt.datetime(2025, 9, 4, 18)})
     df = pl.DataFrame(rows, schema={"game_id": pl.Utf8, "close_spread": pl.Float64,
                                     "spread_price": pl.Float64, "close_total": pl.Float64,
-                                    "total_price": pl.Float64,
+                                    "total_price": pl.Float64, "ml_home_prob": pl.Float64,
                                     "captured_at": pl.Datetime})
     # The two staleness columns are derived, never parsed: `staleness` is the one producer.
     assert ODDS_SNAPSHOT.validate(staleness(df)).height == 1
@@ -489,7 +497,8 @@ def test_duplicate_games_fail():
 
 ODDS_COLUMNS = {"game_id": pl.Utf8, "close_spread": pl.Float64,
                 "spread_price": pl.Float64, "close_total": pl.Float64,
-                "total_price": pl.Float64, "captured_at": pl.Datetime}
+                "total_price": pl.Float64, "ml_home_prob": pl.Float64,
+                "captured_at": pl.Datetime}
 
 
 def _stamped(df: pl.DataFrame) -> pl.DataFrame:
@@ -504,7 +513,7 @@ def test_odds_allows_repeated_games_by_design():
     df = pl.DataFrame(
         {"game_id": ["g1", "g1"], "close_spread": [-3.0, -4.5],
          "spread_price": [-110.0, -105.0], "close_total": [44.5, 45.0],
-         "total_price": [-110.0, -110.0],
+         "total_price": [-110.0, -110.0], "ml_home_prob": [None, 0.62],
          "captured_at": [dt.datetime(2025, 9, 1), dt.datetime(2025, 9, 3)]},
         schema=ODDS_COLUMNS)
     assert ODDS_SNAPSHOT.validate(_stamped(df)).height == 2
@@ -517,7 +526,7 @@ def test_a_snapshot_that_does_not_say_how_long_its_number_has_stood_is_refused()
     df = pl.DataFrame(
         {"game_id": ["g1"], "close_spread": [-3.0], "spread_price": [-110.0],
          "close_total": [44.5], "total_price": [-110.0],
-         "captured_at": [dt.datetime(2025, 9, 1)]},
+         "ml_home_prob": [None], "captured_at": [dt.datetime(2025, 9, 1)]},
         schema=ODDS_COLUMNS)
     with pytest.raises(ContractViolation, match=r"polls_unmoved.*unmoved_since"):
         ODDS_SNAPSHOT.validate(df)
@@ -548,7 +557,7 @@ def test_a_snapshot_of_the_pre_totals_shape_reports_an_absent_total(tmp_path):
     new = pl.DataFrame(
         {"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.5],
          "spread_price": [-110.0], "close_total": [47.25], "total_price": [-107.44],
-         "captured_at": [dt.datetime(2025, 9, 3, 12)]},
+         "ml_home_prob": [None], "captured_at": [dt.datetime(2025, 9, 3, 12)]},
         schema=ODDS_COLUMNS)
     store.write(old, "lines", "nfl", 2025, 1, base=tmp_path, name="snap-old")
     store.write(ODDS_SNAPSHOT.validate(_stamped(new)), "lines", "nfl", 2025, 1,
@@ -559,3 +568,15 @@ def test_a_snapshot_of_the_pre_totals_shape_reports_an_absent_total(tmp_path):
     assert got.height == 2, "the older partition has to still be readable, not skipped"
     assert got["close_total"].to_list() == [None, 47.25]
     assert got["total_price"][0] is None, "an unpriced snapshot is null, never zero"
+
+
+def test_a_moneyline_probability_outside_zero_to_one_is_refused():
+    """#495: `ml_home_prob` is a probability. Planted at 1.4 so the bound is shown to bite."""
+    import datetime as dt
+    df = pl.DataFrame(
+        {"game_id": ["g1"], "close_spread": [-3.0], "spread_price": [-110.0],
+         "close_total": [44.5], "total_price": [-110.0], "ml_home_prob": [1.4],
+         "captured_at": [dt.datetime(2025, 9, 1)]},
+        schema=ODDS_COLUMNS)
+    with pytest.raises(ContractViolation, match="ml_home_prob"):
+        ODDS_SNAPSHOT.validate(_stamped(df))

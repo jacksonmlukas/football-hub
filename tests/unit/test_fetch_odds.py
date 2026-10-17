@@ -112,7 +112,7 @@ def test_both_declared_markets_ride_on_one_request(transport, teams, schedule, p
     calls = transport()
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
     assert len(calls) == 1, "a market is a parameter of one call, never a second call"
-    assert calls[0]["markets"] == "spreads,totals"
+    assert calls[0]["markets"] == "spreads,totals,h2h"
     assert calls[0]["regions"] == odds.REGION
     assert calls[0]["oddsFormat"] == "american", "the price columns are on this staying true"
 
@@ -124,7 +124,7 @@ def test_a_market_outside_the_declared_pair_is_refused(transport, teams, schedul
     `docs/decisions.md` puts a full week of props at 64. Counting separators waves it
     through; checking the name does not.
     """
-    for market in ("h2h", "player_pass_tds", "spreads,h2h", "alternate_spreads"):
+    for market in ("h2h_lay", "player_pass_tds", "spreads,alternate_h2h", "alternate_spreads"):
         calls = transport()
         with pytest.raises(odds.MultiplierRefused):
             odds.snapshot(season=2025, markets=market,
@@ -152,7 +152,7 @@ def test_asking_for_a_second_region_is_refused(transport, teams, schedule, paths
 def test_the_refusal_explains_the_cost(transport, teams, schedule, paths):
     transport()
     with pytest.raises(odds.MultiplierRefused) as e:
-        odds.snapshot(season=2025, markets="spreads,totals,h2h",
+        odds.snapshot(season=2025, markets="spreads,totals,h2h,player_pass_tds",
                       state_path=paths["state"], base=paths["store"])
     assert "credit" in str(e.value).lower()
 
@@ -162,9 +162,9 @@ def test_the_declared_budget_is_what_the_guard_allows(transport, teams, schedule
     widening the budget is editing those tuples rather than finding a spelling that slips
     past -- which is what "the refusal on a comma exists for a reason" has to mean once the
     refusal is no longer on a comma."""
-    assert odds.MARKETS == ("spreads", "totals")
+    assert odds.MARKETS == ("spreads", "totals", "h2h")
     assert odds.REGIONS == ("us",)
-    for good in ("spreads", "totals", "spreads,totals", "totals,spreads"):
+    for good in ("spreads", "totals", "h2h", "spreads,totals", "totals,h2h,spreads"):
         assert odds._budgeted(good, odds.MARKETS, "markets")
     for bad in ("", " spreads", "spreads,", ",spreads", "spreads, totals"):
         with pytest.raises(odds.MultiplierRefused):
@@ -533,12 +533,12 @@ def test_a_poll_charged_more_than_declared_says_so(transport, teams, schedule, p
     """
     paths["state"].write_text(json.dumps({"remaining": 400,
                                           "checked_at": "2026-09-09T12:00:00"}))
-    transport(remaining=397)          # charged 3; markets x regions declares 2
+    transport(remaining=396)          # charged 4; markets x regions declares 3
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
 
     said = capsys.readouterr().out
-    assert "WARNING" in said, f"a poll charged 3 against a declared 2 said nothing: {said}"
-    assert "3" in said and "2" in said, f"the warning names neither figure: {said}"
+    assert "WARNING" in said, f"a poll charged 4 against a declared 3 said nothing: {said}"
+    assert "4" in said and "3" in said, f"the warning names neither figure: {said}"
 
 
 def test_a_poll_charged_what_it_declared_stays_quiet(transport, teams, schedule, paths, capsys):
@@ -547,7 +547,7 @@ def test_a_poll_charged_what_it_declared_stays_quiet(transport, teams, schedule,
     """
     paths["state"].write_text(json.dumps({"remaining": 400,
                                           "checked_at": "2026-09-09T12:00:00"}))
-    transport(remaining=398)          # charged 2, exactly what markets x regions declares
+    transport(remaining=397)          # charged 3, exactly what markets x regions declares
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
 
     said = capsys.readouterr().out
@@ -1273,3 +1273,66 @@ def test_refresh_false_reads_the_cache_and_does_not_fetch():
 
     odds.load_qb_starters(2025)                                    # the default refreshes
     assert len(rep.served) == 2
+
+
+# --- the moneyline (#495) ---------------------------------------------------------------
+
+def _ml_event(prices):
+    """An event whose books each post one h2h market: `prices` is [(home, away), ...]."""
+    return {"home_team": "Philadelphia Eagles", "away_team": "Dallas Cowboys",
+            "bookmakers": [{"key": f"b{i}", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Philadelphia Eagles", "price": h},
+                {"name": "Dallas Cowboys", "price": a}]}]} for i, (h, a) in enumerate(prices)]}
+
+
+def test_h2h_is_the_third_declared_market_at_three_credits_a_poll():
+    assert "h2h" in odds.MARKETS
+    assert len(odds.MARKETS) * len(odds.REGIONS) == 3
+
+
+def test_a_book_is_de_vigged_proportionally_before_the_median():
+    # -150 / +130: implied 0.6 and 0.4348; the home share of the book is 0.6 / 1.0348.
+    got = odds._median_home_moneyline_prob(_ml_event([(-150, 130)]),
+                                           "Philadelphia Eagles", "Dallas Cowboys")
+    assert got == pytest.approx(0.6 / (0.6 + 100 / 230), abs=1e-9)
+    # An even-money pair carries no vig and is exactly a coin flip.
+    even = odds._median_home_moneyline_prob(_ml_event([(100, 100)]),
+                                            "Philadelphia Eagles", "Dallas Cowboys")
+    assert even == pytest.approx(0.5)
+
+
+def test_the_median_is_over_books_after_each_is_de_vigged():
+    prices = [(100, 100), (-150, 130), (-250, 200)]
+    got = odds._median_home_moneyline_prob(_ml_event(prices),
+                                           "Philadelphia Eagles", "Dallas Cowboys")
+    assert got == pytest.approx(0.6 / (0.6 + 100 / 230))
+
+
+def test_a_book_missing_a_side_or_a_non_american_price_adds_nothing():
+    ev = _ml_event([(-150, 130), (-110, -110)])
+    ev["bookmakers"][1]["markets"][0]["outcomes"].pop()
+    got = odds._median_home_moneyline_prob(ev, "Philadelphia Eagles", "Dallas Cowboys")
+    assert got == pytest.approx(0.6 / (0.6 + 100 / 230))
+    decimal = _ml_event([(1.5, 2.3)])
+    assert odds._median_home_moneyline_prob(
+        decimal, "Philadelphia Eagles", "Dallas Cowboys") is None
+
+
+def test_a_game_with_no_moneyline_stores_null_and_keeps_its_spread(
+        transport, teams, schedule, paths):
+    transport()
+    df = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    assert df.height > 0 and df["ml_home_prob"].null_count() == df.height
+    assert df["close_spread"].null_count() == 0
+
+
+def test_the_moneyline_probability_reaches_the_stored_row(
+        transport, teams, schedule, paths):
+    ev = _event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5)
+    for b in ev["bookmakers"]:
+        b["markets"].append({"key": "h2h", "outcomes": [
+            {"name": "Philadelphia Eagles", "price": -150},
+            {"name": "Dallas Cowboys", "price": 130}]})
+    transport(events=[ev])
+    df = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    assert df["ml_home_prob"].to_list() == [pytest.approx(0.6 / (0.6 + 100 / 230))]
