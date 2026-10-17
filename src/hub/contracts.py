@@ -18,6 +18,8 @@ ask the declaration.
 """
 from __future__ import annotations
 
+import itertools
+import math
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -1071,3 +1073,44 @@ SNAP_COUNTS = not_an_input(Contract(
     "a plausibility bound on what PFR may return -- offense_pct in [0, 1.05], where "
     "PFR's own rounding reaches 1.01 -- read by the fetch layer's refusal and by no "
     "prediction; #71: adding a data source must not move a model version")
+
+
+def check_roster_artifact(payload: dict[str, Any]) -> None:
+    """The roster artifact's #479 fields: quantiles, swaps with odds, unprojected names.
+
+    A payload written before they existed carries none of them and passes: every check is
+    on a field that is present. Raises `ContractViolation` naming every problem.
+    """
+    problems: list[str] = []
+    rows = payload.get("rows") or []
+    names = {r.get("player") for r in rows}
+    for r in rows:
+        q = r.get("quantiles")
+        if q is None:
+            continue
+        # GUARD roster-quantiles-are-twenty-sorted-non-negative [unit/test_swaps.py]: the
+        # 20-dot plot draws these as they come
+        if not (isinstance(q, list) and len(q) == 20
+                and all(isinstance(v, (int, float)) and math.isfinite(v) and v >= 0 for v in q)
+                and all(a <= b for a, b in itertools.pairwise(q))):
+            problems.append(f"{r.get('player')}: quantiles are not 20 finite, non-negative, "
+                            f"non-decreasing numbers")
+        # /GUARD
+    for s in payload.get("swaps") or []:
+        p = s.get("p_in_beats_out")
+        # GUARD roster-odds-are-a-probability-or-null [unit/test_swaps.py]: a share of draws
+        if p is not None and not (isinstance(p, (int, float)) and 0.0 <= p <= 1.0):
+            problems.append(f"swap {s.get('out')} -> {s.get('in')}: p_in_beats_out {p!r} "
+                            f"is not in [0, 1] or null")
+        # /GUARD
+        for side in ("out", "in"):
+            who = s.get(side)
+            # GUARD roster-swap-names-are-rostered [unit/test_swaps.py]: the page looks each
+            # name up in `rows` and renders a gap as `?`
+            if who is not None and who not in names:
+                problems.append(f"swap {side} {who!r} is not a rostered row")
+            # /GUARD
+    # GUARD roster-problems-are-raised [unit/test_swaps.py]: collected problems are refused
+    if problems:
+        raise ContractViolation("; ".join(problems))
+    # /GUARD
