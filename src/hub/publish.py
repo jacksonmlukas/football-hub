@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -1011,12 +1012,74 @@ def artifacts(season: int, week: int, base: Path | None = None,
     ]
 
 
+# The two capture jobs write their own status files (`bigten.json`, `cfbd.json`) from CI, not
+# from this module. The page used to fetch both itself to draw its status line; the manifest
+# lists them now (#480), so the status line reads one file.
+SIDE_SOURCES = ("bigten", "cfbd")
+
+
+def side_record(out: Path, name: str) -> dict[str, Any]:
+    """The manifest entry for a source this module does not write: its own `stale` and
+    `reason`, copied rather than judged -- the capture job knows why it failed and this
+    module does not. Absent or unreadable is a standing reason and never an exception
+    (CLAUDE.md, graceful degradation)."""
+    path = out / f"{name}.json"
+    if not path.exists():
+        return {"name": name, "present": False, "stale": True,
+                "reason": f"no {name}.json has been published", "generated_at": None}
+    try:
+        got = json.loads(path.read_text())
+    except (OSError, ValueError):
+        got = None
+    if not isinstance(got, dict):
+        return {"name": name, "present": True, "stale": True,
+                "reason": f"{name}.json could not be read", "generated_at": None}
+    reason = got.get("reason")
+    return {"name": name, "present": True,
+            # An unfetched source is not fresh whatever its file forgot to say.
+            "stale": bool(got.get("stale")) or got.get("fetched") is False,
+            "reason": reason if isinstance(reason, str) else None,
+            "generated_at": got.get("generated_at")}
+
+
+_PREDS_NAME = re.compile(r"^preds_(\d{4})_wk(\d+)$")
+
+
+def published_weeks(out: Path) -> list[dict[str, Any]]:
+    """Every `preds_*.json` in `out`, newest first.
+
+    The directory is the record of what was published, so this reads it rather than keeping
+    a second list: the page's hard-coded archive was exactly that second list. Season and
+    week come off the file, falling back to the name `preds_name` wrote, so a file that
+    cannot be read is still listed -- dropping it would hide a week that is there.
+    """
+    rows: list[dict[str, Any]] = []
+    for path in out.glob("preds_*.json"):
+        try:
+            got = json.loads(path.read_text())
+        except (OSError, ValueError):
+            got = None
+        got = got if isinstance(got, dict) else {}
+        m = _PREDS_NAME.match(path.stem)
+        season, wk = got.get("season"), got.get("week")
+        rows.append({
+            "name": path.stem,
+            "season": season if isinstance(season, int) else (int(m[1]) if m else None),
+            "week": wk if isinstance(wk, int) else (int(m[2]) if m else None),
+            "generated_at": got.get("generated_at"),
+        })
+    return sorted(rows, key=lambda r: (r["season"] is not None, r["season"] or 0,
+                                       r["week"] or 0, r["name"]), reverse=True)
+
+
 def publish_all(season: int, week: int, base: Path | None = None,
                 out: Path | None = None) -> dict[str, Any]:
     """Write every artifact and a manifest describing what the page can trust."""
     out = out or SITE
     arts = [a.record(out) for a in artifacts(season, week, base=base, out=out)]
-    man = {"generated_at": jsonio.stamp(), "season": season, "week": week, "artifacts": arts}
+    arts += [side_record(out, n) for n in SIDE_SOURCES]
+    man = {"generated_at": jsonio.stamp(), "season": season, "week": week, "artifacts": arts,
+           "weeks": published_weeks(out)}
     _write(out, "manifest", man)
     return man
 
