@@ -1177,6 +1177,7 @@ def test_the_pages_own_guards_survive_their_excision_syntactically(node):
     """Same check against the real markers: if one of them straddles a brace, the red run
     below would be a parse failure wearing a guard's name."""
     for guard in _declared():
+        assert guard.path is not None
         got = _parses(node, _without(guard.path.read_text(), guard))
         assert got.returncode == 0, (
             f"removing guard {guard.name!r} leaves script that will not parse "
