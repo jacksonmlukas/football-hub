@@ -1098,6 +1098,11 @@ returns the whole season. Credit cost, stated: three markets (spreads, totals, h
 The six scheduled polls rise from 2 to 3 credits with h2h (12 to 18 a week, about 78 a month). The
 LLM study keeps its own about 89 a month (#445). Typical total about 257, worst about 297, against
 500 less the floor of 75 (`CREDIT_FLOOR`): 128 or more of headroom, and balance 462 on 2026-10-16.
+**The recorded `last_cost` 6 against a declared 2 is not a wrong declaration**: the request is one
+region and two markets, and the balance fell by exactly 2 a poll from 10-03 to 10-12. `last_cost`
+is the previous stored balance minus the new one, so it includes any other spend on the key between
+polls; about 12 credits went that way between 10-12 and 10-16, unattributed. Counted at up to
+120 a month the worst case is about 328 against 425 usable, so h2h and the cap of 10 stay.
 **h2h is added** (the `MARKETS` tuple; `ml_home_prob` is the per-book proportional de-vig,
 medianed over books, null where no book posted one). The CLV figure on `track_record.json`
 (`closing_line_value`, per season) is `close_prob(pick) - published_prob(pick)` in probability
