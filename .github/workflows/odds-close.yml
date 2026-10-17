@@ -42,29 +42,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
 
+      # The attempt marker (`state/odds_close_attempts.json`) is committed and pushed BEFORE the
+      # odds request (`--commit-attempt`): if that push fails no request is made, and if the
+      # capture's own push is lost afterwards the window is still on the record as spent, so the
+      # next cycle cannot pay for it again.
       - name: Capture the line if a kickoff is imminent
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: uv run python -m hub.closing --capture
+        run: uv run python -m hub.closing --capture --commit-attempt
 
       # `state/` carries the capture under `state/odds/` and the credit balance
-      # `state/odds.json`. The rebase keeps our newer balance on a conflict with a poll that
-      # committed meanwhile (`-X theirs` is *our* commit during a rebase); snapshot files are
-      # uniquely named and cannot conflict.
+      # `state/odds.json`. `always()` so a request that spent and then failed still commits the
+      # balance it recorded.
       - name: Commit the capture
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state
-          if git diff --cached --quiet; then
-            echo "nothing captured; no commit"
-            exit 0
-          fi
-          git commit -m "odds: close capture ($(date -u +%Y-%m-%dT%H:%MZ))"
-          for attempt in 1 2 3; do
-            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" || { git rebase --abort || true; }
-            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
-            sleep 5
-          done
-          echo "::warning::the close capture could not be pushed; it is lost with the runner"
-          exit 1
+        if: always()
+        run: .github/scripts/commit-state.sh 'odds - close capture'

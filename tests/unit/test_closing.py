@@ -309,3 +309,111 @@ def test_kickoff_table_reads_kickoffs_from_the_schedule_and_degrades_without_tim
 def test_capture_cli_returns_zero_when_a_gated_capture_completes(monkeypatch):
     monkeypatch.setattr(closing, "capture", lambda season, **kw: 1)
     assert closing.main(["--capture"]) == 0
+
+
+# --- credits that cannot be wasted (review of #495) ----------------------------------------
+
+@pytest.fixture(autouse=True)
+def _attempts_in_tmp(tmp_path, monkeypatch):
+    """Attempts are committed state; a test must never write the repo's."""
+    monkeypatch.setattr(closing, "ATTEMPTS_FILE", tmp_path / "attempts.json")
+
+
+def test_a_game_missing_from_the_response_does_not_keep_the_window_due():
+    # `a` was captured 11 minutes out; `b` kicks off with it but the response had no row for it.
+    arc = _arc(("a", _min(11), 3.0))
+    kicks = _kicks(("a", KICK), ("b", KICK))
+    assert closing.due(arc, kicks, _min(6)).is_empty()
+
+
+def test_a_window_whose_response_matched_nothing_is_spent_exactly_once():
+    kicks = _kicks(("a", KICK), ("b", KICK))
+    f = _Fetch()
+    assert closing.capture(2026, now=_min(10), kickoffs=kicks, archive=_arc(), fetch=f) == 1
+    # The response matched no game, so the archive is still empty -- the attempt is what counts.
+    assert closing.capture(2026, now=_min(6), kickoffs=kicks, archive=_arc(), fetch=f) == 0
+    assert f.calls == 1
+
+
+def test_a_lost_capture_push_leaves_the_window_marked_attempted():
+    kicks = _kicks(("a", KICK))
+    f = _Fetch()
+    closing.capture(2026, now=_min(10), kickoffs=kicks, archive=_arc(), fetch=f,
+                    publish_attempt=lambda: None)
+    assert closing.read_attempts() == [_min(10)]
+    # The capture never reached the archive (push lost); a second run in the window pays nothing.
+    assert closing.capture(2026, now=_min(5), kickoffs=kicks, archive=_arc(), fetch=f) == 0
+    assert f.calls == 1
+
+
+def test_an_attempt_that_cannot_be_published_makes_no_request():
+    f = _Fetch()
+
+    def push_fails():
+        raise OSError("push rejected")
+    with pytest.raises(closing.AttemptNotRecorded):
+        closing.capture(2026, now=_min(10), kickoffs=_kicks(("a", KICK)), archive=_arc(),
+                        fetch=f, publish_attempt=push_fails)
+    assert f.calls == 0
+
+
+def test_attempts_without_captures_count_toward_the_weekly_cap():
+    for i in range(closing.CLOSE_CALLS_PER_WEEK):
+        closing.record_attempt(KICK - dt.timedelta(days=1, hours=i))
+    f = _Fetch()
+    with pytest.raises(closing.CloseBudgetExceeded):
+        closing.capture(2026, now=_min(10), kickoffs=_kicks(("a", KICK)), archive=_arc(), fetch=f)
+    assert f.calls == 0
+
+
+def test_an_attempt_and_its_own_capture_are_one_call_not_two():
+    closing.record_attempt(_min(12))
+    arc = _arc(("a", _min(11), 3.0))
+    assert closing.calls_in_week(arc, _kicks(("a", KICK)), _min(5), closing.read_attempts()) == 1
+
+
+def test_the_floor_refuses_before_an_attempt_is_recorded(tmp_path):
+    state = tmp_path / "odds.json"
+    state.write_text('{"remaining": 10, "checked_at": "2026-10-18T10:00:00"}')
+    with pytest.raises(odds.QuotaFloor):
+        closing.capture(2026, now=_min(10), kickoffs=_kicks(("a", KICK)), archive=_arc(),
+                        state_path=state, fetch=_Fetch())
+    assert closing.read_attempts() == []
+
+
+def test_a_missing_or_corrupt_attempt_file_reads_as_no_attempts(tmp_path):
+    assert closing.read_attempts(tmp_path / "nope.json") == []
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert closing.read_attempts(bad) == []
+
+
+def test_old_attempts_are_pruned_when_a_new_one_is_recorded(tmp_path):
+    p = tmp_path / "a.json"
+    closing.record_attempt(KICK - dt.timedelta(days=40), p)
+    closing.record_attempt(KICK, p)
+    assert closing.read_attempts(p) == [KICK]
+
+
+def test_the_commit_attempt_flag_publishes_through_the_shared_script(monkeypatch):
+    seen = {}
+
+    def fake_capture(season, publish_attempt=None, **kw):
+        seen["publish"] = publish_attempt
+        return 1
+    ran = []
+    monkeypatch.setattr(closing, "capture", fake_capture)
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: ran.append(cmd))
+    assert closing.main(["--capture", "--commit-attempt"]) == 0
+    seen["publish"]()
+    assert ran and ran[0][0].endswith("commit-state.sh")
+    assert closing.main(["--capture"]) == 0 and seen["publish"] is None
+
+
+def test_an_unrecorded_attempt_is_a_refusal_with_exit_one(monkeypatch, capsys):
+    def refuse(season, **kw):
+        raise closing.AttemptNotRecorded("push rejected")
+    monkeypatch.setattr(closing, "capture", refuse)
+    assert closing.main(["--capture", "--commit-attempt"]) == 1
+    assert "push rejected" in capsys.readouterr().err

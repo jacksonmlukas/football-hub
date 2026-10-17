@@ -32,6 +32,7 @@ figure with its n and an interval and no verdict word; nothing pre-registered re
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import statistics
 import sys
@@ -42,11 +43,12 @@ from typing import Any
 
 import polars as pl
 
-from hub import store
+from hub import atomic, store
 from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
 from hub.fetch import odds
 from hub.models.market import MARGIN_SD, normal_cdf
+from hub.paths import ROOT, STATE_DIR
 
 # Fire a capture when a kickoff is this close. Sized to the loop's cadence (a cycle every five
 # minutes, so a window of fifteen gives at least two chances before the kickoff) and small
@@ -100,43 +102,85 @@ def closes(archive: pl.DataFrame, kickoffs: pl.DataFrame) -> pl.DataFrame:
         (pl.col("lead_minutes") <= TRUE_CLOSE_LEAD_MIN).alias("is_true_close"))
 
 
-def due(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime) -> pl.DataFrame:
-    """Games whose kickoff is within the window, still ahead, with no capture inside it yet.
+def due(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime,
+        attempts: Sequence[datetime] = ()) -> pl.DataFrame:
+    """Games whose kickoff is within the window, still ahead, with nothing spent inside it yet.
 
     Strictly ahead: at or after kickoff nothing is due, because a line fetched then is not a
-    pre-game line. Covered means a capture exists whose lead on that game is in
-    `[0, CLOSE_WINDOW_MIN]`, which is what makes a second cycle in the same window a no-op.
+    pre-game line. A window is **covered once any capture of any game, or any recorded attempt,
+    falls inside it** -- not only a row for that game. One call returns the whole season, so a
+    game missing from the response (no line posted, or unmatched to a nflverse game) would
+    otherwise stay due and re-spend every cycle; the window spends at most once. `attempts` are
+    the moments a call was started (`record_attempt`), kept so a call whose capture never landed
+    -- a lost push, a response that matched nothing -- still counts.
     """
     soon = (kickoffs.drop_nulls("kickoff")
             .filter((pl.col("kickoff") > now)
                     & (pl.col("kickoff") <= now + timedelta(minutes=CLOSE_WINDOW_MIN))))
-    if soon.is_empty() or archive.is_empty():
+    if soon.is_empty():
         return soon.select("game_id", "kickoff")
-    covered = (archive.select("game_id", "captured_at")
-               .join(soon.select("game_id", "kickoff"), on="game_id")
-               .filter((pl.col("captured_at") <= pl.col("kickoff"))
-                       & (pl.col("captured_at")
-                          >= pl.col("kickoff") - timedelta(minutes=CLOSE_WINDOW_MIN)))
-               .select("game_id").unique())
-    return soon.join(covered, on="game_id", how="anti").select("game_id", "kickoff")
+    stamps = list(attempts)
+    if not archive.is_empty():
+        stamps += archive["captured_at"].unique().to_list()
+    window = timedelta(minutes=CLOSE_WINDOW_MIN)
+    keep = [any(k - window <= t <= k for t in stamps) is False
+            for k in soon["kickoff"].to_list()]
+    return soon.filter(pl.Series(keep, dtype=pl.Boolean)).select("game_id", "kickoff")
 
 
-def calls_in_week(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime) -> int:
-    """Distinct captures in the last seven days taken inside some game's close window.
+def calls_in_week(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime,
+                  attempts: Sequence[datetime] = ()) -> int:
+    """Calls spent in the last seven days on close windows: attempts, plus unmatched captures.
 
-    A capture is one call however many games it covers, so this counts distinct `captured_at`
-    stamps. A scheduled poll that happened to land in a window counts too: it spent the same
-    credits.
+    Every recorded attempt counts, whether or not a capture followed it. A capture taken inside
+    some game's window counts too unless an attempt shortly precedes it (`_SAME_CALL_MIN`) --
+    that is the attempt's own capture, and counting both would charge one call twice. A
+    scheduled poll that happened to land in a window is such a capture: it spent the credits.
     """
-    if archive.is_empty() or kickoffs.is_empty():
-        return 0
-    recent = archive.filter(pl.col("captured_at") > now - timedelta(days=7))
-    inside = (recent.select("game_id", "captured_at")
-              .join(kickoffs.select("game_id", "kickoff").drop_nulls("kickoff"), on="game_id")
-              .filter((pl.col("captured_at") <= pl.col("kickoff"))
-                      & (pl.col("captured_at")
-                         >= pl.col("kickoff") - timedelta(minutes=TRUE_CLOSE_LEAD_MIN))))
-    return int(inside["captured_at"].n_unique()) if inside.height else 0
+    week_ago = now - timedelta(days=7)
+    tried = sorted(t for t in attempts if t > week_ago)
+    caps: list[datetime] = []
+    if not archive.is_empty() and not kickoffs.is_empty():
+        recent = archive.filter(pl.col("captured_at") > week_ago)
+        inside = (recent.select("game_id", "captured_at")
+                  .join(kickoffs.select("game_id", "kickoff").drop_nulls("kickoff"),
+                        on="game_id")
+                  .filter((pl.col("captured_at") <= pl.col("kickoff"))
+                          & (pl.col("captured_at")
+                             >= pl.col("kickoff") - timedelta(minutes=TRUE_CLOSE_LEAD_MIN))))
+        caps = inside["captured_at"].unique().to_list() if inside.height else []
+    gap = timedelta(minutes=_SAME_CALL_MIN)
+    extra = [c for c in caps if not any(t <= c <= t + gap for t in tried)]
+    return len(tried) + len(extra)
+
+
+# --- the attempt record -----------------------------------------------------------------
+#
+# Written and committed BEFORE the request (`capture`), so a call whose capture is lost (the
+# push fails, the response matches nothing) is still counted against the window and the weekly
+# cap. Without it the next cycle pays again for a window it already paid for.
+
+ATTEMPTS_FILE = STATE_DIR / "odds_close_attempts.json"
+_SAME_CALL_MIN = not_an_input(
+    10, "how far after an attempt its own capture may land; accounting only, no prediction")
+
+
+class AttemptNotRecorded(Exception):
+    """The attempt marker could not be committed, so no request was made."""
+
+
+def read_attempts(path: Path | None = None) -> list[datetime]:
+    try:
+        doc = json.loads(Path(path or ATTEMPTS_FILE).read_text())
+        return [datetime.fromisoformat(t) for t in doc.get("attempts", [])]
+    except Exception:
+        return []
+
+
+def record_attempt(when: datetime, path: Path | None = None) -> None:
+    keep = [t for t in read_attempts(path) if t > when - timedelta(days=30)]
+    doc = {"attempts": [t.isoformat() for t in [*keep, when]]}
+    atomic.write_text(Path(path or ATTEMPTS_FILE), json.dumps(doc, indent=1) + "\n")
 
 
 def kickoff_table(season: int) -> pl.DataFrame:
@@ -155,31 +199,52 @@ def capture(season: int = SEASON_AHEAD, *, now: datetime | None = None,
             kickoffs: pl.DataFrame | None = None, archive: pl.DataFrame | None = None,
             state_path: Path | None = None, base: Path | None = None,
             floor: int = odds.CREDIT_FLOOR,
-            fetch: Callable[..., Any] | None = None) -> int:
-    """One gated close capture. Returns the credits' worth of calls made: 0 or 1.
+            fetch: Callable[..., Any] | None = None,
+            attempts_path: Path | None = None,
+            publish_attempt: Callable[[], None] | None = None) -> int:
+    """One gated close capture. Returns the number of calls made: 0 or 1.
 
     Spends nothing unless a game is `due`. The weekly cap and the credit floor are checked
     before the request is formed; both raise rather than skip, so the loop's log says why.
-    `fetch` is `odds.snapshot` unless a test substitutes the reach.
+    **The attempt is recorded, and published if `publish_attempt` is given, before the request**:
+    if it cannot be published no request is made (`AttemptNotRecorded`), and if the capture is
+    lost afterwards the window is still marked spent. `fetch` is `odds.snapshot` unless a test
+    substitutes the reach.
     """
     when = now or datetime.now(UTC).replace(tzinfo=None)
     kicks = kickoffs if kickoffs is not None else kickoff_table(season)
     arc = archive if archive is not None else store.lines(season, base=base)
-    pending = due(arc, kicks, when)
+    tried = read_attempts(attempts_path)
+    pending = due(arc, kicks, when, tried)
     if pending.is_empty():
         print("  close capture: no kickoff inside the window without a capture; nothing spent")
         return 0
     # GUARD close-calls-capped-per-week [unit/test_closing.py]: a runaway loop cannot drain the
     # month through this door; the credit floor below is the second, independent stop
-    used = calls_in_week(arc, kicks, when)
+    used = calls_in_week(arc, kicks, when, tried)
     if used >= CLOSE_CALLS_PER_WEEK:
         raise CloseBudgetExceeded(
             f"{used} close-window calls in the last 7 days, cap is {CLOSE_CALLS_PER_WEEK}. "
             f"Refusing before a request is formed.")
     # /GUARD
+    have = odds.known_balance(state_path, when, floor=floor)
+    if have is not None and have < floor:
+        raise odds.QuotaFloor(f"{have} credits left, floor is {floor}. Refusing before "
+                              f"recording an attempt or spending one.")
     cost = len(odds.MARKETS) * len(odds.REGIONS)
     print(f"  close capture: {pending.height} game(s) kick off within {CLOSE_WINDOW_MIN} min; "
           f"one call, {cost} credits ({used + 1} of {CLOSE_CALLS_PER_WEEK} this week)")
+    # GUARD attempt-recorded-before-the-request [unit/test_closing.py]: the spend is on the
+    # record before it happens, so a lost capture cannot be paid for twice
+    record_attempt(when, attempts_path)
+    if publish_attempt is not None:
+        try:
+            publish_attempt()
+        except Exception as e:
+            raise AttemptNotRecorded(
+                f"the attempt marker could not be committed ({type(e).__name__}: {e}); "
+                f"no request was made") from e
+    # /GUARD
     (fetch or odds.snapshot)(season, state_path=state_path, base=base, floor=floor, now=when)
     return 1
 
@@ -188,7 +253,8 @@ def is_due(season: int = SEASON_AHEAD, *, now: datetime | None = None,
            base: Path | None = None) -> bool:
     """Whether a close capture is due now. Reads the archive and schedule; spends nothing."""
     when = now or datetime.now(UTC).replace(tzinfo=None)
-    return not due(store.lines(season, base=base), kickoff_table(season), when).is_empty()
+    return not due(store.lines(season, base=base), kickoff_table(season), when,
+                   read_attempts()).is_empty()
 
 
 # --- closing-line value -----------------------------------------------------------------
@@ -331,11 +397,20 @@ def report(season: int = SEASON_AHEAD, base: Path | None = None) -> int:
     return 0
 
 
+def _commit_marker() -> None:
+    """Commit and push `state/` through the shared script; raises if that fails."""
+    import subprocess
+    subprocess.run([str(ROOT / ".github" / "scripts" / "commit-state.sh"),
+                    "odds: close attempt"], check=True, timeout=300)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="hub.closing", description=__doc__.split("\n")[0])
     ap.add_argument("--report", action="store_true", help="summarise closes; spends nothing")
     ap.add_argument("--capture", action="store_true",
                     help="one gated odds call if a kickoff is within the window")
+    ap.add_argument("--commit-attempt", action="store_true",
+                    help="commit the attempt marker before the request (the workflow's mode)")
     ap.add_argument("--due", action="store_true",
                     help="exit 0 if a capture is due, 1 if not, 2 if that cannot be told; "
                          "spends nothing")
@@ -350,9 +425,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
     if a.capture:
         try:
-            capture(a.season)
+            capture(a.season, publish_attempt=_commit_marker if a.commit_attempt else None)
         except (odds.QuotaFloor, odds.MultiplierRefused, CloseBudgetExceeded,
-                odds.SnapshotIncomplete) as e:
+                odds.SnapshotIncomplete, AttemptNotRecorded) as e:
             print(f"hub.closing: {e}", file=sys.stderr)
             return 1
         except Exception as e:

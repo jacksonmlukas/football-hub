@@ -203,7 +203,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOSE_SYNC_REF: ${{ github.ref_name }}
-          CYCLE_HOOK: .github/scripts/close-dispatch.sh gh workflow run odds-close.yml --repo ${{ github.repository }}
+          CYCLE_HOOK: .github/scripts/close-dispatch.sh gh workflow run odds-close.yml --repo ${{ github.repository }} --ref ${{ github.ref_name }}
         run: |
           .github/scripts/live-loop.sh \
             "$(( ${{ inputs.minutes || 115 }} * 60 ))" \

@@ -100,3 +100,23 @@ def test_a_scheduled_odds_poller_is_still_the_only_cron_that_spends_credits():
 def test_the_scripts_are_executable_and_parse(script):
     assert os.access(script, os.X_OK)
     subprocess.run(["bash", "-n", str(script)], check=True)
+
+
+def test_the_dispatch_names_the_same_branch_the_state_is_synced_from():
+    doc = yaml.safe_load((WORKFLOWS / "live.yml").read_text())
+    step = next(s for s in doc["jobs"]["refresh"]["steps"]
+                if s.get("name") == "Refresh the overlay through the window")
+    assert step["env"]["CLOSE_SYNC_REF"] == "${{ github.ref_name }}"
+    assert step["env"]["CYCLE_HOOK"].endswith("--ref ${{ github.ref_name }}"), (
+        "the dispatched run and the state sync could land on different branches")
+
+
+def test_the_attempt_is_committed_before_the_request_and_the_capture_always_commits():
+    doc = yaml.safe_load((WORKFLOWS / "odds-close.yml").read_text())
+    steps = doc["jobs"]["capture"]["steps"]
+    cap = next(s for s in steps if "hub.closing --capture" in s.get("run", ""))
+    assert "--commit-attempt" in cap["run"], "the marker is not published before the request"
+    commit = next(s for s in steps if "commit-state.sh" in s.get("run", ""))
+    assert commit["if"] == "always()"
+    assert steps.index(commit) > steps.index(cap)
+    assert os.access(ROOT / ".github" / "scripts" / "commit-state.sh", os.X_OK)
