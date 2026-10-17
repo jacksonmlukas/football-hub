@@ -141,9 +141,8 @@ def team_lines(games: pl.DataFrame, week: int, bye: frozenset[str],
     return out
 
 
-def _iso(value: Any) -> str | None:
-    if value is None:
-        return None
+def _iso(value: Any) -> str:
+    """The capture's stamp as text; only a priced row reaches here, so it is never None."""
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 

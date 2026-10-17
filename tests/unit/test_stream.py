@@ -23,6 +23,7 @@ def _games():
         ("g5", "III", "JJJ", datetime(2026, 10, 18, 9, 0), "live", CAP),   # already started
         ("g6", "KKK", "LLL", LATE, "live", CAP),                 # capture carries no total
         ("g7", "MMM", "NNN", EARLY, "live", IN_PLAY),            # only capture is in play
+        ("g8", "", "OOO", LATE, "live", CAP),                    # a team the canon cannot place
     ]
     return pl.DataFrame(
         {"game_id": [r[0] for r in rows], "week": [5] * len(rows),
