@@ -123,6 +123,7 @@ FLOOR: dict[str, int] = {
     "src/hub/paths.py": 0,
     "src/hub/prereg.py": 0,
     "src/hub/publish.py": 15,
+    "src/hub/publish_ledger.py": 10,
     "src/hub/schedule.py": 0,
     "src/hub/season/__init__.py": 0,
     "src/hub/season/journal.py": 0,

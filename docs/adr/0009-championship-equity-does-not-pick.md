@@ -1,3 +1,11 @@
+---
+name: Championship equity
+verdict: Removed
+figure: "-13.49 pts/team-game, 4 of 4 resolved"
+as_of: 2026-10-09
+issue: 467
+---
+
 # Championship equity does not pick
 
 **Status:** accepted 2026-08-24.

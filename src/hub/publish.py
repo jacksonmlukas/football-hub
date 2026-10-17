@@ -1009,6 +1009,7 @@ def artifacts(season: int, week: int, base: Path | None = None,
                  "no roster yet -- run `python -m hub.season.roster --write`"),
         Artifact("draft_board", lambda: _board(out), "run `make draft`"),
         Artifact("survivor", lambda: survivor(season, out=out), "schedule unavailable"),
+        Artifact("ledger", lambda: _ledger(out), "no measured verdicts found"),
     ]
 
 
@@ -1072,6 +1073,13 @@ def published_weeks(out: Path) -> list[dict[str, Any]]:
         })
     return sorted(rows, key=lambda r: (r["season"] is not None, r["season"] or 0,
                                        r["week"] or 0, r["name"]), reverse=True)
+
+
+def _ledger(out: Path) -> dict[str, Any] | Kept:
+    # Imported here: `hub.publish_ledger` writes through `_publish`, defined above.
+    from hub.publish_ledger import ledger
+
+    return ledger(out=out)
 
 
 def publish_all(season: int, week: int, base: Path | None = None,
@@ -1286,6 +1294,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--predictions", action="store_true", help="one week's predictions")
     ap.add_argument("--track-record", action="store_true", help="calibration page data")
     ap.add_argument("--live", action="store_true", help="live scores overlay only")
+    ap.add_argument("--ledger", action="store_true",
+                    help="one row per measured verdict, from the ADR front matter (#483)")
     ap.add_argument("--league", default="nfl", choices=sorted(LEAGUE_PATHS),
                     help="which board the overlay is for; the window decides (--live only)")
     # The destination is a parameter of every producer in this module and was the one thing
@@ -1326,6 +1336,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("  track_record: " + seen.sentence(
             lambda got: f"{got['n_scored']} scored, "
                         f"{got['n_preregistered']} pre-registered"))
+        return 0
+    if a.ledger:
+        seen = read(_ledger(a.out or SITE), "nothing found; last-good kept")
+        print("  ledger: " + seen.sentence(lambda got: f"{got['n']} verdicts"))
         return 0
     if not a.all:
         ap.print_help()

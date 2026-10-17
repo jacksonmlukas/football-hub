@@ -1,3 +1,11 @@
+---
+name: Market/Usage blend
+verdict: Removed
+figure: "-1.004 pts/team-week, CI [-1.391, -0.621], 0 of 4 seasons"
+as_of: 2026-09-11
+issue: 44
+---
+
 # The market/Usage blend is a model, and gets one clean gate
 
 **Status:** accepted 2026-08-29. **Resolved: SHOW — superseded 2026-09-07 (#44).** Run under

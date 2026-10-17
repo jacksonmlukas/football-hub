@@ -1,3 +1,10 @@
+---
+name: Snap-share trend
+verdict: Shown never ranked
+figure: "partial r +0.236, 12 of 12 cells"
+as_of: 2026-08-27
+---
+
 # The snap trend is shown, and never ranked on
 
 **Status:** accepted 2026-08-25.
