@@ -163,25 +163,25 @@ def build(root: Path | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     """Every row, and every reason a source that claimed a verdict yielded none."""
     root = root or ROOT
     rows: list[dict[str, Any]] = []
-    problems: list[str] = []
+    notes: list[str] = []
     for path in _docs(root):
         try:
             text = path.read_text()
         except OSError as e:
-            problems.append(f"{_rel(path, root)}: unreadable ({e.__class__.__name__})")
+            notes.append(f"{_rel(path, root)}: unreadable ({e.__class__.__name__})")
             continue
         block = front_matter(text)
         if block is None or "verdict" not in block:
             continue
         row, bad = _doc_row(path, root, block)
-        problems += bad
+        notes += bad
         if row:
             rows.append(row)
-            problems += _later_than_as_of(text, row["as_of"], row["source"])
+            notes += _later_than_as_of(text, row["as_of"], row["source"])
     more, bad = _screen_rows(root)
     rows += more
-    problems += bad
-    return rows, problems
+    notes += bad
+    return rows, notes
 
 
 def _index_rows(root: Path) -> list[tuple[str, str]]:
