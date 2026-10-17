@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
+import statistics
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -34,6 +36,7 @@ from hub.config import (
     pool_digest,
     resolved_config,
 )
+from hub.declare import not_an_input
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
@@ -542,7 +545,8 @@ def track_record(base: Path | None = None, out: Path | None = None,
     reg = _registration(out, df, seasons)
     # An empty record still carries the trio, as nulls: `site/index.html` reads them off the
     # top level unconditionally, and a missing key and a null one render differently.
-    newest = seasons[0] if seasons else {"bins": [], "log_loss": None, "brier": None}
+    newest = seasons[0] if seasons else {
+        "bins": [], "log_loss": None, "brier": None, "baselines": None}
     # Through `jsonio.summary` rather than three literal envelope keys, so `shape: "summary"`
     # is written by the writer that knows this record has no rows. Until #227 that fact lived
     # in `NOT_ROW_SHAPED` in the contract instead, where nothing connected it to here.
@@ -563,6 +567,7 @@ def track_record(base: Path | None = None, out: Path | None = None,
         late_game_ids=reg.late, unverified_game_ids=reg.unverified,
         seasons=seasons,
         bins=newest["bins"], log_loss=newest["log_loss"], brier=newest["brier"],
+        baselines=newest["baselines"],
         # The other half of the record, and the half that was never on the page. Log loss
         # and Brier score the *game* probability; `interval_coverage` is whether the weekly
         # player interval covers, from `hub.models.coverage`. It reads the last committed
@@ -719,7 +724,94 @@ def _curve(season: int | None, df: pl.DataFrame, n_bins: int) -> dict[str, Any]:
     return {"season": season, "n_scored": df.height,
             "scored_game_ids": sorted(set(df["game_id"].to_list())),
             "log_loss": log_loss(probs, won), "brier": brier(probs, won),
-            "bins": reliability(df, n_bins)}
+            "bins": [with_interval(b) for b in reliability(df, n_bins)],
+            "baselines": _baselines(season, probs, won)}
+
+
+# --- the interval and the baselines a score is read against (#481) ------------
+
+# 90%, not 95%: a bin holds a handful of games, and a 95% bar over seven games spans most of
+# [0, 1] and says nothing. Chosen once, for how wide it draws; not tuned on any season's data.
+INTERVAL_LEVEL = not_an_input(0.90, "how wide a bar is drawn on the page; no prediction reads it")
+# The seasons the fixed home rate is taken from: the ten that end the season before the one it
+# scores. A constant window, so the baseline is the same rule every season and cannot be tuned.
+HOME_RATE_SEASONS = 10
+
+
+def wilson_interval(k: int, n: int, level: float = INTERVAL_LEVEL) -> tuple[float, float] | None:
+    """The Wilson score interval on a binomial proportion `k / n`, or None when `n == 0`.
+
+    Wilson, pre-chosen, not the normal approximation: the bins are small and sit near 0 and 1,
+    where the Wald interval collapses to a point or leaves [0, 1].
+
+    None, not NaN and not (0, 1): a bin nobody landed in has no rate to put a bar around, and
+    the page draws it as a ring. `k == 0` pins the lower end at 0 and `k == n` pins the upper
+    at 1 exactly, rather than at whatever the floating-point algebra leaves a ulp short of.
+    """
+    if n <= 0:
+        return None
+    z = statistics.NormalDist().inv_cdf(0.5 + level / 2.0)
+    phat = k / n
+    denom = 1.0 + z * z / n
+    centre = (phat + z * z / (2.0 * n)) / denom
+    half = z * math.sqrt(phat * (1.0 - phat) / n + z * z / (4.0 * n * n)) / denom
+    lo = 0.0 if k == 0 else max(0.0, centre - half)
+    hi = 1.0 if k == n else min(1.0, centre + half)
+    return lo, hi
+
+
+def with_interval(b: dict[str, Any]) -> dict[str, Any]:
+    """A reliability bin plus `lo` and `hi`: the Wilson interval on its actual win rate."""
+    n = int(b["n"])
+    got = wilson_interval(round(b["actual"] * n), n) if n and b["actual"] is not None else None
+    return {**b, "lo": got[0] if got else None, "hi": got[1] if got else None}
+
+
+def _score_constant(p: float, won: list[int]) -> dict[str, Any]:
+    return {"p": p, "n": len(won), "log_loss": log_loss([p] * len(won), won),
+            "brier": brier([p] * len(won), won)}
+
+
+def _home_rate_before(season: int | None) -> tuple[float, list[int], int] | None:
+    """The home win rate over the `HOME_RATE_SEASONS` seasons before `season`, with the
+    seasons it came from and the games behind it. None when it cannot be read.
+
+    Every season used ends before `season` begins, so the rate cannot see the games it is
+    scored against. Ties are dropped by the record's own `home_won`. A failed or empty fetch
+    is None, not an error: a baseline that cannot be computed is left off the page, it does
+    not take the record down.
+    """
+    if season is None:
+        return None
+    wanted = list(range(season - HOME_RATE_SEASONS, season))
+    try:
+        from hub.fetch import nflverse
+        raw = nflverse.load("schedules", wanted)
+        games = home_won(raw.select("season", "result").drop_nulls("result")
+                         .filter(pl.col("season").is_in(wanted)))
+    except Exception as e:
+        print(f"  home-rate baseline unavailable ({type(e).__name__})", flush=True)
+        return None
+    if not games.height:
+        return None
+    seen = sorted({int(s) for s in games["season"].to_list()})
+    return float(cast(float, games["home_won"].mean())), seen, games.height
+
+
+def _baselines(season: int | None, probs: list[float], won: list[int]) -> dict[str, Any]:
+    """What this season's log loss and Brier are read against, on the same games.
+
+    `coin_flip` is P = 0.5 for every game, computed and not typed. `home_constant` is a fixed
+    historical home rate, with the rate and the seasons it came from named; None when it could
+    not be read. Neither is a verdict -- they are the rows a score sits beside.
+    """
+    out: dict[str, Any] = {"coin_flip": _score_constant(0.5, won), "home_constant": None}
+    got = _home_rate_before(season)
+    if got is not None:
+        rate, seasons, n_games = got
+        out["home_constant"] = {**_score_constant(rate, won), "source_seasons": seasons,
+                                "source_n_games": n_games}
+    return out
 
 
 # --- the live overlay -----------------------------------------------------

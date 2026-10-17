@@ -1,0 +1,8 @@
+{
+ "shape": "sidearm",
+ "title": "2026 Big Ten Football Availability Reports",
+ "embeds": [
+  "https://app.hdintelligence.com/?source=B10&sport=Football&conf=B10&type=report",
+  "https://app.hdintelligence.com/?source=B10&sport=Football&conf=B10&type=archive"
+ ]
+}

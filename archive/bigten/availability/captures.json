@@ -166,5 +166,33 @@
   "bytes": 13643,
   "path": "2026/w07/2026-10-16T0130Z.parquet",
   "new_content": true
+ },
+ {
+  "deadline": "2026-10-17T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-17T05:49:05+00:00",
+  "season": 2026,
+  "kind": "article",
+  "url": "https://bigten.org/fb/availability-reports/",
+  "label": "2026 Big Ten Football Availability Reports",
+  "report_updated_at": null,
+  "sha256": "a7de1b4e2fba9d11748e07ff4f53520221759159db4088a426edb3ff859c7126",
+  "bytes": 264,
+  "path": "availability/2026/article/a7de1b4e2fba9d11.json",
+  "new_content": true
+ },
+ {
+  "deadline": "2026-10-17T0130Z",
+  "deadline_name": "evening",
+  "captured_at": "2026-10-17T05:49:05+00:00",
+  "season": 2026,
+  "kind": "lines",
+  "url": "cfbd:/lines?year=2026&week=7",
+  "label": null,
+  "report_updated_at": null,
+  "sha256": "c2206f6d9be57378f004827f848653f9cc49324dcac85502e39352d24ff370c6",
+  "bytes": 16575,
+  "path": "2026/w07/2026-10-17T0130Z.parquet",
+  "new_content": true
  }
 ]
