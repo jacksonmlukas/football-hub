@@ -962,9 +962,20 @@ def roster(out: Path | None = None,
     ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
     _, espn_reason = lineup_journal.espn_weekly(df)
 
+    # The weekly distribution, the swaps and who is unprojected (#479): read off the same
+    # skewed, correlated law `mu`/`sd` describe, never re-derived here. See `season.swaps`.
+    from hub.season import swaps as swaps_mod
+    qs = swaps_mod.quantiles(df)
+    unproj, unproj_reasons = swaps_mod.unprojected(df)
+    swap_rows, odds_reason = swaps_mod.swaps(df, lk.bench, lk.start, lk.withheld)
+
     rows = []
     for r in df.iter_rows(named=True):
         rows.append({
+            # The 20 weekly quantiles at (i + 0.5) / 20, for the 20-dot plot; null with a
+            # reason when he has no distribution. Conditional on his playing.
+            "quantiles": qs.get(r["player"]),
+            "quantiles_reason": swaps_mod.quantile_reason(r),
             "ecr": ecr_by_key.get(r.get("key") or player_key(r["player"])),
             "espn_week_proj": r.get("espn_week_proj"),
             "player": r["player"], "pos": r["pos"], "nfl_team": r["nfl_team"],
@@ -999,7 +1010,20 @@ def roster(out: Path | None = None,
                                           if r["player"] in held},
                         # The prior sync's decision and the stamp it was made at (#355): the
                         # page's "what changed since the last regen" reads this and nothing else.
-                        previous=_previous_decision(out or SITE, stamp))
+                        previous=_previous_decision(out or SITE, stamp),
+                        # Each recommended swap with its odds (#479). `p_in_beats_out` is
+                        # *shown and never ranked on* (ADR-0016): the call is made by `gain`,
+                        # and the odds say how sure. Correlated skewed joint draws, ties half;
+                        # null for a forced swap. See `hub.season.swaps` for the assumptions.
+                        swaps=swap_rows, odds_reason=odds_reason,
+                        unprojected=unproj, unprojected_reasons=unproj_reasons)
+    # The new fields' own contract (#479): a malformed one is a stale call with the reason,
+    # served as last-good, like every other call the lock cannot stand behind.
+    from hub.contracts import ContractViolation, check_roster_artifact
+    try:
+        check_roster_artifact(payload)
+    except ContractViolation as e:
+        bad = bad or f"roster fields refused: {e}"
     if bad:
         # A call the lock could not stand behind is stale, with the reason, and last-good stays
         # where it is (issue #419). What is withheld is `lock`'s refusal and stays; what was
