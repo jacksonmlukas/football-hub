@@ -1,3 +1,11 @@
+---
+name: VOR ordering
+verdict: Demoted
+figure: "-5.06 pts/team-game"
+as_of: 2026-09-21
+issue: 358
+---
+
 # Where the value is, and where it is not
 
 **Measured 2026-08-24.** Jackson's premise — the market prices outcomes well — holds, and

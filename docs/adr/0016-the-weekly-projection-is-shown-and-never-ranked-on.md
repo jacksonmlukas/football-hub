@@ -1,3 +1,12 @@
+---
+name: Weekly projection
+verdict: Removed
+figure: "t interval [-2.032, -0.262] pts/team-week, 3 of 4 seasons resolved"
+detail: "kept as an unwired exhibit"
+as_of: 2026-10-07
+issue: 430
+---
+
 # The Weekly projection is shown and never ranked on
 
 **Status:** accepted 2026-08-28. **Re-scored 2026-09-07** — the closing figure changed sign

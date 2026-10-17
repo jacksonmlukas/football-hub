@@ -1,3 +1,11 @@
+---
+name: Weekly injury cost
+verdict: Not established
+figure: "+0.0623 MAE, t interval [-0.189, +0.314], 1 of 3 seasons resolved"
+as_of: 2026-10-07
+issue: 360
+---
+
 # The weekly injury cost, and the first model to clear its gate
 
 **Measured 2026-08-25**, `hub/models/injury.py`. The repo had no weekly injury input. It has

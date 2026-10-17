@@ -1,3 +1,11 @@
+---
+name: edge (consensus vs ADP)
+verdict: Shown never ranked
+figure: "not measurable: no historical ADP"
+as_of: 2026-09-21
+issue: 358
+---
+
 # `edge` is displayed but never ranked on
 
 **Status:** accepted 2026-08-24.
