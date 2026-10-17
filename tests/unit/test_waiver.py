@@ -300,6 +300,30 @@ def test_a_garbled_fetch_time_is_reported_not_raised(world):
     assert "unreadable" in got["stale"] and got["capped"] is True
 
 
+def test_a_game_with_a_team_the_canon_cannot_place_is_skipped_by_the_calendar():
+    g = pl.concat([_games(), pl.DataFrame(
+        [{"game_id": "x", "week": 3, "home_team": "", "away_team": "AAA",
+          "kickoff": None, "result": None}], schema=_games().schema)])
+    assert waiver.calendar(g)["AAA"]["bye_week"] == 6
+
+
+def test_a_season_with_no_open_week_still_ranks_and_says_so(world, monkeypatch):
+    from hub import schedule
+    done = _games().with_columns(pl.lit(1.0).alias("result"),
+                                 pl.lit(datetime(2026, 1, 1)).alias("kickoff"))
+    monkeypatch.setattr(schedule, "priced_games", lambda *a, **k: done)
+    got = waiver.for_roster(_roster(), at=AT, fa_path=world)
+    assert got["week"] is None and "no week is open" in got["calendar_reason"]
+    assert got["recommended"][0] == "Rb Alpha"
+
+
+def test_render_prints_the_failed_fetch_note(world):
+    fa_mod.refresh(lambda: (_ for _ in ()).throw(ConnectionError("ESPN is down")), world,
+                   datetime(2026, 10, 18, tzinfo=UTC))
+    out = waiver.render(waiver.for_roster(_roster(), at=AT, fa_path=world))
+    assert "NOTE (last_error)" in out and "ESPN is down" in out
+
+
 # --- the journal ----------------------------------------------------------------------------
 
 def test_record_writes_the_recommendations_once_and_first_write_wins(tmp_path, world):

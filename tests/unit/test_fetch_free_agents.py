@@ -81,6 +81,15 @@ def test_main_with_no_league_and_nothing_on_disk_exits_non_zero(tmp_path, capsys
     assert "hub.fetch.free_agents" in capsys.readouterr().err
 
 
+def test_main_writes_and_summarises_without_printing_rows(tmp_path, capsys, monkeypatch):
+    import hub.fetch.espn as espn
+    monkeypatch.setattr(espn, "fetch_free_agents", lambda: (_pool(1, 2), False))
+    assert F.main(["--out", str(tmp_path / "fa.parquet")]) == 0
+    out = capsys.readouterr().out
+    assert "fetched 2 free agents" in out and "by position: RB 2" in out
+    assert "P 1" not in out
+
+
 @pytest.mark.parametrize("flag", ["--help"])
 def test_help_exits_zero(flag):
     with pytest.raises(SystemExit) as e:
