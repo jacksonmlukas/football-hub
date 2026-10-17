@@ -105,6 +105,15 @@ def test_the_home_constant_names_seasons_that_end_before_the_one_it_scores(recor
     assert record["baselines"] == s["baselines"]
 
 
+def test_the_home_constant_is_null_when_no_earlier_season_has_a_result():
+    """A schedule holding only the scored season has no history to take a rate from; the
+    season itself must not stand in for it (no lookahead)."""
+    sched = _schedule([2025], 0, ["g0"], 1)
+    serve(schedules=sched.with_columns(
+        pl.when(pl.col("season") == 2025).then(None).otherwise(pl.col("result")).alias("result")))
+    assert publish._home_rate_before(2026) is None
+
+
 def test_the_home_constant_is_null_when_history_cannot_be_read():
     def down(keys):
         raise RuntimeError("down")
