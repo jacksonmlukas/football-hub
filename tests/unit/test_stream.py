@@ -127,8 +127,54 @@ def test_it_is_labelled_a_heuristic_with_formula_and_unknown_availability():
     assert s["basis"]["dst"] == "lowest opponent implied total first"
     assert s["basis"]["k"] == "highest own implied total first"
     assert "(total + spread) / 2" in s["formula"]
-    assert s["available_known"] is False and "#493" in s["availability_reason"]
+    assert s["available_known"] is False and "free_agents" in s["availability_reason"]
+    assert all(r["available"] is None and r["available_rank"] is None for r in s["dst"] + s["k"])
     assert "dome and weather are not used" in s["not_used"]
+
+
+def _pool(*units):
+    """Free agents as (pos, team); only the two columns the stream reads."""
+    return pl.DataFrame({"pos": [u[0] for u in units], "nfl_team": [u[1] for u in units]})
+
+
+def test_a_free_agent_pool_marks_which_units_are_available_and_ranks_among_them():
+    """#493: the ranking is unchanged (`rank` still orders every priced unit) and each row now
+    says whether the unit is on the wire; `available_rank` orders just those."""
+    pool = _pool(("D/ST", "AAA"), ("D/ST", "DDD"), ("D/ST", "ZZZ"), ("K", "DDD"), ("K", "EEE"))
+    s = stream.build(_games(), _roster(), 5, frozenset({"ZZZ"}), SEEN, AT, pool,
+                     {"fetched_at": "2026-10-17T12:00:00+00:00"})
+    plain = _built()
+    assert _order(s["dst"]) == _order(plain["dst"]) and _order(s["k"]) == _order(plain["k"])
+    assert s["available_known"] is True and "2026-10-17" in s["availability_reason"]
+    assert s["label"] == "heuristic"                          # the label is not touched
+    dst = {r["team"]: r for r in s["dst"]}
+    assert [(t, dst[t]["available"], dst[t]["available_rank"])
+            for t in ("EEE", "AAA", "DDD", "BBB")] == [
+        ("EEE", False, None), ("AAA", True, 1), ("DDD", True, 2), ("BBB", False, None)]
+    k = {r["team"]: r for r in s["k"]}
+    assert (k["DDD"]["available_rank"], k["EEE"]["available_rank"]) == (1, 2)
+    # an available unit that cannot be ranked (a bye) is available and has no available rank
+    assert dst["ZZZ"]["available"] is True and dst["ZZZ"]["available_rank"] is None
+
+
+def test_a_missing_or_empty_pool_is_unknown_never_nobody_available():
+    for pool in (None, _pool(), pl.DataFrame(schema={"pos": pl.Utf8, "nfl_team": pl.Utf8})):
+        s = stream.build(_games(), _roster(), 5, frozenset({"ZZZ"}), SEEN, AT, pool)
+        assert s["available_known"] is False
+        assert all(r["available"] is None for r in s["dst"] + s["k"])
+
+
+def test_a_capped_pool_and_a_failed_latest_fetch_are_said_in_the_reason():
+    pool = _pool(("K", "DDD"))
+    s = stream.build(_games(), _roster(), 5, frozenset(), SEEN, AT, pool,
+                     {"capped": True, "last_error": "ConnectionError: down"})
+    assert "cap" in s["availability_reason"] and "last good pool" in s["availability_reason"]
+    assert "ConnectionError: down" in s["availability_reason"]
+
+
+def test_a_pool_with_only_one_position_makes_the_other_all_unavailable():
+    s = stream.build(_games(), _roster(), 5, frozenset(), SEEN, AT, _pool(("K", "DDD")))
+    assert all(r["available"] is False for r in s["dst"])
 
 
 def test_unavailable_is_labelled_and_empty():

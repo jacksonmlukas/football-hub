@@ -23,10 +23,14 @@ the page can show the working.
 carries them for a game (`schedule` does not load the roof or wind columns), so the K rule is
 the implied total alone and the basis string says so. Nothing is invented.
 
-**Availability is not known here.** The free-agent pool is not fetched yet (#493), so the
-ranking is of *every* team's unit that has a priced game this week, with the units the
-manager rosters flagged beside them. A reader must check that a ranked unit is actually on the
-waiver wire; `available_known` is `false` and says why.
+**Availability (#493).** Given the league's free-agent pool (`hub.fetch.free_agents`, last-good)
+each unit is marked `available` -- true when a free agent at that position plays for that
+team -- and `available_rank` orders just the available ones by the same number; the heuristic
+and its label are unchanged and `rank` still orders every priced unit. Without a pool the
+ranking is of every team's unit, the manager's own flagged, `available` is null and
+`available_known` is `false` with the reason. A pool that came back at its cap may be missing
+its least-owned tail, so an unlisted unit is "not seen available", and `availability_reason`
+says so when that is the case.
 
 **Missing is null with a reason, never a number.** A team on its bye, a game that has already
 kicked off, a game no pre-kickoff capture priced, a capture that carried no total: each is an
@@ -66,9 +70,9 @@ BASIS = {
 FORMULA = ("implied total: home (total + spread) / 2, away (total - spread) / 2, from the last "
            "pre-kickoff capture; spread is positive when the home side is favoured")
 NOT_USED = "dome and weather are not used: no source for them is loaded"
-AVAILABILITY_REASON = ("the free-agent pool is not fetched yet (#493), so every team with a "
-                       "priced game is listed and the rostered ones are flagged; check the "
-                       "waiver wire before acting on a rank")
+AVAILABILITY_REASON = ("no free-agent pool is on disk (run `python -m hub.fetch.free_agents`), "
+                       "so every team with a priced game is listed and the rostered ones are "
+                       "flagged; check the waiver wire before acting on a rank")
 CAVEAT = ("heuristic, not a measured edge: no gate has run on this ordering (ADR-0014); it "
           "is journalled so one can")
 
@@ -147,27 +151,57 @@ def _iso(value: Any) -> str:
 
 
 def rank(lines: Mapping[str, Mapping[str, Any]], key: str, descending: bool,
-         rostered: Mapping[str, list[str]]) -> list[dict[str, Any]]:
+         rostered: Mapping[str, list[str]],
+         pool: frozenset[str] | None = None) -> list[dict[str, Any]]:
     """Rows ordered best first by `key`, ties sharing a rank; unrankable rows last, rank null.
 
     `rostered` is team -> the names of the manager's players at this position on that team.
+    `pool` is the teams with a free agent at this position, or None when no pool is known: each
+    row then carries `available` (true / false / null) and `available_rank`, the rank among the
+    available rows alone (null for an unavailable or unrankable one).
     """
     ok = [r for r in lines.values() if r.get(key) is not None and math.isfinite(r[key])]
     bad = [r for r in lines.values() if r not in ok]
     ok.sort(key=lambda r: (-r[key] if descending else r[key], r["team"]))
+    mine = [r for r in ok if pool is not None and r["team"] in pool]
     rows: list[dict[str, Any]] = []
     for r in ok:
         better = sum(1 for o in ok if (o[key] > r[key] if descending else o[key] < r[key]))
-        rows.append({**r, "rank": better + 1, "rostered": rostered.get(r["team"], [])})
+        avail = None if pool is None else r["team"] in pool
+        a_rank = (1 + sum(1 for o in mine if (o[key] > r[key] if descending else o[key] < r[key]))
+                  if avail else None)
+        rows.append({**r, "rank": better + 1, "rostered": rostered.get(r["team"], []),
+                     "available": avail, "available_rank": a_rank})
     for r in sorted(bad, key=lambda r: r["team"]):
-        rows.append({**r, "rank": None, "rostered": rostered.get(r["team"], [])})
+        rows.append({**r, "rank": None, "rostered": rostered.get(r["team"], []),
+                     "available": None if pool is None else r["team"] in pool,
+                     "available_rank": None})
     return rows
 
 
+def pool_teams(free_agents: pl.DataFrame | None) -> dict[str, frozenset[str]] | None:
+    """Per position (`K`, `D/ST`), the canonical teams that have a free agent there; None
+    when there is no pool, so "unknown" is never read as "nobody is available"."""
+    if free_agents is None or free_agents.is_empty():
+        return None
+    out: dict[str, frozenset[str]] = {}
+    for pos in ("K", "D/ST"):
+        teams = {_team(t) for t in free_agents.filter(pl.col("pos") == pos)["nfl_team"]}
+        out[pos] = frozenset(t for t in teams if t)
+    return out
+
+
 def build(games: pl.DataFrame, roster: pl.DataFrame | None, week: int, bye: frozenset[str],
-          seen: Mapping[Any, Mapping[str, Any]], at: datetime | None = None) -> dict[str, Any]:
-    """The published `stream` object: both rankings, the basis and what is not known."""
+          seen: Mapping[Any, Mapping[str, Any]], at: datetime | None = None,
+          free_agents: pl.DataFrame | None = None,
+          pool_meta: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The published `stream` object: both rankings, the basis and what is not known.
+
+    `free_agents` is the league's pool (#493); with it each row says whether the unit is
+    available, and `available_known` is true.
+    """
     lines = team_lines(games, week, bye, seen, at)
+    pool = pool_teams(free_agents)
     held: dict[str, dict[str, list[str]]] = {"D/ST": {}, "K": {}}
     unplaced: list[dict[str, str]] = []
     if roster is not None and not roster.is_empty():
@@ -181,11 +215,26 @@ def build(games: pl.DataFrame, roster: pl.DataFrame | None, week: int, bye: froz
     return {
         "label": LABEL, "caveat": CAVEAT, "week": week,
         "basis": dict(BASIS), "formula": FORMULA, "not_used": NOT_USED,
-        "available_known": False, "availability_reason": AVAILABILITY_REASON,
-        "dst": rank(lines, "opp_implied", False, held["D/ST"]),
-        "k": rank(lines, "own_implied", True, held["K"]),
+        "available_known": pool is not None,
+        "availability_reason": (AVAILABILITY_REASON if pool is None
+                                else _pool_reason(pool_meta or {})),
+        "dst": rank(lines, "opp_implied", False, held["D/ST"],
+                    None if pool is None else pool["D/ST"]),
+        "k": rank(lines, "own_implied", True, held["K"], None if pool is None else pool["K"]),
         "unplaced": unplaced,
     }
+
+
+def _pool_reason(meta: Mapping[str, Any]) -> str:
+    """What `available` means, when it is known, and what could make it wrong."""
+    text = ("available means the league's free-agent pool lists a player at that position on "
+            "that team" + (f", as of {meta['fetched_at']}" if meta.get("fetched_at") else ""))
+    if meta.get("capped"):
+        text += ("; the pool came back at its cap, so a unit not listed is 'not seen "
+                 "available', not 'rostered'")
+    if meta.get("last_error"):
+        text += f"; the latest fetch failed and this is the last good pool ({meta['last_error']})"
+    return text
 
 
 def unavailable(reason: str) -> dict[str, Any]:
@@ -197,7 +246,8 @@ def unavailable(reason: str) -> dict[str, Any]:
 
 
 def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | None = None,
-               base: Path | None = None) -> dict[str, Any]:
+               base: Path | None = None, free_agents: pl.DataFrame | None = None,
+               pool_meta: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The ranking for the open week, degrading to `unavailable` on any failure."""
     from hub import schedule
     from hub.market_row import captures
@@ -208,7 +258,8 @@ def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | 
         wk = week_games(games, moment)
         if wk is None:
             return unavailable("no week is open in the schedule")
-        return build(games, roster, wk.week, wk.bye, captures(season, base), moment)
+        return build(games, roster, wk.week, wk.bye, captures(season, base), moment,
+                     free_agents, pool_meta)
     except Exception as e:  # unattended network call: say which failure, never raise
         return unavailable(f"the schedule or the odds store was unavailable ({type(e).__name__})")
 
@@ -281,7 +332,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
         return 1
     roster =pl.read_parquet(src) if src.exists() else pl.DataFrame(
         schema={"player": pl.Utf8, "pos": pl.Utf8, "nfl_team": pl.Utf8})
-    got = for_roster(roster)
+    from hub.fetch import free_agents
+    pool, meta = free_agents.read()            # last-good; without one, availability is unknown
+    got = for_roster(roster, free_agents=pool, pool_meta=meta)
     print(render(got))
     if a.record:
         print(f"  {record(got, base=Path(a.out) if a.out else None)[1]}")

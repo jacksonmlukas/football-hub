@@ -1150,6 +1150,24 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
                 if not ranked and not r.get("missing"):
                     problems.append(f"stream {kind} {r.get('team')}: unranked with no reason")
                 # /GUARD
+    waiver = payload.get("waiver")
+    if waiver is not None:
+        # GUARD waiver-labelled [unit/test_waiver_roster.py]: a provisional rule on an unshrunk
+        # projection, never presented as anything stronger (ADR-0014)
+        if waiver.get("label") != "provisional":
+            problems.append(f"waiver label is {waiver.get('label')!r}, not 'provisional'")
+        # /GUARD
+        for r in waiver.get("rows") or []:
+            value = r.get("value")
+            # GUARD waiver-recommendation-is-a-gain [unit/test_waiver_roster.py]: a pickup is
+            # recommended only for a positive gain over a named player, and never while ESPN
+            # lists him as unable to play
+            if r.get("recommended") and not (
+                    isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+                    and r.get("replaces") and not r.get("blocked")):
+                problems.append(f"waiver {r.get('player')}: recommended without a positive "
+                                f"value over a named replacement, or while blocked")
+            # /GUARD
     # GUARD roster-problems-are-raised [unit/test_swaps.py]: collected problems are refused
     if problems:
         raise ContractViolation("; ".join(problems))
