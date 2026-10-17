@@ -122,6 +122,13 @@ def test_history_that_cannot_be_read_is_none_never_empty(site, tmp_path):
     assert prereg.read_history(elsewhere) is None
 
 
+@pytest.fixture(autouse=True)
+def _no_home_rate_fetch(monkeypatch):
+    """These tests stub `_finished`; the home-rate baseline (#481) is a second schedule read
+    they have no table for, and what they assert is not about it."""
+    monkeypatch.setattr(publish, "_home_rate_before", lambda season: None)
+
+
 def _finished(game_ids, probs, priced="2026-09-05 11:00:00"):
     return pl.DataFrame(
         {"game_id": game_ids, "season": [2026] * len(game_ids), "week": [1] * len(game_ids),
