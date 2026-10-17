@@ -1,12 +1,13 @@
 # Signal screens
 
 Twenty rows for beating consensus, one since withdrawn. The first seven rows are the six
-hypotheses screened before the season: five were inconclusive and **one not** — the snap-share trend,
-screened 2026-08-25, which is the first thing in this repo to survive a control for ECR. The
-weekly screen that followed added thirteen rows at the next-week horizon; the table has **five
-rows positive**, which is four signals — the snap-share trend at two horizons, the prior TD
-rate per yard, defence vs position and injury severity — and every other row is null (the weekly rows keep that word; this restatement is of the preseason five). This is
-the index; the ones with longer stories have their own documents. The counts in this paragraph
+hypotheses screened before the season: five were inconclusive and **one not** — the
+snap-share trend, screened 2026-08-25, which is the first thing in this repo to survive a
+control for ECR. The weekly screen that followed added thirteen rows at the next-week horizon;
+the table has **five rows positive**, which is four signals — the snap-share trend at two
+horizons, the prior TD rate per yard, defence vs position and injury severity — and every
+other row is null (the weekly rows keep that word; the preseason five were restated, see below).
+This is the index; the ones with longer stories have their own documents. The counts in this paragraph
 are read off the table by `tests/contracts/test_signal_screens_index_counts_its_table.py`.
 
 Kept because a record of what does not work is worth more than a fifth attempt at the same
@@ -49,6 +50,17 @@ Expected-vs-actual points and its recency-weighted variant get **no interval**: 
 old row is year-over-year self-persistence (`lambda-sweep.md`), not a partial r beyond ECR, the
 beyond-ECR figure (≈ +0.01) was published without an n or per-season values, and the screen's
 code is not in the repo, so there is nothing to compute an interval from and none is invented.
+The two pooled-n intervals are a single Fisher z on n summed across seasons; the same players
+recur across seasons, so those rows are not independent and the intervals are a lower bound on
+the true width. The rest-of-season interval is the season-clustered t interval, the repo's
+convention (ADR-0019). The opening paragraph was also changed in place; as it read before:
+"Twenty rows for beating consensus, one since withdrawn. The first seven rows are the six
+hypotheses screened before the season: five were null and **one not** — the snap-share trend,
+screened 2026-08-25, which is the first thing in this repo to survive a control for ECR. The
+weekly screen that followed added thirteen rows at the next-week horizon; the table has **five
+rows positive**, which is four signals — the snap-share trend at two horizons, the prior TD
+rate per yard, defence vs position and injury severity — and every other row is null. This is
+the index; the ones with longer stories have their own documents."
 The old rows read: "**null** — r = 0.21 self-persistence, ~4% shared variance"; "**null, and
 worse**"; "**null** — partial r = +0.008 beyond ECR"; "**null** — within 1 se of zero at weeks
 6/8/10/12"; "**null** — see below". Not done here: re-running the screens on a spline of
