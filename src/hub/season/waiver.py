@@ -5,7 +5,7 @@ No gate has run on it. It is journalled (`record`, `settle`) so one can.
 
 **What is ranked.** For each free agent, *value* is
 
-    his ESPN projected points per game  minus  that of the rostered player he would replace
+    his ESPN projection per game  minus  that of the rostered player he would replace
 
 where "the rostered player he would replace" is the lowest-projected player at his own position
 on our roster that is not on injured reserve (starter or bench alike; the ticket's "lowest
@@ -66,7 +66,7 @@ from hub.paths import FREE_AGENTS_PARQUET, ROSTER_PARQUET, STATE_DIR
 ROOT = STATE_DIR / "waiver_journal"
 
 LABEL = "provisional"
-BASIS = ("value = the free agent's ESPN projected points per game minus that of the lowest-"
+BASIS = ("value = the free agent's ESPN projection per game minus that of the lowest-"
          "projected non-IR rostered player at his position (ESPN's own points, unshrunk); "
          "rest-of-season totals and bye_ahead are shown, not used")
 SHRINKAGE = ("unshrunk: the empirical-Bayes player model (#497) is not built, so a top-of-the-"
@@ -111,7 +111,7 @@ def _proj(value: Any) -> float:
 # --- the replacement ---------------------------------------------------------------------
 
 def per_game(row: Mapping[str, Any], remaining: Mapping[str, int] | None) -> float:
-    """ESPN's projected points per game, 0.0 when it carries none.
+    """ESPN's projection per game, 0.0 when it carries none.
 
     `espn_avg` is already per game. Without it the rest-of-season total is divided by the games
     his own team has left (`WeekGames.remaining`, #491): a total counts only the games still to
