@@ -1593,9 +1593,10 @@ def test_a_fixed_340px_track_minimum_is_caught():
 # every week, and a typed `preds_2026_wk05` turned this suite red on week 6's refresh.
 MANIFEST_NAMES = tuple(a["name"] for a in json.loads(
     (SITE / "data" / "manifest.json").read_text())["artifacts"])
-assert len(MANIFEST_NAMES) == 8 and sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1, (
-    f"the footer tests assume eight manifest artifacts with one slate; the manifest has "
-    f"{MANIFEST_NAMES}")
+assert sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1 and (
+    {"bigten", "cfbd"} <= set(MANIFEST_NAMES)), (
+    f"the footer tests assume one slate and both sources in the manifest, whatever else the "
+    f"publisher adds (#483 added the ledger); the manifest has {MANIFEST_NAMES}")
 
 
 def _render(node: str, overrides: dict | None = None) -> dict:
