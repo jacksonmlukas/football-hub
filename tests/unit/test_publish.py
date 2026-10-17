@@ -20,7 +20,6 @@ import pathlib
 
 import polars as pl
 import pytest
-from pagelib import script_text
 
 from hub import jsonio, publish, store
 from hub.fetch.replay import serve
@@ -1442,7 +1441,11 @@ def test_every_field_the_survivor_artifact_publishes_is_read_by_the_page(site, m
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     envelope = set(jsonio.artifact("survivor", "hub.season.survivor", []))
-    page = script_text()
+    # The page's script is the modules under `site/js/` (#476). Read here with a glob rather than
+    # through `tests/pagelib.py`: the Python excision harness runs this module with `tests/` off
+    # the path, so a top-level helper import would turn every mutant run into a collection error.
+    js = pathlib.Path(__file__).resolve().parents[2] / "site" / "js"
+    page = "\n".join(f.read_text() for f in sorted(js.rglob("*.js")))
     # The panel reads its artifact as `surv`, so `surv.<key>` is the page asking for it by
     # name. A bare substring would count the word "season" in an unrelated panel as a reader.
     unread = [k for k in got if k not in envelope and f"surv.{k}" not in page]
