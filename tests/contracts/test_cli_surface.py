@@ -58,7 +58,7 @@ CLI_MODULES = (
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
+    "hub.fetch.pool", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
     "hub.models.coverage",
@@ -266,6 +266,9 @@ ABSENT_INPUT = [
     ("hub.fetch.consensus", ["--capture"]),
     ("hub.fetch.nflverse", ["--refresh"]),
     ("hub.fetch.odds", ["--snapshot", "--state-path", "{tmp}/odds.json"]),
+    # The close capture (#495): the schedule it places kickoffs by cannot be reached, so it
+    # says so and exits non-zero without a request to the betting market.
+    ("hub.closing", ["--capture"]),
     # The pool host (#85). `--store` keeps the refresh's last-good read off the developer's
     # store, so a fresh clone meets no cookie, no host and nothing cached to serve instead.
     ("hub.fetch.pool", ["--refresh", "--store", "{tmp}"]),

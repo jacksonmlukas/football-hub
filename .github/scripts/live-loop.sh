@@ -64,6 +64,14 @@ while :; do
   cycle_at=$(date +%s)
   echo "--- cycle ${cycles} at +$(( cycle_at - started_at ))s"
 
+  # The optional per-cycle hook (#495), run before the refresh so an unreachable ESPN does not
+  # skip it: the game window is what it is for, and ESPN being down is not a reason to miss a
+  # kickoff. A hook that fails or is absent changes nothing about the loop.
+  if [ -n "${CYCLE_HOOK:-}" ]; then
+    # shellcheck disable=SC2086  # the hook is a command line, word-split on purpose
+    LIVE_LOOP_LEAGUE="$league" $CYCLE_HOOK || echo "  the cycle hook failed; carrying on"
+  fi
+
   uv run python -m hub.publish --live --league "$league" --out "$out"
   refreshed=$?
 
