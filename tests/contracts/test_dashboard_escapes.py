@@ -1,7 +1,7 @@
 """The page escapes what it renders.
 
-`site/index.html` builds its tables by concatenating field values into HTML strings and
-assigning them to `innerHTML`. Player names, team names and status text arrive from ESPN and
+The dashboard (`site/index.html`, whose script is the ES modules under `site/js/`) builds its
+tables by concatenating field values into HTML strings and assigning them to `innerHTML`. Player names, team names and status text arrive from ESPN and
 nflverse and went in unescaped: an apostrophe or an ampersand in a name is enough to produce
 malformed markup, and anything angle-bracketed in a third-party feed is injected into the
 page. The site is public, unattended, and refreshed twice a week by a workflow with a push
@@ -13,8 +13,8 @@ Two tests, and the second is the one that lasts. Running `esc` and `table` for r
 they escape; the static guard proves nobody added a thirteenth interpolation and forgot.
 `table` escaping by default is what makes the guard's job small: a column cannot forget.
 
-The sections below are here for the same reason and by the same technique: lift the real
-function out of the page, run it in node, and assert on what it produces. They cover the
+The sections below are here for the same reason and by the same technique: import the real
+module from `site/js/` in node, run it, and assert on what it produces. They cover the
 two things the page can only get wrong silently -- which artifact it asks for (a name it
 rebuilt rather than read, disagreeing with the manifest and reporting nothing) and which
 season a published week and a calibration curve belong to.
@@ -22,6 +22,13 @@ season a published week and a calibration curve belong to.
 The last section turns the same excision habit `tests/contracts/test_guards_are_load_bearing.py`
 applies to `src/` on the page itself: each protection is declared where it lives, deleted, and
 required to turn these tests red (#61).
+
+Since #476 nothing here lifts code out of a file by pattern. A test that runs the code imports
+the module (`_run`, below, hands node an `import` of the real file), and the whole-page render
+is `dashboard_render.mjs`, which imports `main.js` against a stub DOM. The tests that scan the
+script *as text* -- every feed value escaped, one exit for the slate, a count of the stale
+sites -- read all the modules at once through `_source()`; they assert a property of the
+source and never execute a piece of it.
 """
 import datetime as dt
 import json
@@ -54,21 +61,49 @@ ROOT = Path(__file__).resolve().parents[2]
 # so nothing here assumes the override took: the pair of tests under "the harness is
 # looking at the mutant" prove it on every run.
 PAGE = Path(os.environ.get("HUB_DASHBOARD_PAGE") or ROOT / "site" / "index.html")
+# The directory the page sits in -- `js/` and `data/` beside it. A mutant is a whole copy of it,
+# so the override of the page is the override of every module too.
+SITE = PAGE.parent
+JS = SITE / "js"
+RENDER = Path(__file__).resolve().parent / "dashboard_render.mjs"
+BOOT = Path(__file__).resolve().parent / "dashboard_boot.mjs"
 
 # Names carrying every character that matters, in the shapes a feed actually produces.
 HOSTILE = "<script>alert(1)</script>"
 REAL = "Ja'Marr Chase & D/ST <TEN>"
 
 
-def _lift(pattern: str) -> str:
-    """Pull one function out of the page so node can run the real thing.
+def _js_files(site: Path = SITE) -> list[Path]:
+    """Every module the page loads."""
+    return sorted((site / "js").rglob("*.js"))
 
-    Lifted rather than reimplemented. A copy of the escaper in this file would pass while
-    the page's own copy was wrong, which is the failure mode of testing a transcription.
-    """
-    got = re.search(pattern, PAGE.read_text())
-    assert got, f"{pattern!r} no longer matches the page; the test is looking at nothing"
-    return got.group(0)
+
+def _source() -> str:
+    """All the page's script as text, for the tests that assert a property of the source.
+
+    Reading is not lifting: nothing here is executed, so a copy cannot pass while the page's own
+    is wrong. The tests that run code import the real module instead (`_mod`)."""
+    return "\n".join(f.read_text() for f in _js_files())
+
+
+def _mod(rel: str) -> str:
+    """The `import` specifier of one module, as a JSON string literal to splice into a script."""
+    assert (JS / rel).exists(), f"no module {rel} under {JS}"
+    return json.dumps((JS / rel).as_uri())
+
+
+def _function_source(rel: str, name: str) -> str:
+    """One function's text out of a module, for a test that scans its body (never to run it).
+
+    From the `function` line to the first line that is a bare closing brace: the modules are
+    written with top-level functions closed at column zero, and this fails loudly if one is not."""
+    lines = (JS / rel).read_text().splitlines()
+    head = re.compile(rf"^(?:export )?(?:async )?function {re.escape(name)}\(")
+    start = next((i for i, ln in enumerate(lines) if head.match(ln)), None)
+    assert start is not None, f"{rel} no longer defines `{name}`; the test is looking at nothing"
+    end = next((i for i in range(start, len(lines)) if lines[i] == "}"), None)
+    assert end is not None, f"`{name}` in {rel} does not close at column zero"
+    return "\n".join(lines[start:end + 1])
 
 
 @pytest.fixture(scope="module")
@@ -80,14 +115,15 @@ def node():
 
 
 def _run(node: str, body: str) -> str:
-    got = subprocess.run([node, "-e", body], capture_output=True, text=True, timeout=30)
+    got = subprocess.run([node, "--input-type=module", "-e", body],
+                         capture_output=True, text=True, timeout=30)
     assert got.returncode == 0, got.stderr
     return got.stdout.strip()
 
 
 def test_a_name_carrying_markup_renders_as_text(node):
-    esc = _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);")
-    out = _run(node, f"{esc}\nconsole.log(esc({json.dumps(HOSTILE)}));")
+    out = _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
+                     f"console.log(esc({json.dumps(HOSTILE)}));")
     assert "<script>" not in out
     assert out == "&lt;script&gt;alert(1)&lt;/script&gt;"
 
@@ -95,8 +131,8 @@ def test_a_name_carrying_markup_renders_as_text(node):
 def test_an_ordinary_name_survives_intact(node):
     """A gate that mangles `Ja'Marr Chase` is one that gets turned off. The entities have to
     be entities, and they have to be the right ones."""
-    esc = _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);")
-    out = _run(node, f"{esc}\nconsole.log(esc({json.dumps(REAL)}));")
+    out = _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
+                     f"console.log(esc({json.dumps(REAL)}));")
     assert out == "Ja&#39;Marr Chase &amp; D/ST &lt;TEN&gt;"
     assert "Chase" in out and "D/ST" in out
 
@@ -104,9 +140,7 @@ def test_an_ordinary_name_survives_intact(node):
 def test_the_table_escapes_every_cell_without_being_asked(node):
     """The structural half. Escaping at each call site is discipline; escaping in `table` is
     a property, and it is why a new column cannot reintroduce this."""
-    esc = _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);")
-    tbl = _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}")
-    body = (f"{esc}\n{tbl}\n"
+    body = (f"import {{ table }} from {_mod('table.js')};\n"
             f"console.log(table([{{label: 'player', get: r => r.player}}], "
             f"[{{player: {json.dumps(HOSTILE)}}}]));")
     out = _run(node, body)
@@ -115,8 +149,8 @@ def test_the_table_escapes_every_cell_without_being_asked(node):
 
 
 def test_a_missing_value_renders_as_nothing_not_as_undefined(node):
-    esc = _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);")
-    assert _run(node, f"{esc}\nconsole.log('[' + esc(null) + esc(undefined) + ']');") == "[]"
+    assert _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
+                      "console.log('[' + esc(null) + esc(undefined) + ']');") == "[]"
 
 
 # --- nobody added a thirteenth interpolation and forgot ----------------------
@@ -137,7 +171,7 @@ def test_every_feed_value_in_the_markup_goes_through_esc():
     Verified against the page as it stood before the fix: this reports the three hand-built
     slate cells and the roster and survivor prose. The `table` getters are not `${...}` at
     all, which is why `table` escaping on its own carries them."""
-    text = PAGE.read_text()
+    text = _source()
     raw = []
     for expr in re.findall(r"\$\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", text):
         names = re.findall(r"[\w.]+", expr)
@@ -155,7 +189,7 @@ def test_every_feed_value_in_the_markup_goes_through_esc():
 def test_the_scan_would_notice_an_unescaped_value():
     """The guard's own premise. A regex that matched no interpolations at all would make the
     assertion above vacuously true, which is how a guard like this dies quietly."""
-    text = PAGE.read_text()
+    text = _source()
     exprs = re.findall(r"\$\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", text)
     assert len(exprs) > 20, f"only {len(exprs)} interpolations found; the page uses many more"
     assert any("esc(" in e for e in exprs), "no escaped interpolation found at all"
@@ -164,7 +198,7 @@ def test_the_scan_would_notice_an_unescaped_value():
 def test_the_getters_return_text_rather_than_markup():
     """`table` escapes unconditionally, so a getter returning `&mdash;` would render the
     entity literally. The em dash is the character now, and nothing may go back."""
-    text = PAGE.read_text()
+    text = _source()
     getters = re.findall(r"get: r => ([^\n]*)", text)
     entities = [g for g in getters if "&" in g and ";" in g]
     assert not entities, f"these getters return HTML entities: {entities}"
@@ -172,7 +206,7 @@ def test_the_getters_return_text_rather_than_markup():
 
 # --- the weekly artifact is named by its writer, not spelled again here ------
 
-DATA = PAGE.parent / "data"
+DATA = SITE / "data"
 
 # `publish.artifacts` puts exactly one `preds_`-prefixed entry in a manifest, so there is
 # never a set to choose from -- which is why `predsArt` takes no week to disambiguate with.
@@ -187,9 +221,8 @@ OLD_NAMING = {"season": 2026, "week": 1,
 
 def _preds_art(node: str, man):
     """`predsArt` for real, on a manifest, returning the entry it settles on."""
-    fn = _lift(r"function predsArt\(man\) \{[\s\S]*?\n\}")
-    return json.loads(_run(node, f"{fn}\nconsole.log(JSON.stringify("
-                                 f"predsArt({json.dumps(man)}) ?? null));"))
+    return json.loads(_run(node, f"import {{ predsArt }} from {_mod('artifacts.js')};\n"
+                                 f"console.log(JSON.stringify(predsArt({json.dumps(man)}) ?? null));"))
 
 
 def test_the_slate_asks_for_the_name_the_writer_wrote(node):
@@ -226,7 +259,7 @@ def test_a_manifest_naming_no_slate_names_nothing_rather_than_guessing(node):
 def test_the_page_never_spells_an_artifact_name_itself():
     """The guard that keeps finding 1 fixed. Any interpolation building a `preds_...` name
     is a second copy of `preds_name` and `store.week_key`, wherever it hides."""
-    built = re.findall(r"`preds_[^`]*\$\{[^`]*`", PAGE.read_text())
+    built = re.findall(r"`preds_[^`]*\$\{[^`]*`", _source())
     assert not built, (f"these rebuild the artifact name the writer owns: {built}. Read it "
                        f"off `manifest.artifacts` instead.")
 
@@ -242,11 +275,9 @@ WEEK_2 = {"season": 2026, "week": 2, "artifacts": [
 
 
 def _board_shows(node: str, man) -> bool:
-    """`boardShows` for real -- with `findArt`, which it reads the board's entry through."""
-    fns = "\n".join([_lift(r"function findArt\(man, name\) \{[\s\S]*?\n\}"),
-                     _lift(r"function boardShows\(man\) \{[\s\S]*?\n\}")])
-    return json.loads(_run(node, f"{fns}\nconsole.log(JSON.stringify("
-                                 f"boardShows({json.dumps(man)})));"))
+    """`boardShows` for real -- it reads the board's entry through `findArt` in the same module."""
+    return json.loads(_run(node, f"import {{ boardShows }} from {_mod('artifacts.js')};\n"
+                                 f"console.log(JSON.stringify(boardShows({json.dumps(man)})));"))
 
 
 def test_the_board_retires_when_a_slate_is_newer_than_it(node):
@@ -291,7 +322,7 @@ def test_a_slate_stamp_that_does_not_parse_cannot_retire_the_board(node):
 def test_the_board_panel_is_gated_on_the_comparison():
     """The rule is only worth its tests if the render asks it. The panel is hidden off the
     answer and the board is not even fetched for a retired one."""
-    text = PAGE.read_text()
+    text = (JS / "main.js").read_text()
     assert re.search(r"const shows = boardShows\(man\);", text), "render no longer asks"
     assert "boardEl.hidden = !shows;" in text, "the answer no longer hides the panel"
     assert re.search(r"shows \? await load\(\"draft_board\"\)", text)
@@ -311,10 +342,8 @@ def test_the_retired_board_is_hidden_not_deleted():
 # --- both published weeks are reachable, and each says which season (#23) ----
 
 def _other_weeks(node: str, man, shown):
-    fn = "\n".join([_lift(r"function predsArt\(man\) \{[\s\S]*?\n\}"),
-                    _lift(r"const ARCHIVE = \[[\s\S]*?\];"),
-                    _lift(r"function otherWeeks\(man, shown\) \{[\s\S]*?\n\}")])
-    return json.loads(_run(node, f"{fn}\nconsole.log(JSON.stringify(otherWeeks("
+    return json.loads(_run(node, f"import {{ otherWeeks }} from {_mod('artifacts.js')};\n"
+                                 f"console.log(JSON.stringify(otherWeeks("
                                  f"{json.dumps(man)}, {json.dumps(shown)})));"))
 
 
@@ -344,7 +373,7 @@ def test_every_week_the_page_offers_is_a_file_that_is_committed(node):
 def test_the_slate_legend_names_its_season_and_escapes_it():
     """`site/data/` holds 2025 week 18 and 2026 week 01. "week 18" alone does not say which
     of them is on screen, and the subtitle's season is the manifest's, not the artifact's."""
-    legend = re.search(r"const head = `[\s\S]*?`;", PAGE.read_text())
+    legend = re.search(r"const head = `[\s\S]*?`;", (JS / "panels" / "slate.js").read_text())
     assert legend, "the slate legend is no longer built as `const head = ...`"
     named = [e for e in re.findall(r"\$\{([^{}]*)\}", legend.group(0))
              if "season" in e.lower() or "stamp" in e.lower()]
@@ -356,7 +385,7 @@ def test_the_slate_season_comes_off_the_artifact_and_only_the_artifact():
     """The manifest names the week it was written for -- the one week that can disagree with
     the rows on screen. Falling back to it is the skew the panel exists to make visible, so
     an artifact that does not say which season it is says that instead of borrowing one."""
-    text = PAGE.read_text()
+    text = (JS / "panels" / "slate.js").read_text()
     shown = re.findall(r"const shown(?:Season|Week) = [^\n]*", text)
     assert len(shown) == 2, f"expected a season and a week off the artifact, got {shown}"
     assert not [s for s in shown if "man" in s], f"these read the manifest: {shown}"
@@ -367,13 +396,32 @@ def test_one_artifact_is_fetched_once_however_many_weeks_are_read(node):
     while games are on is worthless as a pre-registered claim. Keyed by the artifact's name
     so that reading an archived week cannot disturb the current one, and so the key always
     names the artifact actually served."""
-    fn = "\n".join([_lift(r"const frozenPreds = new Map\(\);"),
-                    _lift(r"async function frozen\(key\) \{[\s\S]*?\n\}")])
-    body = (f"const asked = [];\nasync function load(n) {{ asked.push(n); return {{}}; }}\n"
-            f"{fn}\n(async () => {{ await frozen('wk01'); await frozen('wk18');\n"
-            f"await frozen('wk01'); await frozen('wk18');\n"
-            f"console.log(JSON.stringify(asked)); }})();")
+    body = (f"import {{ frozen }} from {_mod('artifacts.js')};\n"
+            "const asked = [];\n"
+            "globalThis.fetch = async (url) => { asked.push(url.replace(/^data\\//, '')"
+            ".replace(/\\.json.*$/, '')); return { ok: true, json: async () => ({}) }; };\n"
+            "await frozen('wk01'); await frozen('wk18');\n"
+            "await frozen('wk01'); await frozen('wk18');\n"
+            "console.log(JSON.stringify(asked));")
     assert json.loads(_run(node, body)) == ["wk01", "wk18"]
+
+
+def test_the_frozen_predictions_live_in_one_module_level_map_nothing_can_replace(node):
+    """The freeze is structural (#476): the cache is one `const` map at the top of
+    `artifacts.js`, held by `frozen` alone. It is not exported, so the live poll -- which lives in
+    another module -- has no name to assign through or `.set` on; ES module bindings cannot be
+    reassigned from outside, and a `const` cannot be rebound from within."""
+    src = (JS / "artifacts.js").read_text()
+    assert len(re.findall(r"(?m)^const frozenPreds = new Map\(\);", src)) == 1
+    assert not re.search(r"export (?:const|let|var) frozenPreds", src)
+    out = json.loads(_run(node, f"import * as m from {_mod('artifacts.js')};\n"
+                                "console.log(JSON.stringify(Object.keys(m)));"))
+    assert "frozen" in out and "frozenPreds" not in out, out
+    # Only `frozen` touches it: the declaration and its three uses, and no other module names it.
+    assert len(re.findall(r"\bfrozenPreds\b", src)) == 4
+    others = [f.name for f in _js_files() if f.name != "artifacts.js"
+              and "frozenPreds" in f.read_text()]
+    assert not others, f"these modules reach the cache directly: {others}"
 
 
 # --- the track record is per season, not one pooled curve (#23) --------------
@@ -396,17 +444,8 @@ PER_SEASON = dict(LEGACY_RECORD, n_scored=19, seasons=SEASONS,
 
 
 def _record_body(node: str, tr: dict) -> str:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const fmt = \(v, d = 2\) =>[^\n]*"),
-        _lift(r"const pct = v =>[^\n]*"),
-        _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}"),
-        _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
-        _lift(r"function trackRecordBody\(tr\) \{[\s\S]*?\n\}"),
-        _lift(r"function gameBandNote\(gb\) \{[\s\S]*?\n\}"),
-        _lift(r"function intervalCoverageBody\(ic\) \{[\s\S]*?\n\}"),
-    ])
-    return _run(node, f"{lifted}\nconsole.log(trackRecordBody({json.dumps(tr)}));")
+    return _run(node, f"import {{ trackRecordBody }} from {_mod('panels/record.js')};\n"
+                      f"console.log(trackRecordBody({json.dumps(tr)}));")
 
 
 # What `hub.models.coverage.published_summary` writes into the record (#289, #293): the
@@ -529,7 +568,7 @@ def test_a_record_with_no_coverage_measurement_still_renders(node):
 def test_the_coverage_block_escapes_its_interpolations():
     """The same rule `test_the_record_panel_escapes_its_own_numbers_too` holds the record
     panel to: every hand-built `${...}` in the coverage block goes through `esc`."""
-    body = _lift(r"function intervalCoverageBody\(ic\) \{[\s\S]*?\n\}")
+    body = _function_source("panels/record.js", "intervalCoverageBody")
     raw = [e for e in re.findall(r"\$\{([^{}]*)\}", body) if "esc(" not in e]
     assert not raw, f"unescaped interpolations in the coverage block: {raw}"
 
@@ -606,7 +645,7 @@ def test_the_record_panel_escapes_its_own_numbers_too():
     which is exactly how the rule erodes: a count is a number until someone makes it a
     string. Every hand-built interpolation in this panel goes through `esc`, no exemptions
     to remember."""
-    body = _lift(r"function trackRecordBody\(tr\) \{[\s\S]*?\n\}")
+    body = _function_source("panels/record.js", "trackRecordBody")
     raw = [e for e in re.findall(r"\$\{([^{}]*)\}", body) if "esc(" not in e]
     assert not raw, f"unescaped interpolations in the record panel: {raw}"
 
@@ -621,7 +660,7 @@ def test_an_archived_week_is_not_joined_to_todays_scoreboard():
 
     The join is guarded on `archived` rather than on `viewing` directly since #57: the two
     say the same thing, and the test below is why there is only one of them."""
-    text = PAGE.read_text()
+    text = (JS / "panels" / "slate.js").read_text()
     joined = re.search(r"const live = [^\n]*", text)
     assert joined, "the slate no longer loads the live overlay where the test expects"
     assert "archived" in joined.group(0), (
@@ -633,8 +672,8 @@ def test_an_archived_week_is_not_joined_to_todays_scoreboard():
 
 def _slate_render() -> str:
     """The slate render, both halves, in the order the panel runs them."""
-    return "\n".join([_lift(r"async function renderSlate\(man\) \{[\s\S]*?\n\}"),
-                      _lift(r"async function slateBody\([^)]*\) \{[\s\S]*?\n\}")])
+    return "\n".join([_function_source("panels/slate.js", "renderSlate"),
+                      _function_source("panels/slate.js", "slateBody")])
 
 
 def test_the_slate_answers_the_archived_week_question_in_one_place():
@@ -660,8 +699,7 @@ def test_the_other_published_weeks_are_offered_at_the_slates_one_exit():
     Two exits is two chances to forget, and the one that would be forgotten is the empty
     case -- a week that could not be published is exactly when a reader wants the week that
     was. One exit, so the links cannot be missing from one of them."""
-    text = PAGE.read_text()
-    exits = text.count('panel("p-slate"')
+    exits = _source().count('panel("p-slate"')
     assert exits == 1, (
         f"the slate renders through {exits} exits; the published-week links have to be "
         f"appended at each of them, and one of them will be the one that forgets.")
@@ -693,14 +731,8 @@ SURVIVOR = {"name": "survivor", "source": "hub.season.survivor", "season": 2026,
 
 
 def _survivor_body(node: str, surv: dict) -> str:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const pct = v =>[^\n]*"),
-        _lift(r"const weekList = ws =>[^\n]*"),
-        _lift(r"function table\(cols, rows\) \{[\s\S]*?\n\}"),
-        _lift(r"function survivorBody\(surv\) \{[\s\S]*?\n\}"),
-    ])
-    return _run(node, f"{lifted}\nconsole.log(survivorBody({json.dumps(surv)}));")
+    return _run(node, f"import {{ survivorBody }} from {_mod('panels/survivor.js')};\n"
+                      f"console.log(survivorBody({json.dumps(surv)}));")
 
 
 def test_the_remaining_plan_says_which_weeks_it_is_over_and_which_are_behind_it(node):
@@ -764,7 +796,7 @@ def test_the_survivor_panel_escapes_its_own_numbers_too():
     """The same rule the record panel is held to, for the same reason: `FROM_A_FEED` is
     silent on week numbers because they are ours, and that is exactly how the rule erodes.
     Every hand-built interpolation in this panel goes through `esc`, no exemptions."""
-    body = _lift(r"function survivorBody\(surv\) \{[\s\S]*?\n\}")
+    body = _function_source("panels/survivor.js", "survivorBody")
     raw = [e for e in re.findall(r"\$\{([^{}]*)\}", body)
            if "esc(" not in e and "pct(" not in e]
     assert not raw, f"unescaped interpolations in the survivor panel: {raw}"
@@ -786,15 +818,8 @@ STATE_CLASSES = {"frozen": "state-frozen", "live": "state-live", "stale": "state
 def _panel_parts(node: str, opts_js: str) -> dict:
     """`panelParts(...)` as the page defines it, run in node. `opts_js` is a JS expression, so
     a test can plant an age relative to now rather than a date that will go out of date."""
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
-        _lift(r"const STATE = \{[\s\S]*?\};"),
-        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
-        _lift(r"function panelParts\([\s\S]*?\n\}"),
-        _lift(r"const staleOf = [^\n]*"),
-    ])
-    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify({opts_js}));"))
+    return json.loads(_run(node, f"import {{ panelParts, staleOf }} from {_mod('state.js')};\n"
+                                 f"console.log(JSON.stringify({opts_js}));"))
 
 
 PLANTED_STALE = ("(() => { const art = {stale: true, reason: 'ESPN unreachable', "
@@ -841,11 +866,7 @@ def test_a_panel_with_no_data_renders_its_reason_and_does_not_throw(node):
 def test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state(node):
     """Planted: a survivor artifact naming a rule nobody has confirmed. The note renders in
     the unconfirmed state and names the rule; with nothing unconfirmed, no state is drawn."""
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const STATE = \{[\s\S]*?\};"),
-        _lift(r"function unconfirmedNote\(surv\) \{[\s\S]*?\n\}"),
-    ])
+    lifted = f"import {{ unconfirmedNote }} from {_mod('panels/survivor.js')};"
     out = _run(node, f"{lifted}\nconsole.log(unconfirmedNote("
                      f"{json.dumps({'unconfirmed': ['co_survivor_rule']})}));")
     assert f'class="{STATE_CLASSES["unconfirmed"]}"' in out
@@ -855,9 +876,10 @@ def test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state(node):
 
 
 def test_the_roster_withheld_note_renders_in_the_unconfirmed_state():
-    """The note is built inside `render`, which needs a DOM to run, so this reads the page:
-    the sentence that names the withheld players is the one opening in the state."""
-    got = re.search(r'`<p class="([^"]*)">Withheld as unavailable:', PAGE.read_text())
+    """The note is built inside `lineupHeadline`; this reads its source: the sentence that names
+    the withheld players is the one opening in the state."""
+    got = re.search(r'`<p class="([^"]*)">Withheld as unavailable:',
+                    (JS / "panels" / "lineup.js").read_text())
     assert got, "the withheld note is gone, or no longer an unlabelled paragraph"
     assert got.group(1) == "${STATE.unconfirmed}"
 
@@ -865,7 +887,7 @@ def test_the_roster_withheld_note_renders_in_the_unconfirmed_state():
 def test_every_stale_warning_goes_through_the_one_stale_note():
     """No panel spells its own `Stale:` warning. A hand-written one would render without the
     age, which is the omission the grammar exists to stop."""
-    text = PAGE.read_text()
+    text = _source()
     assert len(re.findall(r"`[^`]*Stale:", text)) == 1
     sites = re.findall(r"stale: staleOf\(", text)
     assert len(sites) == 7, f"expected the seven panel exits that can be stale, got {len(sites)}"
@@ -1026,7 +1048,7 @@ def test_reduced_motion_still_stops_the_live_pulse():
 #     the override is proved on every run rather than assumed -- see the pair of tests under
 #     "the harness is looking at the mutant".
 
-# `// GUARD <name> [<selectors>]: <why>` ... `// /GUARD`, inside the page's script.
+# `// GUARD <name> [<selectors>]: <why>` ... `// /GUARD`, inside the page's modules.
 PAGE_GUARD = marker("GUARD", "//")
 TESTS = ROOT / "tests"
 
@@ -1037,54 +1059,58 @@ parent_only = pytest.mark.skipif(
     IN_CHILD, reason="the child run exercises the page's tests, not the harness's")
 
 
-def _declared(text: str) -> list[Guard]:
-    return declared(text, PAGE_GUARD, PAGE)
+def _declared(path: Path | None = None) -> list[Guard]:
+    """Every guard declared in one module, or in all of them when none is named."""
+    return [g for f in ([path] if path else _js_files())
+            for g in declared(f.read_text(), PAGE_GUARD, f)]
 
 
 def _without(text: str, guard: Guard) -> str:
-    """The page with that guard's block removed, markers and all."""
+    """The module with that guard's block removed, markers and all."""
     return excise(text, guard)
 
 
-def _script(text: str) -> str:
-    """The page's script, for `node --check`.
-
-    One block today. If a second ever appears this stops rather than checking the first and
-    calling the rest parsed -- a syntax check that silently covers half the page is the same
-    kind of quietly-dead guard this file is about.
-    """
-    blocks = re.findall(r"<script>([\s\S]*?)</script>", text)
-    assert len(blocks) == 1, (
-        f"expected one <script> block, found {len(blocks)}; check each of them rather than "
-        f"only the first")
-    return blocks[0]
-
-
 def _parses(node: str, js: str) -> subprocess.CompletedProcess:
-    """`node --check` on the page's script -- the analogue of `ast.parse` on a Python mutant.
+    """`node --check` on one module -- the analogue of `ast.parse` on a Python mutant.
 
-    A file rather than stdin because `--check` takes a path, and `.js` rather than `.mjs`
-    because the page's script is a classic script and nothing in it is a module."""
+    A file rather than stdin because `--check` takes a path, and `.mjs` so that node reads it
+    as a module whatever package.json it finds (or does not find) beside the temporary copy."""
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "mutant.js"
+        path = Path(tmp) / "mutant.mjs"
         path.write_text(js)
         return subprocess.run([node, "--check", str(path)],
                               capture_output=True, text=True, timeout=30)
 
 
-def _mutant_site(tmp_path: Path, text: str) -> Path:
-    """A whole copy of `site/`, with the mutated page in it.
+def _mutant_site(tmp_path: Path, files: dict[str, str]) -> Path:
+    """A whole copy of `site/`, with the mutated files in it. Keys are paths under `site/`
+    (`index.html`, `js/panels/slate.js`).
 
-    The directory and not the file alone: `DATA` above is `PAGE.parent / "data"`, so a page
+    The directory and not the file alone: `DATA` above is `SITE / "data"`, so a page
     written somewhere without its artifacts beside it would fail the archive tests for a
     reason that has nothing to do with the guard -- every mutant red, every guard reported
-    load-bearing, which is the trap this file is built around.
+    load-bearing, which is the trap this file is built around. `js/package.json` (which makes
+    the modules modules for node) comes along for the same reason.
     """
     site = tmp_path / "site"
     if not site.exists():
         shutil.copytree(ROOT / "site", site)
-    (site / "index.html").write_text(text)
+    for rel, text in files.items():
+        assert (site / rel).exists(), f"{rel} is not part of the site; the mutant would add a file"
+        (site / rel).write_text(text)
     return site / "index.html"
+
+
+def _plant(node: str, tmp_path: Path, name: str, rel: str, old: str, new: str) -> Path:
+    """The site with `old` replaced by `new` in one file, after checking the change landed and,
+    for a module, that the result still parses -- a mutant that does not parse is a harness
+    error and proves nothing."""
+    text = (SITE / rel).read_text()
+    mutant = text.replace(old, new)
+    assert mutant != text, f"{name}: the mutation did not land in {rel}"
+    if rel.endswith(".js"):
+        assert _parses(node, mutant).returncode == 0, name
+    return _mutant_site(tmp_path / name, {rel: mutant})
 
 
 def _run_module_against(page: Path, selectors: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
@@ -1116,12 +1142,14 @@ def _failed(got: subprocess.CompletedProcess) -> set[str]:
 def test_the_scan_finds_the_guards_the_page_declares():
     """A marker syntax that matched nothing would make every excision below vacuously
     absent, and this section would report a clean sweep of zero guards."""
-    found = {g.name for g in _declared(PAGE.read_text())}
+    found = {g.name for g in _declared()}
     assert "esc-escapes-what-reaches-the-page" in found, (
         f"the escaper is unmarked; found {sorted(found)}")
+    assert {g.path.name for g in _declared() if g.path and g.name.startswith("esc-")} == {"format.js"}, (
+        "the escaper's guard moved out of format.js; the markers move with the code they mark")
     assert "table-builds-every-cell-in-one-place" in found, (
         f"the table helper is unmarked; found {sorted(found)}")
-    stale = [(g.name, s) for g in _declared(PAGE.read_text()) for s in (g.selectors or ("",))
+    stale = [(g.name, s) for g in _declared() for s in (g.selectors or ("",))
              if not s or not selector_file(s, TESTS).exists()]
     assert not stale, (
         f"these brackets do not resolve to a file under tests/: {stale}. The bracket is one "
@@ -1133,14 +1161,14 @@ def test_a_guard_that_cannot_be_removed_cleanly_is_a_harness_error(node, tmp_pat
     """The trap. Excising a block can leave script that will not parse, every lifted
     function then fails, and that is indistinguishable from a load-bearing guard until
     something checks. `node --check` is what checks."""
-    page = tmp_path / "brittle.html"
-    page.write_text("<script>\nfunction f(xs) {\n  return xs.map(x =>\n"
-                    "    // GUARD only-expression: removing this leaves an arrow with no body.\n"
-                    "    x + 1\n"
-                    "    // /GUARD\n  );\n}\n</script>\n")
-    guard = _declared(page.read_text())[0]
+    module = tmp_path / "brittle.js"
+    module.write_text("export function f(xs) {\n  return xs.map(x =>\n"
+                      "    // GUARD only-expression: removing this leaves an arrow with no body.\n"
+                      "    x + 1\n"
+                      "    // /GUARD\n  );\n}\n")
+    guard = _declared(module)[0]
     assert guard.name == "only-expression"
-    broken = _parses(node, _script(_without(page.read_text(), guard)))
+    broken = _parses(node, _without(module.read_text(), guard))
     assert broken.returncode != 0, "node accepted an arrow function with no body"
 
 
@@ -1148,9 +1176,8 @@ def test_a_guard_that_cannot_be_removed_cleanly_is_a_harness_error(node, tmp_pat
 def test_the_pages_own_guards_survive_their_excision_syntactically(node):
     """Same check against the real markers: if one of them straddles a brace, the red run
     below would be a parse failure wearing a guard's name."""
-    text = PAGE.read_text()
-    for guard in _declared(text):
-        got = _parses(node, _script(_without(text, guard)))
+    for guard in _declared():
+        got = _parses(node, _without(guard.path.read_text(), guard))
         assert got.returncode == 0, (
             f"removing guard {guard.name!r} leaves script that will not parse "
             f"({got.stderr.strip().splitlines()[-1] if got.stderr else '?'}). Widen the "
@@ -1182,12 +1209,11 @@ def test_a_page_that_forgets_to_escape_is_caught_only_by_the_scan(node, tmp_path
     this red. It is the sharpest of the three (#61): the thing that would catch a new
     unescaped interpolation, whose own removal was caught by nothing.
     """
-    forgetful = PAGE.read_text().replace(
-        "</script>", "const forgotten = r => `<td>${r.player}</td>`;\n</script>")
-    assert forgetful != PAGE.read_text(), "the injection did not land"
-    assert _parses(node, _script(forgetful)).returncode == 0, "the injected page must parse"
+    original = (JS / "panels" / "roster.js").read_text()
+    forgetful = original + "\nexport const forgotten = r => `<td>${r.player}</td>`;\n"
+    assert _parses(node, forgetful).returncode == 0, "the injected module must parse"
 
-    got = _run_module_against(_mutant_site(tmp_path, forgetful))
+    got = _run_module_against(_mutant_site(tmp_path, {"js/panels/roster.js": forgetful}))
     assert got.returncode != 0, (
         "a page with an unescaped feed value passed. Either the child is reading the real "
         f"page rather than the mutant, or the static scan is gone.\n{got.stdout}")
@@ -1211,15 +1237,15 @@ def test_a_table_that_stops_escaping_its_cells_is_caught(node, tmp_path):
     Written against the page's exact expressions, which can drift; if they do, the
     replacement is a no-op and the assertion below says so rather than passing quietly.
     """
-    text = PAGE.read_text()
+    text = (JS / "table.js").read_text()
     unwrapped = text.replace("${esc(c.label)}", "${c.label}").replace(
         "${esc(c.get(r))}", "${c.get(r)}")
     assert unwrapped != text, (
         "neither `esc(c.label)` nor `esc(c.get(r))` is in the page any more; this test is "
         "mutating nothing. Re-point it at whatever `table` escapes with now.")
-    assert _parses(node, _script(unwrapped)).returncode == 0
+    assert _parses(node, unwrapped).returncode == 0
 
-    got = _run_module_against(_mutant_site(tmp_path, unwrapped))
+    got = _run_module_against(_mutant_site(tmp_path, {"js/table.js": unwrapped}))
     assert got.returncode != 0, (
         f"`table` stopped escaping its cells and every test still passed.\n{got.stdout}")
     assert "test_the_table_escapes_every_cell_without_being_asked" in _failed(got), (
@@ -1229,7 +1255,7 @@ def test_a_table_that_stops_escaping_its_cells_is_caught(node, tmp_path):
 # --- the habit ---------------------------------------------------------------
 
 @parent_only
-@pytest.mark.parametrize("guard", _declared(PAGE.read_text()) or [None], ids=repr)
+@pytest.mark.parametrize("guard", _declared() or [None], ids=repr)
 def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
     """Delete the guard, run the tests it names against the mutant, require failure.
 
@@ -1239,15 +1265,17 @@ def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
     errored, which is the same decision the other two harnesses make with the same code.
     """
     assert guard is not None, "no guards declared on the page"
-    text = PAGE.read_text()
+    assert guard.path is not None
+    text = guard.path.read_text()
     mutant = _without(text, guard)
-    parsed = _parses(node, _script(mutant))
+    parsed = _parses(node, mutant)
     if parsed.returncode != 0:                          # pragma: no cover - marker error
         pytest.fail(f"removing guard {guard.name!r} leaves script that will not parse "
                     f"({parsed.stderr.strip()}). Widen the markers so the block stands "
                     f"alone -- as written, a red run would prove nothing.")
 
-    got = outcome(_run_module_against(_mutant_site(tmp_path, mutant), guard.selectors))
+    rel = guard.path.relative_to(SITE).as_posix()
+    got = outcome(_run_module_against(_mutant_site(tmp_path, {rel: mutant}), guard.selectors))
     if got.errors and not got.failed:                   # pragma: no cover - harness error
         pytest.fail(
             f"removing guard {guard.name!r} made the child red without a test failing, which "
@@ -1266,25 +1294,25 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
     """The planted failure. A page that labels a stale panel frozen -- the mislabel the
     grammar exists to stop -- must fail the stale test; so must one that drops the age; and
     an unconfirmed note drawn as a plain warning must fail its own."""
-    text = PAGE.read_text()
     stale_test = "test_a_stale_artifact_renders_in_the_stale_state_with_its_age"
-    for name, old, new, expected in [
-        ("frozen-for-stale", "cls: stale ? STATE.stale : STATE.frozen",
+    for name, rel, old, new, expected in [
+        ("frozen-for-stale", "js/state.js", "cls: stale ? STATE.stale : STATE.frozen",
          "cls: STATE.frozen", stale_test),
-        ("no-age", ' <span class="stamp">artifact ${esc(age)}</span>', "", stale_test),
-        ("plain-warning", '<p class="${STATE.unconfirmed}">These figures',
+        ("no-age", "js/state.js", ' <span class="stamp">artifact ${esc(age)}</span>', "",
+         stale_test),
+        ("plain-warning", "js/panels/survivor.js", '<p class="${STATE.unconfirmed}">These figures',
          '<p class="warn">These figures',
          "test_an_unconfirmed_pool_rule_renders_in_the_unconfirmed_state"),
-        ("board-ignores-the-comparison", "const shows = boardShows(man);",
+        ("board-ignores-the-comparison", "js/main.js", "const shows = boardShows(man);",
          "const shows = true;", "test_the_board_panel_is_gated_on_the_comparison"),
-        ("board-retires-on-the-wrong-side", "Date.parse(a.generated_at) > built",
+        ("board-retires-on-the-wrong-side", "js/artifacts.js", "Date.parse(a.generated_at) > built",
          "Date.parse(a.generated_at) < built",
          "test_the_board_retires_when_a_slate_is_newer_than_it"),
+        ("frozen-cache-is-exported", "js/artifacts.js", "const frozenPreds = new Map();",
+         "export const frozenPreds = new Map();",
+         "test_the_frozen_predictions_live_in_one_module_level_map_nothing_can_replace"),
     ]:
-        mutant = text.replace(old, new)
-        assert mutant != text, f"{name}: the mutation did not land"
-        assert _parses(node, _script(mutant)).returncode == 0
-        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1332,7 +1360,7 @@ def _layout(text: str) -> dict:
                     break
 
     parser = P()
-    body = text.split("</style>", 1)[1].split("<script>", 1)[0]
+    body = text.split("</style>", 1)[1].split("<script", 1)[0]
     parser.feed(body)
     return {s["id"]: dict(s, order=i) for i, s in enumerate(parser.seen)}
 
@@ -1396,12 +1424,8 @@ def test_the_zones_are_named_for_when_their_data_changes():
 
 
 def _bins_svg(node: str, bins: list[dict]) -> str:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const pct = v =>[^\n]*"),
-        _lift(r"function reliabilitySVG\(bins\) \{[\s\S]*?\n\}"),
-    ])
-    return _run(node, f"{lifted}\nconsole.log(reliabilitySVG({json.dumps(bins)}));")
+    return _run(node, f"import {{ reliabilitySVG }} from {_mod('charts.js')};\n"
+                      f"console.log(reliabilitySVG({json.dumps(bins)}));")
 
 
 def _ten_bins(filled: dict[int, int]) -> list[dict]:
@@ -1474,6 +1498,7 @@ SLATE_SECTION = ('<section id="p-slate" class="wide"><h3>Who wins this week '
 ])
 def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node, tmp_path):
     text = PAGE.read_text()
+    rel = "index.html"
     if name == "slate-in-the-record-zone":
         # The slate is lifted out of zone one and planted at the head of the record's grid.
         assert SLATE_SECTION in text
@@ -1483,10 +1508,13 @@ def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node
         mutant = text.replace('<div class="zone" id="z-week"',
                               '<div class="grid"><div class="zone" id="z-week"', 1)
     else:
+        rel = "js/charts.js"
+        text = (SITE / rel).read_text()
         mutant = text.replace("if (!(b.n > 0)) {", 'if (!(b.n > 0)) { return "";', 1)
     assert mutant != text, f"{name}: the mutation did not land"
-    assert _parses(node, _script(mutant)).returncode == 0
-    got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+    if rel.endswith(".js"):
+        assert _parses(node, mutant).returncode == 0
+    got = _run_module_against(_mutant_site(tmp_path / name, {rel: mutant}))
     assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1531,53 +1559,26 @@ def test_a_fixed_340px_track_minimum_is_caught():
 # can go wrong silently, so each is planted: an artifact missing from the line, and a failure
 # reported in the footer *only* -- the panel that read the broken artifact saying nothing.
 #
-# `_render` runs the page's whole script in node against a stub DOM and a stub `fetch` that
-# serves the committed `site/data/` with per-test overrides (`None` is a 404). It is the real
-# `render()`, so a panel that stops reporting its own failure turns a test red.
+# `_render` imports `main.js` in node against a stub DOM and a stub `fetch` that serves the
+# committed `site/data/` with per-test overrides (`None` is a 404). It is the real `render()`,
+# so a panel that stops reporting its own failure turns a test red.
 
 # Read from the committed manifest, not typed: the slate refresh renames the `preds_*` entry
 # every week, and a typed `preds_2026_wk05` turned this suite red on week 6's refresh.
 MANIFEST_NAMES = tuple(a["name"] for a in json.loads(
-    (PAGE.parent / "data" / "manifest.json").read_text())["artifacts"])
+    (SITE / "data" / "manifest.json").read_text())["artifacts"])
 assert len(MANIFEST_NAMES) == 6 and sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1, (
     f"the footer tests assume six manifest artifacts with one slate; the manifest has "
     f"{MANIFEST_NAMES}")
 
 
 def _render(node: str, overrides: dict | None = None) -> dict:
-    script = _script(PAGE.read_text())
-    script = re.sub(r"\nrender\(\)\.then\([\s\S]*?\n\}\);\n", "\n", script)
-    cfg = {"script": script, "dataDir": str(PAGE.parent / "data"), "ov": overrides or {}}
-    body = f"""
-const vm = require('vm'), fs = require('fs');
-const cfg = {json.dumps(cfg)};
-function el() {{ return {{ innerHTML: '', textContent: '', hidden: false, className: '',
-  _c: {{}}, querySelector(s) {{ return this._c[s] ??= el(); }} }}; }}
-const els = {{}};
-const document = {{ getElementById: id => els[id] ??= el(), addEventListener() {{}} }};
-async function fetch(url) {{
-  const n = url.replace(/^data\\//, '').replace(/\\.json.*$/, '');
-  if (n in cfg.ov) {{
-    return cfg.ov[n] === null ? {{ ok: false }} : {{ ok: true, json: async () => cfg.ov[n] }};
-  }}
-  const f = cfg.dataDir + '/' + n + '.json';
-  return fs.existsSync(f) ? {{ ok: true, json: async () => JSON.parse(fs.readFileSync(f)) }}
-                          : {{ ok: false }};
-}}
-const ctx = vm.createContext({{ document, fetch, setInterval() {{}}, console }});
-vm.runInContext(cfg.script, ctx);
-vm.runInContext('render()', ctx).then(() => {{
-  const out = {{ footer: els.footer.innerHTML, panels: {{}} }};
-  for (const [id, e] of Object.entries(els)) {{
-    if (id.startsWith('p-')) out.panels[id] = {{ body: e._c['.body']?.innerHTML ?? '',
-      cls: e._c['.body']?.className ?? '', age: e._c['.age']?.textContent ?? '' }};
-    // A statement slot (#354) is its own element, not a panel's child: it carries the state class.
-    if (id.startsWith('st-')) out.panels[id] = {{ body: e.innerHTML, cls: e.className, age: '' }};
-  }}
-  console.log(JSON.stringify(out));
-}});
-"""
-    return json.loads(_run(node, body))
+    """The page's real `render()`, by importing `main.js` -- see `dashboard_render.mjs`."""
+    got = subprocess.run([node, str(RENDER)], input=json.dumps({"site": str(SITE),
+                                                               "ov": overrides or {}}),
+                         capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0, got.stderr
+    return json.loads(got.stdout)
 
 
 def _footer_names(footer: str) -> list[str]:
@@ -1587,7 +1588,7 @@ def _footer_names(footer: str) -> list[str]:
 
 
 def _committed_manifest() -> dict:
-    return json.loads((PAGE.parent / "data" / "manifest.json").read_text())
+    return json.loads((SITE / "data" / "manifest.json").read_text())
 
 
 def _with_artifact(name: str, **fields) -> dict:
@@ -1599,13 +1600,9 @@ def _with_artifact(name: str, **fields) -> dict:
 
 
 def _status_records(node: str, man_js: dict | None, sides: dict) -> list[dict]:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
-        _lift(r"function statusRecords\(man, sides\) \{[\s\S]*?\n\}"),
-    ])
-    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify("
-                                 f"statusRecords({json.dumps(man_js)}, {json.dumps(sides)})));"))
+    return json.loads(_run(node, f"import {{ statusRecords }} from {_mod('panels/footer.js')};\n"
+                                 f"console.log(JSON.stringify(statusRecords("
+                                 f"{json.dumps(man_js)}, {json.dumps(sides)})));"))
 
 
 def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
@@ -1633,7 +1630,7 @@ def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one
     for name in (*MANIFEST_NAMES, "bigten", "cfbd"):
         assert name in names, f"{name} is missing from the footer: {names}"
     assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
-    cfbd = json.loads((PAGE.parent / "data" / "cfbd.json").read_text())
+    cfbd = json.loads((SITE / "data" / "cfbd.json").read_text())
     assert cfbd["fetched"] is False
     assert "nothing was fetched" in got, "cfbd's own reason is not on the line"
     assert " ago" in got, "no ages on the line"
@@ -1715,22 +1712,19 @@ def test_a_page_that_drops_an_artifact_or_hides_a_failure_turns_the_status_line_
     """The planted failures: a footer that drops the last manifest artifact; a roster panel
     that ignores the manifest's reason (failure in the footer only); a footer that loses the
     named non-fetches; a stale record panel with no banner."""
-    text = PAGE.read_text()
-    for name, old, new, expected in [
-        ("drops-an-artifact", "(man?.artifacts ?? []).map(a => ({",
+    for name, rel, old, new, expected in [
+        ("drops-an-artifact", "js/panels/footer.js", "(man?.artifacts ?? []).map(a => ({",
          "(man?.artifacts ?? []).slice(0, -1).map(a => ({",
          "test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line"),
-        ("failure-only-in-the-footer", "failureWarn(rArt, ", "(",
+        ("failure-only-in-the-footer", "js/main.js", "failureWarn(rArt, ", "(",
          "test_a_missing_artifact_reports_its_failure_at_its_own_panel"),
-        ("no-non-fetches", 'for (const name of ["bigten", "cfbd"])', "for (const name of [])",
+        ("no-non-fetches", "js/panels/footer.js", 'for (const name of ["bigten", "cfbd"])',
+         "for (const name of [])",
          "test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders"),
-        ("record-has-no-banner", "stale: staleOf(trArt),", "",
+        ("record-has-no-banner", "js/main.js", "stale: staleOf(trArt),", "",
          "test_a_stale_track_record_is_bannered_at_its_panel"),
     ]:
-        mutant = text.replace(old, new)
-        assert mutant != text, f"{name}: the mutation did not land"
-        assert _parses(node, _script(mutant)).returncode == 0, name
-        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1760,19 +1754,8 @@ SWAP_ROSTER = {
 
 
 def _headline(node: str, ros: dict) -> str:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const fmt = [^\n]*"),
-        _lift(r"const STATE = \{[\s\S]*?\};"),
-        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
-        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
-        _lift(r"function whoIs\(name, byName\) \{[\s\S]*?\n\}"),
-        _lift(r"function pairSwaps\(sit, start, byName\) \{[\s\S]*?\n\}"),
-        _lift(r"const PREVIOUS_MAX_GAP_DAYS = [^\n]*"),
-        _lift(r"function lineupChanges\(ros, stale, byName\) \{[\s\S]*?\n\}"),
-        _lift(r"function lineupHeadline\(ros, stale\) \{[\s\S]*?\n\}"),
-    ])
-    return _run(node, f"{lifted}\nconsole.log(lineupHeadline({json.dumps(ros)}));")
+    return _run(node, f"import {{ lineupHeadline }} from {_mod('panels/lineup.js')};\n"
+                      f"console.log(lineupHeadline({json.dumps(ros)}));")
 
 
 def _who(name: str, pos: str, team: str) -> str:
@@ -1841,7 +1824,7 @@ def test_a_hostile_name_in_the_headline_is_escaped(node):
 
 
 def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
-    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
     body = _render(node)["panels"]["p-lineup"]["body"]
     assert body.startswith('<div class="lineup-gain">+'), body[:120]
     for name in ros["start"] + ros["sit"] + ros["withheld"]:
@@ -1862,7 +1845,7 @@ def test_without_a_roster_the_call_stays_hidden_and_the_roster_panel_says_why(no
 
 
 def test_the_roster_table_shows_nfl_team_on_every_row(node):
-    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
     body = _render(node)["panels"]["p-roster"]["body"]
     heads = re.findall(r"<th>([^<]*)</th>", body)
     assert "team" in heads and heads.index("team") == heads.index("pos") + 1
@@ -1907,25 +1890,27 @@ def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_r
     anchor = '    <section id="p-survivor"'
     assert anchor in moved
     moved = moved.replace(anchor, section.group(0) + anchor, 1)
-    for name, mutant, expected in [
-        ("call-not-first", moved,
+    for name, rel, old, new, expected in [
+        ("call-not-first", "index.html", text, moved,
          "test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else"),
-        ("bare-name", text.replace(
-            '<span class="thin">${esc(r?.pos ?? "?")} &middot; ${esc(r?.nfl_team ?? "?")}</span>', ""),
+        ("bare-name", "js/panels/lineup.js",
+         '<span class="thin">${esc(r?.pos ?? "?")} &middot; ${esc(r?.nfl_team ?? "?")}</span>', "",
          "test_every_swapped_name_carries_its_position_and_team"),
-        ("pairs-by-index", text.replace(
-            "const i = posOf(out) ? ins.findIndex(n => posOf(n) === posOf(out)) : -1;",
-            "const i = ins.length ? 0 : -1;"),
+        ("pairs-by-index", "js/panels/lineup.js",
+         "const i = posOf(out) ? ins.findIndex(n => posOf(n) === posOf(out)) : -1;",
+         "const i = ins.length ? 0 : -1;",
          "test_swaps_pair_by_position_first_and_the_leftover_goes_to_flex"),
-        ("unescaped-name", text.replace("<b>${esc(name)}</b>", "<b>${name}</b>"),
+        ("unescaped-name", "js/panels/lineup.js", "<b>${esc(name)}</b>", "<b>${name}</b>",
          "test_a_hostile_name_in_the_headline_is_escaped"),
-        ("no-team-column", text.replace(
-            '        { label: "team", get: r => r.nfl_team ?? "" },\n', ""),
+        ("no-team-column", "js/panels/roster.js",
+         '    { label: "team", get: r => r.nfl_team ?? "" },\n', "",
          "test_the_roster_table_shows_nfl_team_on_every_row"),
     ]:
-        assert mutant != text, f"{name}: the mutation did not land"
-        assert _parses(node, _script(mutant)).returncode == 0, name
-        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        if name == "call-not-first":
+            assert new != old, f"{name}: the mutation did not land"
+            got = _run_module_against(_mutant_site(tmp_path / name, {rel: new}))
+        else:
+            got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1949,16 +1934,8 @@ def _wrapped(name: str, pos: str, team: str) -> str:
 
 
 def _changes(node: str, ros: dict, stale: dict | None = None) -> str:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
-        _lift(r"const STATE = \{[\s\S]*?\};"),
-        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
-        _lift(r"function whoIs\(name, byName\) \{[\s\S]*?\n\}"),
-        _lift(r"const PREVIOUS_MAX_GAP_DAYS = [^\n]*"),
-        _lift(r"function lineupChanges\(ros, stale, byName\) \{[\s\S]*?\n\}"),
-    ])
-    body = (f"{lifted}\nconst ros = {json.dumps(ros)};\n"
+    body = (f"import {{ lineupChanges }} from {_mod('panels/lineup.js')};\n"
+            f"const ros = {json.dumps(ros)};\n"
             "const byName = new Map(ros.rows.map(r => [r.player, r]));\n"
             f"console.log(lineupChanges(ros, {json.dumps(stale)}, byName));")
     return _run(node, body)
@@ -2038,7 +2015,7 @@ def test_the_line_sits_directly_under_the_call_and_a_missing_prior_never_costs_t
 
 
 def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(node):
-    ros = json.loads((PAGE.parent / "data" / "roster.json").read_text())
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
     ros["previous"] = {"generated_at": "2000-01-01T00:00:00+00:00",
                        "start": [], "sit": [], "withheld": []}
     body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
@@ -2057,26 +2034,23 @@ def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(nod
 
 @parent_only
 def test_a_page_that_diffs_against_a_stale_prior_or_renders_a_stale_line_as_current_turns_it_red(node, tmp_path):
-    text = PAGE.read_text()
-    for name, mutant, expected in [
-        ("diffs-against-the-stale-prior", text.replace(
-            "if (!(gapDays > 0 && gapDays <= PREVIOUS_MAX_GAP_DAYS)) {", "if (false) {"),
+    for name, old, new, expected in [
+        ("diffs-against-the-stale-prior",
+         "if (!(gapDays > 0 && gapDays <= PREVIOUS_MAX_GAP_DAYS)) {", "if (false) {",
          "test_a_prior_decision_too_old_to_be_the_last_regen_is_not_diffed_against"),
-        ("stale-line-reads-as-current", text.replace(
-            "const cls = stale ? STATE.stale : STATE.frozen;", "const cls = STATE.frozen;"),
+        ("stale-line-reads-as-current",
+         "const cls = stale ? STATE.stale : STATE.frozen;", "const cls = STATE.frozen;",
          "test_a_stale_roster_renders_the_line_in_the_stale_state_with_the_run_it_describes"),
-        ("empty-diff-for-no-prior", text.replace(
-            "if (!usable) return wrap(cls, `No earlier decision to compare.${stamp}`);",
-            "if (!usable) return wrap(cls, `No change since last time.${stamp}`);"),
+        ("empty-diff-for-no-prior",
+         "if (!usable) return wrap(cls, `No earlier decision to compare.${stamp}`);",
+         "if (!usable) return wrap(cls, `No change since last time.${stamp}`);",
          "test_no_earlier_decision_says_so_rather_than_rendering_an_empty_diff"),
-        ("bare-names-in-the-line", text.replace(
-            "const named = ns => ns.map(n => whoIs(n, byName)).join(\", \");",
-            "const named = ns => ns.join(\", \");"),
+        ("bare-names-in-the-line",
+         "const named = ns => ns.map(n => whoIs(n, byName)).join(\", \");",
+         "const named = ns => ns.join(\", \");",
          "test_a_changed_swap_since_the_last_regen_is_shown"),
     ]:
-        assert mutant != text, f"{name}: the mutation did not land"
-        assert _parses(node, _script(mutant)).returncode == 0, name
-        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/lineup.js", old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2096,15 +2070,15 @@ def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
 
 @parent_only
 def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
-    text = PAGE.read_text()
+    text = (JS / "main.js").read_text()
     start = text.index("  try {\n    document.getElementById(\"footer\")")
     end = text.index("  }\n", text.index("} catch {", start)) + len("  }\n")
     block = text[start:end]
     inner = "    document.getElementById(\"footer\").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));\n"
     assert inner in block
     mutant = text[:start] + inner + text[end:]
-    assert _parses(node, _script(mutant)).returncode == 0
-    got = _run_module_against(_mutant_site(tmp_path / "unguarded", mutant))
+    assert _parses(node, mutant).returncode == 0
+    got = _run_module_against(_mutant_site(tmp_path / "unguarded", {"js/main.js": mutant}))
     assert "test_a_status_record_that_throws_costs_the_footer_and_nothing_else" in _failed(got)
 
 
@@ -2119,18 +2093,8 @@ def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
 # empty.
 
 def _statement(node: str, tr: dict | None, art: dict | None = None) -> dict:
-    lifted = "\n".join([
-        _lift(r"const esc = v => [\s\S]*?\}\[c\]\)\);"),
-        _lift(r"const cap = [^\n]*"),
-        _lift(r"function ago\(iso\) \{[\s\S]*?\n\}"),
-        _lift(r"const STATE = \{[\s\S]*?\};"),
-        _lift(r"function staleNote\(stale\) \{[\s\S]*?\n\}"),
-        _lift(r"const staleOf = [^\n]*"),
-        _lift(r"const failureWarn = [\s\S]*?: fallback;"),
-        _lift(r"const BACKTEST_WINDOW_DAYS = \d+;"),
-        _lift(r"function backtestStatement\(tr, art\) \{[\s\S]*?\n\}"),
-    ])
-    return json.loads(_run(node, f"{lifted}\nconsole.log(JSON.stringify(backtestStatement("
+    return json.loads(_run(node, f"import {{ backtestStatement }} from {_mod('panels/statement.js')};\n"
+                                 f"console.log(JSON.stringify(backtestStatement("
                                  f"{json.dumps(tr)}, {json.dumps(art)})));"))
 
 
@@ -2187,10 +2151,11 @@ def test_the_statement_builder_types_no_figure_of_its_own():
     """Read off the page: apart from a zero compared against and the date slice (0, 10), the
     builder holds no numeral outside the window constant, so a count typed into the sentence
     has nowhere to be."""
-    body = _lift(r"function backtestStatement\(tr, art\) \{[\s\S]*?\n\}")
+    body = _function_source("panels/statement.js", "backtestStatement")
     prose = re.sub(r"//[^\n]*", "", re.sub(r"\$\{[^}]*\}", "", body))
     assert set(re.findall(r"\b\d+(?:\.\d+)?\b", prose)) <= {"0", "10"}, prose
-    assert re.search(r"const BACKTEST_WINDOW_DAYS = \d+;", PAGE.read_text())
+    assert re.search(r"const BACKTEST_WINDOW_DAYS = \d+;",
+                     (JS / "panels" / "statement.js").read_text())
 
 
 def test_an_absent_record_fills_the_slot_with_a_standing_reason(node):
@@ -2249,7 +2214,7 @@ def test_a_hostile_figure_or_reason_in_the_statement_is_escaped(node):
 
 
 def _fresh_record(**kw) -> dict:
-    committed = json.loads((PAGE.parent / "data" / "track_record.json").read_text())
+    committed = json.loads((SITE / "data" / "track_record.json").read_text())
     return {**committed, "generated_at": _days_ago(1 / 1440), **kw}
 
 
@@ -2303,12 +2268,11 @@ def test_no_other_panel_carries_a_backtest_chip_beside_the_page_statement(node):
         if pid in ("st-backtest", "p-record"):
             continue
         assert "backtest" not in p["body"].lower(), f"{pid} carries its own backtest caveat"
-    assert not re.search(r'class="tag[^"]*backtest', PAGE.read_text())
+    assert not re.search(r'class="tag[^"]*backtest', _source())
 
 
 @parent_only
 def test_a_page_that_types_a_figure_or_ignores_the_window_turns_the_statement_red(node, tmp_path):
-    text = PAGE.read_text()
     for name, old, new, expected in [
         ("typed-figure", 'const scored = n === null ? "An unknown number of" : esc(n);',
          'const scored = "80";',
@@ -2329,8 +2293,117 @@ def test_a_page_that_types_a_figure_or_ignores_the_window_turns_the_statement_re
         ("empty-when-absent", "html: `<p>${esc(failureWarn(art,", "html: `${esc(failureWarn(art,",
          "test_an_absent_record_fills_the_slot_with_a_standing_reason"),
     ]:
-        mutant = text.replace(old, new)
-        assert mutant != text, f"{name}: the mutation did not land"
-        assert _parses(node, _script(mutant)).returncode == 0, name
-        got = _run_module_against(_mutant_site(tmp_path / name, mutant))
+        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/statement.js", old, new))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- the page is native modules, and a module that will not load leaves a reason (#476) -------
+#
+# The split from one inline script into `site/js/` adds a failure the inline script did not
+# have: a module graph either links or it does not. One module with a syntax error, or one
+# that went missing from a deploy, stops every module after it, and the page is then a header
+# above empty panels. `index.html` therefore ships a notice that the script did not start, and
+# `start()` in `main.js` is the only thing that hides it, so the notice is on screen exactly
+# when the graph did not get that far.
+
+def test_the_page_carries_no_inline_script_beyond_the_module_entry():
+    scripts = re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>", PAGE.read_text())
+    assert len(scripts) == 1, f"expected the module entry alone, found {len(scripts)} <script>s"
+    attrs, body = scripts[0]
+    assert 'type="module"' in attrs and 'src="js/main.js"' in attrs, attrs
+    assert not body.strip(), "the module entry has an inline body"
+
+
+def test_every_module_is_a_same_origin_file_reached_from_main_and_nothing_is_fetched_elsewhere():
+    """No bundler, no CDN (K1): every `import` is a relative path to a `.js` file that is there,
+    every file under `site/js/` is reachable from the entry, and no script or style on the page
+    names another origin."""
+    reached: set[Path] = set()
+    todo = [JS / "main.js"]
+    while todo:
+        f = todo.pop()
+        if f in reached:
+            continue
+        reached.add(f)
+        src = f.read_text()
+        assert "import(" not in src, f"{f.name} imports dynamically; the graph is not static"
+        for spec in re.findall(r'(?m)^import [^;]*? from "([^"]+)";', src):
+            assert spec.startswith(("./", "../")) and spec.endswith(".js"), (
+                f"{f.name} imports {spec!r}: only relative `.js` paths load without a bundler")
+            target = (f.parent / spec).resolve()
+            assert target.exists(), f"{f.name} imports {spec!r}, which is not there"
+            todo.append(target)
+    assert reached == {p.resolve() for p in _js_files()}, (
+        f"modules nothing imports: {sorted(p.name for p in set(_js_files()) - reached)}")
+    html = PAGE.read_text()
+    assert not re.search(r"""<(?:script|link)\b[^>]*(?:src|href)=["'](?:https?:)?//""", html), (
+        "the page loads a script or stylesheet from another origin")
+
+
+def _boot(node: str, site: Path) -> dict:
+    got = subprocess.run([node, str(BOOT)], input=json.dumps({"site": str(site)}),
+                         capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0, got.stderr
+    return json.loads(got.stdout)
+
+
+def test_the_entry_module_starts_and_hides_the_script_did_not_start_notice(node):
+    """The control for the failures below: the real graph links, `start()` runs, and the notice
+    is hidden -- so a notice left standing in the failure cases is the failure, not the stub."""
+    got = _boot(node, SITE)
+    assert got["imported"] is True and got["error"] is None, got
+    assert got["hidden"] is True, "main.js started and left the notice on screen"
+
+
+def test_the_notice_ships_visible_and_only_start_hides_it():
+    layout = _layout(PAGE.read_text())
+    notice = layout["boot-status"]
+    assert not notice["hidden"], "the notice must ship visible; start() is what hides it"
+    assert notice["in"] == [], "the notice sits outside every zone and panel"
+    assert layout["subtitle"]["order"] < notice["order"] < layout["z-week"]["order"]
+    assert "did not start" in PAGE.read_text()
+    users = [f.name for f in _js_files() if "boot-status" in f.read_text()]
+    assert users == ["main.js"], f"only the entry may touch the notice, found {users}"
+    assert re.search(r"(?m)^\s*#boot-status\[hidden\] \{ display: none; \}", _style()), (
+        "a class that sets `display` on the notice would keep it on screen after `hidden`")
+
+
+def test_a_module_that_will_not_parse_leaves_the_notice_not_a_blank_page(node, tmp_path):
+    """Planted: a syntax error in one panel module. The import of the entry rejects, `start()`
+    is never reached, and the notice is still standing -- which, with the test above, is the
+    page's graceful fallback."""
+    site = _mutant_site(tmp_path, {"js/panels/survivor.js": (
+        JS / "panels" / "survivor.js").read_text() + "\nexport const = ;\n"}).parent
+    got = _boot(node, site)
+    assert got["imported"] is False and got["error"] == "SyntaxError", got
+    assert got["hidden"] is False, "the module failed and the notice was hidden: a blank page"
+
+
+def test_a_module_missing_from_the_deploy_leaves_the_notice_not_a_blank_page(node, tmp_path):
+    site = tmp_path / "site"
+    shutil.copytree(ROOT / "site", site)
+    (site / "js" / "panels" / "lineup.js").unlink()
+    got = _boot(node, site)
+    assert got["imported"] is False and got["hidden"] is False, got
+
+
+@parent_only
+def test_a_page_that_loses_its_modules_turns_the_module_contracts_red(node, tmp_path):
+    """The planted failures for the three contracts above: an inline script on the page, a
+    `start()` that forgets the notice, and a module imported from another origin."""
+    entry = '<script type="module" src="js/main.js"></script>'
+    for name, rel, old, new, expected in [
+        ("inline-script", "index.html", entry, entry + "\n<script>var x = 1;</script>",
+         "test_the_page_carries_no_inline_script_beyond_the_module_entry"),
+        ("notice-never-hidden", "js/main.js",
+         '  document.getElementById("boot-status").hidden = true;\n', "",
+         "test_the_entry_module_starts_and_hides_the_script_did_not_start_notice"),
+        ("module-from-a-cdn", "js/panels/board.js", 'from "../table.js";',
+         'from "https://cdn.example/table.js";',
+         "test_every_module_is_a_same_origin_file_reached_from_main_and_nothing_is_fetched_elsewhere"),
+        ("notice-hidden-by-a-module", "js/format.js", "export const cap",
+         "document.getElementById('boot-status');\nexport const cap",
+         "test_the_notice_ships_visible_and_only_start_hides_it"),
+    ]:
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
