@@ -145,3 +145,21 @@ def test_a_row_already_published_keeps_the_price_it_was_published_with(site, bas
 def test_attach_leaves_rows_that_carry_the_fields_untouched():
     rows = [{"game_id": "g1", "market_prob": 0.5}]
     assert market_row.attach(rows, 2026) == [{"game_id": "g1", "market_prob": 0.5}]
+
+
+def test_moment_reads_what_a_row_holds_and_refuses_what_it_cannot():
+    assert market_row._moment("2026-10-17 09:00:00") == dt.datetime(2026, 10, 17, 9)
+    assert market_row._moment("not a time") is None and market_row._moment("") is None
+    aware = dt.datetime(2026, 10, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+    assert market_row._moment(aware) == dt.datetime(2026, 10, 17, 9)
+
+
+def test_an_unreadable_store_prices_nothing_and_the_row_says_the_capture_is_absent(
+        site, base, monkeypatch):
+    when = dt.datetime(2026, 10, 17, 9, 0)
+
+    def boom(season, base=None):
+        raise RuntimeError("store locked")
+    monkeypatch.setattr(market_row.store, "lines", boom)
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert row["market_prob"] is None and "not in the store" in row["market_missing"]

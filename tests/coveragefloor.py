@@ -90,6 +90,7 @@ FLOOR: dict[str, int] = {
     "src/hub/league.py": 0,
     "src/hub/ledger.py": 1,
     "src/hub/live_chain.py": 1,
+    "src/hub/market_row.py": 0,
     "src/hub/models/__init__.py": 0,
     "src/hub/models/base.py": 2,
     # 8 -> 5 by hand (#403): removing `main`'s `pragma: no cover - network` exposed its
