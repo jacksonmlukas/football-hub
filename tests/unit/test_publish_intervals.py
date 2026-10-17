@@ -70,8 +70,9 @@ def record(tmp_path):
     site, base = tmp_path / "site" / "data", tmp_path / "processed"
     ids = [f"g{i}" for i in range(4)]
     store.write(_preds(ids, 0.65), "preds", "nfl", 2026, 1, base=base)
-    publish.predictions(2026, 1, base=base, out=site)
+    # Served before the publish: `predictions` reads the schedule for each row's kickoff (#482).
     serve(schedules=_schedule(range(2020, 2026), 3, ids, 3))
+    publish.predictions(2026, 1, base=base, out=site)
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict)
     return got
