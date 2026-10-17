@@ -36,6 +36,7 @@ from hub.config import (
     pool_digest,
     resolved_config,
 )
+from hub.declare import not_an_input
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
@@ -725,7 +726,7 @@ def _curve(season: int | None, df: pl.DataFrame, n_bins: int) -> dict[str, Any]:
 
 # 90%, not 95%: a bin holds a handful of games, and a 95% bar over seven games spans most of
 # [0, 1] and says nothing. Chosen once, for how wide it draws; not tuned on any season's data.
-INTERVAL_LEVEL = 0.90
+INTERVAL_LEVEL = not_an_input(0.90, "how wide a bar is drawn on the page; no prediction reads it")
 # The seasons the fixed home rate is taken from: the ten that end the season before the one it
 # scores. A constant window, so the baseline is the same rule every season and cannot be tuned.
 HOME_RATE_SEASONS = 10
