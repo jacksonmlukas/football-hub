@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import polars as pl
 
-from hub import atomic, jsonio, prereg, schedule, store
+from hub import atomic, jsonio, market_row, prereg, schedule, store
 from hub.config import (
     SEASON_AHEAD,
     UNCONFIRMED_POOL_RULES,
@@ -310,6 +310,9 @@ def predictions(season: int, week: int, base: Path | None = None,
     if df.is_empty():
         return _keeping(out, name, "the store held no prediction for this week")
     rows = _keeping_published(df.to_dicts(), out / f"{name}.json", season)
+    # Kickoff and the betting market's own price (#482), once per row at this boundary; a row already
+    # carrying them keeps what it was published with. Degrades to null-with-reason.
+    rows = market_row.attach(rows, season, base=base)
 
     payload = jsonio.artifact(name, "preds", rows, season=season, week=week,
                               provenance=_obtainable(rows))
