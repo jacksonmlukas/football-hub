@@ -54,6 +54,9 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # The lineup each source (mu, weekly ECR, ESPN weekly) would set, and what each scored (#492).
 # Optional and idempotent per week: offline or already-journalled, it changes nothing.
 	-uv run python -m hub.season.lineup_journal --record --settle
+# Which K and D/ST to start or pick up, by the market's implied totals (#494). A labelled
+# heuristic, journalled once per week so a gate can run on it later; offline it changes nothing.
+	-uv run python -m hub.season.stream --record
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
 
 pool:           ## This week's survivor pick priced against the field, across the concentration axis

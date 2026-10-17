@@ -8,16 +8,16 @@ answer later (`record`), and until a gate says so it is not an answer.
 
 The two rules, each a single number read off the betting market's own price for the game:
 
-* **D/ST: lowest opponent implied total first.** A defence facing an offence the market expects
-  to score little is the cheap stream the ticket names.
-* **K: highest own implied total first.** A kicker on an offence the market expects to score a
-  lot has more drives ending in a kick.
+* **D/ST: lowest opponent implied total first.** A defence facing an offence the betting
+  market expects to score little is the cheap stream the ticket names.
+* **K: highest own implied total first.** A kicker on an offence the betting market expects
+  to score a lot has more drives ending in a kick.
 
-**Implied total** is the market's total split by its spread: with `s` the home spread (positive
-when the home side is favoured -- nflverse's `spread_line`, the same sign `market_row` turns
-into a home-win probability) and `T` the total, home implies `(T + s) / 2` and away
-`(T - s) / 2`. Inputs and the result are all published per row, so the page can show the
-working.
+**Implied total** is the betting market's total split by its spread: with `s` the home spread
+(positive when the home side is favoured -- nflverse's `spread_line`, the same sign
+`market_row` turns into a home-win probability) and `T` the total, home implies
+`(T + s) / 2` and away `(T - s) / 2`. Inputs and the result are all published per row, so
+the page can show the working.
 
 **Not used: dome and weather.** The ticket allows them "if available". Nothing in this repo
 carries them for a game (`schedule` does not load the roof or wind columns), so the K rule is
@@ -110,7 +110,7 @@ def _game_lines(game: Mapping[str, Any], seen: Mapping[Any, Mapping[str, Any]],
 def team_lines(games: pl.DataFrame, week: int, bye: frozenset[str],
                seen: Mapping[Any, Mapping[str, Any]],
                at: datetime | None = None) -> dict[str, dict[str, Any]]:
-    """Per canonical team: its opponent, side, and the market inputs for `week`.
+    """Per canonical team: its opponent, side, and the betting-market inputs for `week`.
 
     A team on `bye` has a row with a reason and no opponent; a team in a game that cannot be
     priced has the opponent and the reason. Every team is keyed by `playoff_sos.canon_team`'s
@@ -222,8 +222,8 @@ def record(stream: Mapping[str, Any], season: int = SEASON_AHEAD,
            base: Path | None = None, now: datetime | None = None) -> tuple[Path | None, str]:
     """Journal this week's ranking, once. First write wins; a week with no ranking is not written.
 
-    The entry is what the market said when it was first written, not what a later run says; the
-    captures it was read from are committed, so a gate can recompute any later state.
+    The entry is what the betting market said when it was first written, not what a later
+    run says; the captures it was read from are committed, so a gate can recompute later.
     """
     wk = stream.get("week")
     if wk is None:
@@ -261,7 +261,8 @@ def render(stream: Mapping[str, Any], top: int = 5) -> str:
             lines.append(f"    {r['rank']:>2}  {r['team']:<4} vs {r['opp']:<4} {imp:5.1f}{mine}")
         for r in rows:
             if r["rank"] is None and r["rostered"]:
-                lines.append(f"     -  {r['team']:<4} {r['missing']}  <- {', '.join(r['rostered'])}")
+                mine = ", ".join(r["rostered"])
+                lines.append(f"     -  {r['team']:<4} {r['missing']}  <- {mine}")
     return "\n".join(lines)
 
 
@@ -274,7 +275,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     ap.add_argument("--out", default=None, help="override the journal directory")
     a = ap.parse_args(list(argv) if argv is not None else None)
     src = Path(a.roster) if a.roster else ROSTER_PARQUET
-    roster = pl.read_parquet(src) if src.exists() else pl.DataFrame(
+    if a.roster and not src.exists():
+        # An override that names nothing is a mistake to report; the default being absent is
+        # a fresh clone, and the ranking is still worth printing without the rostered flags.
+        print(f"hub.season.stream: no roster at {src}", file=sys.stderr)
+        return 1
+    roster =pl.read_parquet(src) if src.exists() else pl.DataFrame(
         schema={"player": pl.Utf8, "pos": pl.Utf8, "nfl_team": pl.Utf8})
     got = for_roster(roster)
     print(render(got))

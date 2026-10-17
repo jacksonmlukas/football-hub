@@ -919,6 +919,13 @@ def _previous_decision(dest: Path, stamp: str) -> dict[str, Any] | None:
             **{k: list(old.get(k) or []) for k in ("start", "sit", "withheld")}}
 
 
+def _roster_stream(df: pl.DataFrame) -> dict[str, Any]:
+    """The K / D/ST streaming heuristic for the roster artifact; a seam for tests, which
+    must not reach the schedule's network source."""
+    from hub.season import stream as stream_mod
+    return stream_mod.for_roster(df, SEASON_AHEAD)
+
+
 def roster(out: Path | None = None,
            path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
@@ -1016,7 +1023,12 @@ def roster(out: Path | None = None,
                         # and the odds say how sure. Correlated skewed joint draws, ties half;
                         # null for a forced swap. See `hub.season.swaps` for the assumptions.
                         swaps=swap_rows, odds_reason=odds_reason,
-                        unprojected=unproj, unprojected_reasons=unproj_reasons)
+                        unprojected=unproj, unprojected_reasons=unproj_reasons,
+                        # Which K and D/ST to start or pick up (#494): a heuristic from the
+                        # betting market's implied totals, labelled as one and never a
+                        # measured edge (ADR-0014). Null-with-reason where the schedule or
+                        # the odds are absent.
+                        stream=_roster_stream(df))
     # The new fields' own contract (#479): a malformed one is a stale call with the reason,
     # served as last-good, like every other call the lock cannot stand behind.
     from hub.contracts import ContractViolation, check_roster_artifact
