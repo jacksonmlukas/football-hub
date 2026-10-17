@@ -58,6 +58,8 @@ SCAN_ROOTS: tuple[Path, ...] = (
     *sorted((ROOT / "scripts").glob("*.sh")),
     *sorted((ROOT / "scripts").glob("*.py")),      # #266: the Python scripts were unscanned
     ROOT / "site" / "index.html",
+    # The page's script, which since #476 is modules rather than a block inside the page.
+    *sorted((ROOT / "site" / "js").rglob("*.js")),
     CONTEXT,
 )
 
@@ -574,7 +576,8 @@ OUTSTANDING: dict[tuple[str, str], tuple[int, str]] = {
     ("src/hub/season/lineup_gate.py", "the market"): (1, _BULK),
     # --- "the plan" unqualified -----------------------------------------------------------
     ("src/hub/draft/live.py", "the plan unqualified"): (2, "the foundation plan document"),
-    ("site/index.html", "the plan unqualified"): (2, "the survivor panel's own copy"),
+    ("site/js/main.js", "the plan unqualified"): (1, "the survivor panel's own copy"),
+    ("site/js/panels/survivor.js", "the plan unqualified"): (1, "the survivor panel's own copy"),
     ("src/hub/models/eval.py", "the plan unqualified"): (1, "the foundation plan document"),
     ("src/hub/models/ratings.py", "the plan unqualified"): (1, "the foundation plan doc"),
     # `weekly.py` was here until #248: the sentence lived in `walk_forward`'s docstring and

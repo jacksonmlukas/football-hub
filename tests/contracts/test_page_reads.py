@@ -1,4 +1,4 @@
-"""What `site/index.html` reads off each artifact, extracted from the page, so a producer cannot
+"""What the page reads off each artifact, extracted from its script, so a producer cannot
 drop it.
 
 `test_live_artifact_shape.py` records this for the live overlay alone, and it exists because
@@ -11,7 +11,8 @@ The near-miss that prompted this was the mirror image. Issue #122 made the roste
 carry a truthful `generated_at`, and the panel spent its age slot on a row count and took
 staleness from a manifest boolean that stays false for any payload that parses -- so a correct
 field would have published into a page that never displayed it, with every test green. It was
-caught by reading `index.html`, not by anything automatic (issue #127).
+caught by reading the page's script, not by anything automatic (issue #127). The script is the
+modules under `site/js/` since #476; `pagelib.script_text` reads them as one.
 
 **The page is the source of truth (#395).** This file used to keep `READS`, a hand-written
 copy of what the page reads, tied back to the page by two further tests. The copy is gone: the
@@ -34,11 +35,11 @@ import re
 from pathlib import Path
 
 import pytest
+from pagelib import script_text
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
 SRC = ROOT / "src" / "hub"
-PAGE = ROOT / "site" / "index.html"
 
 # Panels whose artifact this file does not pin, each with the reason. An absence is how a
 # record stops covering something without anyone deciding to; a named entry is a decision.
@@ -87,7 +88,7 @@ def page_reads(text: str) -> dict[str, set[str]]:
 
 
 def _page_reads() -> dict[str, set[str]]:
-    return {a: ks for a, ks in page_reads(PAGE.read_text()).items() if a not in NOT_PINNED_HERE}
+    return {a: ks for a, ks in page_reads(script_text()).items() if a not in NOT_PINNED_HERE}
 
 
 def unwritten(keys: set[str], payload: dict, conditional: frozenset[str] = frozenset()
@@ -118,7 +119,7 @@ def test_the_extraction_is_not_blind():
     """A scan that finds nothing is indistinguishable from a page that reads nothing, which is
     the failure a hand list could not have: every artifact the page loads by name has to yield
     at least one key, or the extraction has stopped seeing it."""
-    loaded = set(re.findall(r'await load\("([a-z_]+)"\)', PAGE.read_text()))
+    loaded = set(re.findall(r'await load\("([a-z_]+)"\)', script_text()))
     loaded -= set(NOT_PINNED_HERE)
     reads = _page_reads()
     assert loaded, "found no `await load(...)` in the page; the extraction is blind"
@@ -152,17 +153,14 @@ def test_a_conditional_key_is_still_named_by_a_producer():
 
 # -- the extraction, proven (rule 18) -----------------------------------------------------
 
-def test_a_planted_read_in_a_copy_of_the_page_is_found_and_a_planted_unread_key_is_not(
-        tmp_path):
-    page = tmp_path / "index.html"
-    page.write_text(PAGE.read_text() + "\n<script>\nasync function planted() {\n"
-                    '  const p = await load("roster");\n  return p.zz_planted_read;\n}\n'
-                    "</script>\n", encoding="utf-8")
-    found = page_reads(page.read_text())
+def test_a_planted_read_in_a_copy_of_the_page_is_found_and_a_planted_unread_key_is_not():
+    planted = (script_text() + "\nasync function planted() {\n"
+               '  const p = await load("roster");\n  return p.zz_planted_read;\n}\n')
+    found = page_reads(planted)
     assert "zz_planted_read" in found["roster"]
     assert "zz_planted_unread" not in found["roster"], (
         "a key nothing in the page reads must not be extracted")
-    assert "zz_planted_read" not in page_reads(PAGE.read_text())["roster"], (
+    assert "zz_planted_read" not in page_reads(script_text())["roster"], (
         "the plant leaked into the real page")
     # ...and the contract's own check, run on the planted extraction, fails on exactly it.
     assert "zz_planted_read" in unwritten(found["roster"], _published("roster"))

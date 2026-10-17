@@ -20,6 +20,7 @@ import pathlib
 
 import polars as pl
 import pytest
+from pagelib import script_text
 
 from hub import jsonio, publish, store
 from hub.fetch.replay import serve
@@ -1441,7 +1442,7 @@ def test_every_field_the_survivor_artifact_publishes_is_read_by_the_page(site, m
     got = publish.survivor(2026, out=site)
     assert isinstance(got, dict)
     envelope = set(jsonio.artifact("survivor", "hub.season.survivor", []))
-    page = (pathlib.Path(__file__).resolve().parents[2] / "site" / "index.html").read_text()
+    page = script_text()
     # The panel reads its artifact as `surv`, so `surv.<key>` is the page asking for it by
     # name. A bare substring would count the word "season" in an unrelated panel as a reader.
     unread = [k for k in got if k not in envelope and f"surv.{k}" not in page]

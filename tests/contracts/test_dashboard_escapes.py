@@ -2407,3 +2407,29 @@ def test_a_page_that_loses_its_modules_turns_the_module_contracts_red(node, tmp_
     ]:
         got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+# --- the deploy serves the modules (#476) ------------------------------------------------------
+#
+# `pages.yml` uploads a directory, not a list of files, which is why the split needed no change
+# to it. The test holds that: the day someone narrows the upload to `index.html` and `data/`, the
+# deployed page loads `js/main.js` and gets a 404, and the notice above is all a reader sees.
+
+PAGES = ROOT / ".github" / "workflows" / "pages.yml"
+
+
+def _pages_serves_the_whole_site(text: str) -> bool:
+    uploads = re.search(r"upload-pages-artifact@v\d+\s+with:\s+path: site[ \t]*$", text, re.M)
+    return bool(uploads) and '- "site/**"' in text
+
+
+def test_the_pages_deploy_uploads_the_whole_site_directory_so_the_modules_are_served():
+    assert _pages_serves_the_whole_site(PAGES.read_text())
+
+
+def test_a_deploy_that_uploads_less_than_the_site_directory_is_caught():
+    text = PAGES.read_text()
+    narrowed = text.replace("          path: site\n", "          path: site/data\n")
+    assert narrowed != text, "the plant did not land"
+    assert not _pages_serves_the_whole_site(narrowed)
+    assert not _pages_serves_the_whole_site(text.replace('- "site/**"', '- "site/data/**"'))
