@@ -109,6 +109,41 @@ def test_control_a_restatement_newer_than_as_of_is_red(tmp_path):
     assert any("2026-12-24" in line for line in pl.problems(root))
 
 
+def test_no_row_is_older_than_its_sources_latest_dated_revision():
+    """Derived from each row's own document, not from a list of expected dates: a revision
+    block newer than `as_of` is a verdict restated and a ledger row left behind (#483 review:
+    ADR-0016's Amendment and ADR-0009's Superseded figures were both missed this way)."""
+    rows, _ = pl.build(ROOT)
+    for r in rows:
+        latest = pl.latest_revision((ROOT / r["source"]).read_text())
+        assert latest is None or r["as_of"] >= latest, (
+            f"{r['name']}: as_of {r['as_of']} is older than {r['source']}'s revision {latest}")
+
+
+def test_the_revision_forms_the_docs_use_are_all_recognised():
+    for form in ("Restated 2026-01-02", "Re-scored 2026-01-02", "Amendment, 2026-01-02",
+                 "Amended 2026-01-02", "Superseded figures, 2026-01-02",
+                 "Attributed 2026-01-02", "Resolved, 2026-01-02: SHOW"):
+        assert pl.latest_revision(f"# t\n\n> **{form}.** x\n") == "2026-01-02", form
+
+
+def _plant(tmp_path, glob, block):
+    root = _tree(tmp_path)
+    adr = next((root / "docs" / "adr").glob(glob))
+    adr.write_text(adr.read_text() + block)
+    return root
+
+
+def test_control_an_amendment_block_newer_than_as_of_is_red(tmp_path):
+    root = _plant(tmp_path, "0010-*.md", "\n> **Amendment, 2026-12-24 (#1).** A new verdict.\n")
+    assert any("2026-12-24" in line for line in pl.problems(root))
+
+
+def test_control_a_superseded_figures_block_newer_than_as_of_is_red(tmp_path):
+    root = _plant(tmp_path, "0009-*.md", "\n> **Superseded figures, 2026-12-24.** New.\n")
+    assert any("2026-12-24" in line for line in pl.problems(root))
+
+
 def test_front_matter_parser_is_defensive():
     assert pl.front_matter("# no block\n") is None
     assert pl.front_matter("---\nverdict: Null\n") is None  # never closed

@@ -40,7 +40,15 @@ SCREENS = "docs/signal-screens.md"
 INDEX = "docs/architecture.md"
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_RESTATED = re.compile(r"(?:restated|re-scored)\D{0,16}?(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
+# Every form the docs use to date a revision of a verdict, found by grepping docs/adr/ and
+# method.md: "Restated 2026-..", "Re-scored/Re-scoring ..", "Amendment, 2026-..", "Amended ..",
+# "Superseded figures, 2026-..", "Attributed ..", "Resolved ..", "Corrected ..", "Settled ..".
+# A form missing from this list is a revision the as_of check cannot see (ADR-0016's
+# "Amendment, 2026-10-07" and ADR-0009's "Superseded figures, 2026-10-09" both were).
+_REVISION_WORDS = (r"restated|re-scored|re-scoring|amendment|amended|superseded figures|"
+                   r"attributed|resolved|corrected|settled|dated note")
+_RESTATED = re.compile(rf"(?:{_REVISION_WORDS})\D{{0,16}}?(\d{{4}}-\d{{2}}-\d{{2}})",
+                       re.IGNORECASE)
 _ANY_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 # What an ADR's index row says when the ADR records a verdict: its decision cell or its status
@@ -95,11 +103,21 @@ def _doc_row(path: Path, root: Path, block: dict[str, str]) -> tuple[dict[str, A
     if bad:
         return None, bad
     in_adr = path.parent.name == "adr"
-    return {
+    row: dict[str, Any] = {
         "name": block["name"], "verdict": block["verdict"], "figure": block["figure"],
         "adr": rel if in_adr else None, "issue": int(issue) if issue else None,
         "as_of": block["as_of"], "source": rel,
-    }, []
+    }
+    if block.get("detail"):
+        row["detail"] = block["detail"]  # free text here; screen rows carry a doc path
+    return row, []
+
+
+def latest_revision(text: str) -> str | None:
+    """The latest dated revision block in a document's body (its front matter excluded)."""
+    body = text.split("\n---\n", 1)[-1] if text.startswith("---") else text
+    dates = _RESTATED.findall(body)
+    return max(dates) if dates else None
 
 
 def _later_than_as_of(text: str, as_of: str, rel: str) -> list[str]:
@@ -207,6 +225,8 @@ def anchor_problems(rows: list[dict[str, Any]], root: Path) -> list[str]:
     for r in rows:
         for key in ("source", "adr", "detail"):
             ref = r.get(key)
+            if key == "detail" and ref and not ref.startswith("docs/"):
+                continue  # a front-matter note, not a pointer
             if ref and not (root / ref).is_file():
                 bad.append(f"{r['name']}: `{key}` cites {ref}, which does not exist")
         if not r.get("source"):

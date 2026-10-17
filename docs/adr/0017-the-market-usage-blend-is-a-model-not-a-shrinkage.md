@@ -1,6 +1,6 @@
 ---
 name: Market/Usage blend
-verdict: Shown never ranked
+verdict: Removed
 figure: "-1.004 pts/team-week, CI [-1.391, -0.621], 0 of 4 seasons"
 as_of: 2026-09-11
 issue: 44

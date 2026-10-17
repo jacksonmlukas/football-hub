@@ -1,9 +1,10 @@
 ---
 name: Weekly projection
-verdict: Shown never ranked
-figure: "-0.304 pts/team-week, CI [-1.043, +0.415]"
-as_of: 2026-09-07
-issue: 44
+verdict: Removed
+figure: "t interval [-2.032, -0.262] pts/team-week, 3 of 4 seasons resolved"
+detail: "kept as an unwired exhibit"
+as_of: 2026-10-07
+issue: 430
 ---
 
 # The Weekly projection is shown and never ranked on
