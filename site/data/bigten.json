@@ -1,20 +1,20 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-10-17T05:49:06+00:00",
+  "generated_at": "2026-10-17T17:45:19+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 7,
   "deadline": {
-    "id": "2026-10-17T0130Z",
-    "name": "evening"
+    "id": "2026-10-17T1500Z",
+    "name": "gameday-early"
   },
   "fetched": true,
   "stale": true,
   "reason": "the page parsed but linked no report documents; nothing was archived from it (2 links skipped: off-host)",
   "documents": {
     "seen": 1,
-    "new": 1,
+    "new": 0,
     "reports": 0
   },
   "skipped": {
@@ -28,7 +28,7 @@
   },
   "lines": {
     "rows": 116,
-    "captured_at": "2026-10-17T05:49:06+00:00",
+    "captured_at": "2026-10-17T17:45:19+00:00",
     "why": null
   },
   "missed": {
@@ -56,10 +56,10 @@
       "2026-10-04T0130Z"
     ]
   },
-  "archive_rows": 14,
+  "archive_rows": 16,
   "quota": {
     "month": "2026-10",
-    "used": 17,
+    "used": 21,
     "limit": 1000
   }
 }
