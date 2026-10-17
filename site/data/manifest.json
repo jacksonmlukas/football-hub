@@ -48,6 +48,7 @@
     {
       "name": "bigten",
       "present": true,
+      "fetched": true,
       "stale": true,
       "reason": "the page's shape changed (PageShapeChanged); the raw page is archived and nothing was parsed out of it",
       "generated_at": "2026-10-16T06:08:42+00:00"
@@ -55,6 +56,7 @@
     {
       "name": "cfbd",
       "present": true,
+      "fetched": false,
       "stale": true,
       "reason": "nothing was fetched: TypeError. Its message is on stderr and deliberately not here: a contract violation quotes the payload values that broke it, and this file is committed",
       "generated_at": "2026-10-14T15:41:51+00:00"

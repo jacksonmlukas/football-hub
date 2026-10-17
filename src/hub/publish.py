@@ -1025,17 +1025,19 @@ def side_record(out: Path, name: str) -> dict[str, Any]:
     (CLAUDE.md, graceful degradation)."""
     path = out / f"{name}.json"
     if not path.exists():
-        return {"name": name, "present": False, "stale": True,
+        return {"name": name, "present": False, "fetched": False, "stale": True,
                 "reason": f"no {name}.json has been published", "generated_at": None}
     try:
         got = json.loads(path.read_text())
     except (OSError, ValueError):
         got = None
     if not isinstance(got, dict):
-        return {"name": name, "present": True, "stale": True,
+        return {"name": name, "present": True, "fetched": True, "stale": True,
                 "reason": f"{name}.json could not be read", "generated_at": None}
     reason = got.get("reason")
     return {"name": name, "present": True,
+            # Never fetched is not the same as fetched and gone stale (#351 vs #347).
+            "fetched": got.get("fetched") is not False,
             # An unfetched source is not fresh whatever its file forgot to say.
             "stale": bool(got.get("stale")) or got.get("fetched") is False,
             "reason": reason if isinstance(reason, str) else None,

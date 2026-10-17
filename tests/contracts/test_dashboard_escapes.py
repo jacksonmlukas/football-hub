@@ -1723,6 +1723,28 @@ def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node
         assert name in names, f"{name} is missing from the footer: {names}"
 
 
+def test_a_never_fetched_source_reads_not_fetched_and_a_stale_one_reads_stale(node):
+    """#351's `fetched` is not #347's `stale`: cfbd with `fetched: false` was never got and
+    says "not fetched"; bigten fetched and gone stale says "stale". Planted from the committed
+    manifest, whose cfbd is the real never-fetched case."""
+    man = _committed_manifest()
+    cfbd = next(a for a in man["artifacts"] if a["name"] == "cfbd")
+    assert cfbd["fetched"] is False and cfbd["reason"], "the committed cfbd entry lost `fetched`"
+    got = _render(node, {"manifest": man})["footer"]
+    assert "not fetched: nothing was fetched" in got
+    assert "stale: the page" in got
+    cfbd_span = re.search(r"<span class=\"[^\"]*\">cfbd [^<]*</span>", got)
+    assert cfbd_span and "&mdash; stale" not in cfbd_span.group(0)
+
+
+def test_the_committed_manifests_source_entries_are_what_the_publisher_writes():
+    from hub import publish
+    man = _committed_manifest()
+    for name in publish.SIDE_SOURCES:
+        assert next(a for a in man["artifacts"] if a["name"] == name) == \
+            publish.side_record(DATA, name)
+
+
 def test_the_footer_reads_source_health_from_the_manifest_and_not_the_side_files(node):
     """Planted: the manifest says cfbd is in error while `cfbd.json` and `bigten.json` say
     nothing is wrong. The line follows the manifest; a page that still fetched the side

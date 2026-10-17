@@ -15,7 +15,7 @@ export function statusRecords(man) {
     age: a?.generated_at ? ago(a.generated_at) : a?.present === false ? "never" : "age unknown",
     stale: !!a?.stale || a?.present === false,
     reason: a?.reason ?? (a?.present === false ? "the artifact is missing" : null),
-    fetched: a?.present !== false,
+    fetched: a?.fetched ?? (a?.present !== false),
   }));
   for (const name of ["bigten", "cfbd"]) {
     if (out.some(r => r.name === name)) continue;

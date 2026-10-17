@@ -60,10 +60,11 @@ def test_the_manifest_carries_each_side_files_own_stale_and_reason(site):
         {"fetched": False, "stale": True, "reason": "nothing was fetched: TypeError",
          "generated_at": "2026-10-14T15:41:51+00:00"}))
     by = {a["name"]: a for a in publish.publish_all(2026, 1, out=site)["artifacts"]}
-    assert by["bigten"] == {"name": "bigten", "present": True, "stale": True,
+    assert by["bigten"] == {"name": "bigten", "present": True, "fetched": True, "stale": True,
                             "reason": "the page's shape changed",
                             "generated_at": "2026-10-16T06:08:42+00:00"}
     assert by["cfbd"]["stale"] is True and by["cfbd"]["present"] is True
+    assert by["cfbd"]["fetched"] is False and by["bigten"]["fetched"] is True
     assert by["cfbd"]["reason"] == "nothing was fetched: TypeError"
 
 
@@ -82,7 +83,7 @@ def test_an_unfetched_side_file_is_stale_even_if_it_forgot_to_say_so(site):
 def test_an_absent_side_file_is_not_present_with_a_standing_reason(site):
     by = {a["name"]: a for a in publish.publish_all(2026, 1, out=site)["artifacts"]}
     for name in ("bigten", "cfbd"):
-        assert by[name] == {"name": name, "present": False, "stale": True,
+        assert by[name] == {"name": name, "present": False, "fetched": False, "stale": True,
                             "reason": f"no {name}.json has been published",
                             "generated_at": None}
 
