@@ -347,27 +347,52 @@ def _other_weeks(node: str, man, shown):
                                  f"{json.dumps(man)}, {json.dumps(shown)})));"))
 
 
-def test_the_other_published_week_can_be_reached_from_the_one_on_screen(node):
-    """#23 wants both published weeks rendered, not only the current one. The manifest
-    describes the week it was written for and nothing else, so an older artifact is not
-    discoverable from the page at all -- `preds_2025_wk18.json` is committed, is what the
-    track record is scored from, and no reader could reach it. Both directions, so the
-    archive is somewhere you can come back from."""
-    from_current = _other_weeks(node, NEW_NAMING, "preds_2026_wk01")
-    assert [w["name"] for w in from_current] == ["preds_2025_wk18"]
-    from_archive = _other_weeks(node, NEW_NAMING, "preds_2025_wk18")
-    assert [w["name"] for w in from_archive] == ["preds_2026_wk01"]
-    assert all(w["label"].strip() for w in from_current + from_archive), "an unlabelled link"
+_WEEKS = [{"name": "preds_2026_wk02", "season": 2026, "week": 2},
+          {"name": "preds_2026_wk01", "season": 2026, "week": 1},
+          {"name": "preds_2025_wk18", "season": 2025, "week": 18}]
 
 
-def test_every_week_the_page_offers_is_a_file_that_is_committed(node):
-    """The archive is a hand-copied list of names the writer wrote, which is the one thing
-    that can rot: a renamed or dropped artifact becomes a link to a 404. Pinned to the
-    directory rather than to a memory of it."""
-    listed = _other_weeks(node, {"artifacts": []}, None)
-    assert listed, "the archive is empty; `preds_2025_wk18.json` is committed and reachable"
-    for w in listed:
-        assert (DATA / f"{w['name']}.json").exists(), f"{w['name']} is offered but not there"
+def test_the_other_published_weeks_are_the_manifests_list_less_the_one_on_screen(node):
+    """#23 wants every published week reachable; #480 moved the list to the publisher. The
+    links come from `weeks` and nothing else, in its order, and the week on screen is the one
+    left out -- so the archive is somewhere you can come back from."""
+    man = {**NEW_NAMING, "weeks": _WEEKS}
+    got = _other_weeks(node, man, "preds_2026_wk02")
+    assert [w["name"] for w in got] == ["preds_2026_wk01", "preds_2025_wk18"]
+    assert [w["label"] for w in got] == ["2026 week 1", "2025 week 18"]
+    assert [w["name"] for w in _other_weeks(node, man, "preds_2025_wk18")] == [
+        "preds_2026_wk02", "preds_2026_wk01"]
+
+
+def test_a_week_the_manifest_does_not_list_is_not_offered(node):
+    """Planted: the manifest has dropped a week. The page offers what it is told and never
+    a name of its own, so the dropped one has no link."""
+    man = {**NEW_NAMING, "weeks": _WEEKS[:2]}
+    assert "preds_2025_wk18" not in [w["name"] for w in _other_weeks(node, man, None)]
+    assert _other_weeks(node, {**NEW_NAMING, "weeks": []}, None) == []
+
+
+def test_an_older_manifest_without_weeks_offers_its_own_week_and_no_archive(node):
+    got = _other_weeks(node, NEW_NAMING, "elsewhere")
+    assert [w["name"] for w in got] == ["preds_2026_wk01"]
+    assert _other_weeks(node, NEW_NAMING, "preds_2026_wk01") == []
+    assert _other_weeks(node, {"artifacts": []}, None) == []
+    assert _other_weeks(node, None, None) == []
+
+
+def test_every_week_the_committed_manifest_lists_is_a_file_that_is_committed(node):
+    """The list is the publisher's, so it can only rot if the manifest and the directory
+    disagree: pinned to the directory rather than to a memory of it, and exact -- a file the
+    manifest does not list is a week no reader can reach."""
+    man = _committed_manifest()
+    listed = _other_weeks(node, man, None)
+    assert listed, "the committed manifest lists no week; `preds_2025_wk18.json` is committed"
+    on_disk = sorted(p.stem for p in DATA.glob("preds_*.json"))
+    assert sorted(w["name"] for w in listed) == on_disk == sorted(w["name"] for w in man["weeks"])
+
+
+def test_the_page_keeps_no_list_of_weeks_of_its_own():
+    assert "ARCHIVE" not in "".join(p.read_text() for p in JS.rglob("*.js"))
 
 
 def test_the_slate_legend_names_its_season_and_escapes_it():
@@ -1568,8 +1593,8 @@ def test_a_fixed_340px_track_minimum_is_caught():
 # every week, and a typed `preds_2026_wk05` turned this suite red on week 6's refresh.
 MANIFEST_NAMES = tuple(a["name"] for a in json.loads(
     (SITE / "data" / "manifest.json").read_text())["artifacts"])
-assert len(MANIFEST_NAMES) == 6 and sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1, (
-    f"the footer tests assume six manifest artifacts with one slate; the manifest has "
+assert len(MANIFEST_NAMES) == 8 and sum(n.startswith("preds_") for n in MANIFEST_NAMES) == 1, (
+    f"the footer tests assume eight manifest artifacts with one slate; the manifest has "
     f"{MANIFEST_NAMES}")
 
 
@@ -1600,10 +1625,10 @@ def _with_artifact(name: str, **fields) -> dict:
     return man
 
 
-def _status_records(node: str, man_js: dict | None, sides: dict) -> list[dict]:
+def _status_records(node: str, man_js: dict | None) -> list[dict]:
     return json.loads(_run(node, f"import {{ statusRecords }} from {_mod('panels/footer.js')};\n"
                                  f"console.log(JSON.stringify(statusRecords("
-                                 f"{json.dumps(man_js)}, {json.dumps(sides)})));"))
+                                 f"{json.dumps(man_js)})));"))
 
 
 def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
@@ -1614,7 +1639,7 @@ def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
          "generated_at": "2000-01-01T00:00:00+00:00"},
         {"name": "survivor", "present": True, "stale": True, "reason": "ESPN unreachable",
          "generated_at": None}]}
-    recs = _status_records(node, man, {"bigten": None, "cfbd": None})
+    recs = _status_records(node, man)
     assert [r["name"] for r in recs] == ["roster", "survivor", "bigten", "cfbd"]
     for r in recs:
         assert set(r) == {"name", "age", "stale", "reason", "fetched"}, r
@@ -1628,7 +1653,7 @@ def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
 def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line(node):
     got = _render(node)["footer"]
     names = _footer_names(got)
-    for name in (*MANIFEST_NAMES, "bigten", "cfbd"):
+    for name in MANIFEST_NAMES:
         assert name in names, f"{name} is missing from the footer: {names}"
     assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
     cfbd = json.loads((SITE / "data" / "cfbd.json").read_text())
@@ -1686,11 +1711,40 @@ def test_stale_live_scores_are_reported_at_the_slate(node):
 
 
 def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node):
-    got = _render(node, {"bigten": None})["footer"]
+    """What `publish` writes for a side file that is not there: present false, a standing
+    reason. The footer says so from the manifest alone."""
+    man = _with_artifact("bigten", present=False, stale=True, generated_at=None,
+                         reason="no bigten.json has been published")
+    got = _render(node, {"manifest": man, "bigten": None})["footer"]
     assert "bigten never" in got and "not fetched" in got
+    assert "no bigten.json has been published" in got
     names = _footer_names(got)
-    for name in (*MANIFEST_NAMES, "bigten", "cfbd"):
+    for name in MANIFEST_NAMES:
         assert name in names, f"{name} is missing from the footer: {names}"
+
+
+def test_the_footer_reads_source_health_from_the_manifest_and_not_the_side_files(node):
+    """Planted: the manifest says cfbd is in error while `cfbd.json` and `bigten.json` say
+    nothing is wrong. The line follows the manifest; a page that still fetched the side
+    files would show the files' version."""
+    healthy = {"fetched": True, "stale": False, "reason": None,
+               "generated_at": "2026-10-16T00:00:00+00:00"}
+    man = _with_artifact("cfbd", stale=True, reason="quota spent for the month")
+    got = _render(node, {"manifest": man, "cfbd": healthy, "bigten": healthy})["footer"]
+    assert "quota spent for the month" in got
+    bigten = re.search(r"<span class=\"([^\"]*)\">bigten [^<]*</span>", got)
+    assert bigten and "down" in bigten.group(1), "bigten's own stale flag is not on the line"
+
+
+def test_a_manifest_without_the_source_entries_still_names_them_as_non_fetches(node):
+    """An older manifest has no `bigten` / `cfbd`: the footer names both as non-fetches
+    with a standing reason rather than losing them."""
+    man = _committed_manifest()
+    man["artifacts"] = [a for a in man["artifacts"] if a["name"] not in ("bigten", "cfbd")]
+    man.pop("weeks")
+    got = _render(node, {"manifest": man})["footer"]
+    assert {"bigten", "cfbd"} <= set(_footer_names(got))
+    assert "no cfbd.json has been published" in got
 
 
 def test_no_manifest_still_leaves_a_footer_naming_the_two_non_fetches(node):
@@ -1700,9 +1754,10 @@ def test_no_manifest_still_leaves_a_footer_naming_the_two_non_fetches(node):
 
 def test_nothing_in_the_footer_or_a_banner_reaches_the_page_unescaped(node):
     man = _with_artifact("survivor", stale=True, reason=HOSTILE)
-    got = _render(node, {"manifest": man,
-                         "bigten": {"name": HOSTILE, "fetched": False, "reason": HOSTILE,
-                                    "generated_at": None}})
+    for a in man["artifacts"]:
+        if a["name"] == "bigten":
+            a.update(name="bigten", reason=HOSTILE, stale=True)
+    got = _render(node, {"manifest": man})
     assert "<script>" not in got["footer"] + got["panels"]["p-survivor"]["body"]
     assert "&lt;script&gt;" in got["footer"]
     assert "&lt;script&gt;" in got["panels"]["p-survivor"]["body"]
@@ -1721,7 +1776,7 @@ def test_a_page_that_drops_an_artifact_or_hides_a_failure_turns_the_status_line_
          "test_a_missing_artifact_reports_its_failure_at_its_own_panel"),
         ("no-non-fetches", "js/panels/footer.js", 'for (const name of ["bigten", "cfbd"])',
          "for (const name of [])",
-         "test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders"),
+         "test_a_manifest_without_the_source_entries_still_names_them_as_non_fetches"),
         ("record-has-no-banner", "js/main.js", "stale: staleOf(trArt),", "",
          "test_a_stale_track_record_is_bannered_at_its_panel"),
     ]:
@@ -2060,8 +2115,8 @@ def test_a_page_that_diffs_against_a_stale_prior_or_renders_a_stale_line_as_curr
 def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
     """Planted: a `reason` whose `String()` throws. `statusLine` escapes it, and nothing else on
     the page reads `bigten`, so before the guard `render()` rejected here and no panel drew."""
-    got = _render(node, {"bigten": {"name": "bigten", "fetched": False, "generated_at": None,
-                                    "reason": {"toString": 1}}})
+    man = _with_artifact("bigten", reason={"toString": 1})
+    got = _render(node, {"manifest": man})
     assert "status line unavailable" in got["footer"]
     assert got["panels"]["p-lineup"]["body"].startswith('<div class="lineup-gain">')
     assert "<table" in got["panels"]["p-roster"]["body"]
@@ -2075,7 +2130,7 @@ def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
     start = text.index("  try {\n    document.getElementById(\"footer\")")
     end = text.index("  }\n", text.index("} catch {", start)) + len("  }\n")
     block = text[start:end]
-    inner = "    document.getElementById(\"footer\").innerHTML = statusLine(statusRecords(man, { bigten, cfbd }));\n"
+    inner = "    document.getElementById(\"footer\").innerHTML = statusLine(statusRecords(man));\n"
     assert inner in block
     mutant = text[:start] + inner + text[end:]
     assert _parses(node, mutant).returncode == 0
@@ -2434,3 +2489,17 @@ def test_a_deploy_that_uploads_less_than_the_site_directory_is_caught():
     assert narrowed != text, "the plant did not land"
     assert not _pages_serves_the_whole_site(narrowed)
     assert not _pages_serves_the_whole_site(text.replace('- "site/**"', '- "site/data/**"'))
+
+
+@parent_only
+def test_a_page_that_ignores_the_manifests_weeks_turns_the_archive_red(node, tmp_path):
+    """Planted: `otherWeeks` stops reading `weeks` (the archive links vanish), and one that
+    brings back a list of its own (a name the publisher never wrote)."""
+    for name, old, new, expected in [
+        ("ignores-weeks", "const week = listed ?? (", "const week = null ?? (",
+         "test_the_other_published_weeks_are_the_manifests_list_less_the_one_on_screen"),
+        ("own-list", "man.weeks.filter(", '[{ name: "preds_1999_wk01" }, ...man.weeks].filter(',
+         "test_every_week_the_committed_manifest_lists_is_a_file_that_is_committed"),
+    ]:
+        got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new))
+        assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"

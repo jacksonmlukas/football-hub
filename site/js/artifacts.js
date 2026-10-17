@@ -54,23 +54,22 @@ export function predsArt(man) {
 
 // The published weeks a reader can reach other than the one on screen.
 //
-// The manifest describes the week it was written for and nothing else, so an older artifact
-// is not discoverable from this page at all: `preds_2025_wk18.json` is committed, is the
-// sixteen games the track record is scored from, and until now no reader could open it --
-// issue #23 asks that the site render both. These are names the writer wrote, copied once;
-// copying `preds_name`'s *output* is not the same as keeping a second copy of `preds_name`,
-// and a name that stops resolving is a broken link rather than a silently wrong fetch.
-// `tests/contracts/test_dashboard_escapes.py` pins each one to a file that is committed.
-// When `publish` starts listing what it has published, this list goes.
-export const ARCHIVE = [{ name: "preds_2025_wk18", label: "2025 week 18" }];
-
+// The manifest's `weeks` (#480) is the publisher's own list of every `preds_*` artifact it
+// holds, newest first; this page keeps no copy of it, and a name in it is a file the writer
+// found on disk, so a link here cannot be a name the page invented. An older manifest has no
+// `weeks`: it still offers the one week it describes and no archive links, because the page
+// has no way to know what else was published.
 export function otherWeeks(man, shown) {
-  // The current week's label is the manifest's claim about it, which is all there is before
-  // its artifact has been fetched. The legend corrects it from the artifact on arrival.
+  // The label is the manifest's claim about the week, which is all there is before its
+  // artifact has been fetched. The legend corrects it from the artifact on arrival.
+  const listed = Array.isArray(man?.weeks)
+    ? man.weeks.filter(w => typeof w?.name === "string")
+        .map(w => ({ name: w.name, label: `${w.season ?? "?"} week ${w.week ?? "?"}` }))
+    : null;
   const art = predsArt(man);
-  const current = art
-    ? [{ name: art.name, label: `${man?.season ?? "?"} week ${man?.week ?? "?"}` }] : [];
-  return [...current, ...ARCHIVE].filter(w => w.name !== shown);
+  const week = listed ?? (art
+    ? [{ name: art.name, label: `${man?.season ?? "?"} week ${man?.week ?? "?"}` }] : []);
+  return week.filter(w => w.name !== shown);
 }
 
 // Predictions are fetched at most once per artifact per page load and kept here. The poll
