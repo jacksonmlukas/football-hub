@@ -406,7 +406,9 @@ def test_the_commit_attempt_flag_publishes_through_the_shared_script(monkeypatch
     import subprocess
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: ran.append(cmd))
     assert closing.main(["--capture", "--commit-attempt"]) == 0
-    seen["publish"]()
+    publish = seen["publish"]
+    assert publish is not None
+    publish()
     assert ran and ran[0][0].endswith("commit-state.sh")
     assert closing.main(["--capture"]) == 0 and seen["publish"] is None
 
