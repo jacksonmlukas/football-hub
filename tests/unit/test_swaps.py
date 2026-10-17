@@ -163,6 +163,13 @@ def test_a_void_correlation_nulls_the_odds_and_says_why(monkeypatch):
 
 # --- through the publisher --------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_stream_wire(monkeypatch):
+    """The K / D/ST heuristic (#494) reads the schedule; not what is under test here."""
+    from hub.season import stream
+    monkeypatch.setattr(publish, "_roster_stream", lambda df: stream.unavailable("stubbed"))
+
+
 def _published(tmp_path, df):
     src = tmp_path / "roster.parquet"
     df.write_parquet(src)

@@ -1110,6 +1110,21 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
             if who is not None and who not in names:
                 problems.append(f"swap {side} {who!r} is not a rostered row")
             # /GUARD
+    stream = payload.get("stream")
+    if stream is not None:
+        # GUARD stream-labelled [unit/test_stream_roster.py]: no gate has run on this ordering
+        if stream.get("label") != "heuristic":
+            problems.append(f"stream label is {stream.get('label')!r}, not 'heuristic'")
+        # /GUARD
+        for kind, key in (("dst", "opp_implied"), ("k", "own_implied")):
+            for r in stream.get(kind) or []:
+                ranked, value = r.get("rank") is not None, r.get(key)
+                # GUARD stream-rank-sourced [unit/test_stream_roster.py]: a rank has its number
+                if ranked and not (isinstance(value, (int, float)) and math.isfinite(value)):
+                    problems.append(f"stream {kind} {r.get('team')}: ranked with no {key}")
+                if not ranked and not r.get("missing"):
+                    problems.append(f"stream {kind} {r.get('team')}: unranked with no reason")
+                # /GUARD
     # GUARD roster-problems-are-raised [unit/test_swaps.py]: collected problems are refused
     if problems:
         raise ContractViolation("; ".join(problems))
