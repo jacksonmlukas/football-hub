@@ -66,12 +66,17 @@ def refresh(fetch: Fetch, parquet: Path | None = None,
     try:
         df, capped = fetch()
     except Exception as e:                      # graceful degradation, per CLAUDE.md
-        reason = f"{type(e).__name__}: {e}"
+        # The full message stays on local stderr: it can carry request detail (URLs, league
+        # ids). What is written beside the pool, and so published, is the exception type and a
+        # fixed sentence.
+        print(f"hub.fetch.free_agents: fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+        reason = f"{type(e).__name__}: the latest ESPN free-agent fetch failed"
         if not path.exists():
-            return f"no free agents: the fetch failed ({reason}) and none are on disk", None
+            return (f"no free agents: the fetch failed ({type(e).__name__}) and none are on "
+                    "disk"), None
         meta = {**read_meta(path), "last_error": reason, "last_error_at": stamp}
         atomic.write_text(meta_path(path), json.dumps(meta, indent=1, sort_keys=True) + "\n")
-        return (f"ESPN unreachable ({reason}); serving last-good {path.name}",
+        return (f"ESPN unreachable ({type(e).__name__}); serving last-good {path.name}",
                 pl.read_parquet(path))
     atomic.write_parquet(df, path)
     atomic.write_text(meta_path(path), json.dumps(

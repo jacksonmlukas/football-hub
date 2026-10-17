@@ -29,8 +29,9 @@ team -- and `available_rank` orders just the available ones by the same number; 
 and its label are unchanged and `rank` still orders every priced unit. Without a pool the
 ranking is of every team's unit, the manager's own flagged, `available` is null and
 `available_known` is `false` with the reason. A pool that came back at its cap may be missing
-its least-owned tail, so an unlisted unit is "not seen available", and `availability_reason`
-says so when that is the case.
+its least-owned tail, so an unlisted unit is neither available nor rostered: `available` is
+null with an `available_reason` (false only for a unit the manager's own roster holds), and
+`available_known` is false, per position as well (`available_known_by_position`).
 
 **Missing is null with a reason, never a number.** A team on its bye, a game that has already
 kicked off, a game no pre-kickoff capture priced, a capture that carried no total: each is an
@@ -152,14 +153,30 @@ def _iso(value: Any) -> str:
 
 def rank(lines: Mapping[str, Mapping[str, Any]], key: str, descending: bool,
          rostered: Mapping[str, list[str]],
-         pool: frozenset[str] | None = None) -> list[dict[str, Any]]:
+         pool: frozenset[str] | None = None, capped: bool = False) -> list[dict[str, Any]]:
     """Rows ordered best first by `key`, ties sharing a rank; unrankable rows last, rank null.
 
     `rostered` is team -> the names of the manager's players at this position on that team.
     `pool` is the teams with a free agent at this position, or None when no pool is known: each
-    row then carries `available` (true / false / null) and `available_rank`, the rank among the
-    available rows alone (null for an unavailable or unrankable one).
+    row then carries `available` (true / false / null), `available_reason` where it is null
+    for a pool that exists, and `available_rank`, the rank among the available rows alone.
+
+    **A capped pool cannot say "false".** When the pool came back at its cap the unlisted tail
+    may have been cut rather than rostered, so a unit not listed reads null with a reason; it is
+    false only where the manager's own roster holds it (that is known, whatever the cap).
     """
+    def avail(team: str) -> tuple[bool | None, str | None]:
+        if pool is None:
+            return None, None
+        if team in pool:
+            return True, None
+        if not capped:
+            return False, None
+        if rostered.get(team):
+            return False, None
+        return None, ("not seen in a pool that came back at its cap: it may be rostered or "
+                      "may have been cut by the cap")
+
     ok = [r for r in lines.values() if r.get(key) is not None and math.isfinite(r[key])]
     bad = [r for r in lines.values() if r not in ok]
     ok.sort(key=lambda r: (-r[key] if descending else r[key], r["team"]))
@@ -167,15 +184,15 @@ def rank(lines: Mapping[str, Mapping[str, Any]], key: str, descending: bool,
     rows: list[dict[str, Any]] = []
     for r in ok:
         better = sum(1 for o in ok if (o[key] > r[key] if descending else o[key] < r[key]))
-        avail = None if pool is None else r["team"] in pool
+        got, why = avail(r["team"])
         a_rank = (1 + sum(1 for o in mine if (o[key] > r[key] if descending else o[key] < r[key]))
-                  if avail else None)
+                  if got else None)
         rows.append({**r, "rank": better + 1, "rostered": rostered.get(r["team"], []),
-                     "available": avail, "available_rank": a_rank})
+                     "available": got, "available_reason": why, "available_rank": a_rank})
     for r in sorted(bad, key=lambda r: r["team"]):
+        got, why = avail(r["team"])
         rows.append({**r, "rank": None, "rostered": rostered.get(r["team"], []),
-                     "available": None if pool is None else r["team"] in pool,
-                     "available_rank": None})
+                     "available": got, "available_reason": why, "available_rank": None})
     return rows
 
 
@@ -202,6 +219,7 @@ def build(games: pl.DataFrame, roster: pl.DataFrame | None, week: int, bye: froz
     """
     lines = team_lines(games, week, bye, seen, at)
     pool = pool_teams(free_agents)
+    capped = bool((pool_meta or {}).get("capped"))
     held: dict[str, dict[str, list[str]]] = {"D/ST": {}, "K": {}}
     unplaced: list[dict[str, str]] = []
     if roster is not None and not roster.is_empty():
@@ -215,12 +233,18 @@ def build(games: pl.DataFrame, roster: pl.DataFrame | None, week: int, bye: froz
     return {
         "label": LABEL, "caveat": CAVEAT, "week": week,
         "basis": dict(BASIS), "formula": FORMULA, "not_used": NOT_USED,
-        "available_known": pool is not None,
+        # Known in full only for a pool that was not cut by its cap: a capped pool can say a
+        # unit is available but not that it is not, so `available` is null there (per position:
+        # the cap is one for the whole pool, so both positions share the answer).
+        "available_known": pool is not None and not capped,
+        "available_known_by_position": {"dst": pool is not None and not capped,
+                                        "k": pool is not None and not capped},
         "availability_reason": (AVAILABILITY_REASON if pool is None
                                 else _pool_reason(pool_meta or {})),
         "dst": rank(lines, "opp_implied", False, held["D/ST"],
-                    None if pool is None else pool["D/ST"]),
-        "k": rank(lines, "own_implied", True, held["K"], None if pool is None else pool["K"]),
+                    None if pool is None else pool["D/ST"], capped),
+        "k": rank(lines, "own_implied", True, held["K"],
+                  None if pool is None else pool["K"], capped),
         "unplaced": unplaced,
     }
 

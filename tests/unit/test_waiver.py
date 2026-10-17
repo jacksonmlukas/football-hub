@@ -31,9 +31,11 @@ def _roster():
     return pl.DataFrame(
         {"player": [r[0] for r in rows], "pos": [r[1] for r in rows],
          "nfl_team": [r[2] for r in rows], "slot": [r[3] for r in rows],
-         "espn_total": [r[4] for r in rows], "espn_week_proj": [r[5] for r in rows]},
+         "espn_total": [r[4] for r in rows], "espn_avg": [r[4] / 14 for r in rows],
+         "espn_week_proj": [r[5] for r in rows]},
         schema={"player": pl.Utf8, "pos": pl.Utf8, "nfl_team": pl.Utf8, "slot": pl.Utf8,
-                "espn_total": pl.Float64, "espn_week_proj": pl.Float64})
+                "espn_total": pl.Float64, "espn_avg": pl.Float64,
+                "espn_week_proj": pl.Float64})
 
 
 def _fa(rows):
@@ -64,7 +66,8 @@ def _built(**kw):
 
 def test_a_planted_pool_gives_the_expected_order_by_value():
     got = _built()
-    assert [(r["player"], r["value"]) for r in got["rows"]] == [
+    # value is points per game; x14 recovers the planted rest-of-season gaps
+    assert [(r["player"], round(r["value"] * 14, 6)) for r in got["rows"]] == [
         ("Rb Out", 60.0), ("Rb Alpha", 50.0), ("Rb Beta", 15.0), ("K Zulu", 12.0),
         ("Wr Xray", 5.0), ("Rb Gamma", -1.0), ("Wr Yankee", -10.0)]
     assert [r["rank"] for r in got["rows"]] == [1, 2, 3, 4, 5, 6, 7]
@@ -106,12 +109,65 @@ def test_an_unprojected_free_agent_has_no_value_and_a_position_with_no_spot_is_c
 
 
 def test_a_rostered_player_with_no_projection_is_the_replacement_and_says_so():
+    zero = pl.col("player") == "Weak Back"
     ros = _roster().with_columns(
-        pl.when(pl.col("player") == "Weak Back").then(0.0).otherwise(pl.col("espn_total"))
-        .alias("espn_total"))
+        pl.when(zero).then(0.0).otherwise(pl.col("espn_total")).alias("espn_total"),
+        pl.when(zero).then(0.0).otherwise(pl.col("espn_avg")).alias("espn_avg"))
     got = waiver.build(_fa(PLANTED), ros, week=5)
     row = next(r for r in got["rows"] if r["player"] == "Rb Alpha")
-    assert row["value"] == 130.0 and row["replaces_no_projection"] is True
+    assert row["value"] == pytest.approx(130 / 14) and row["replaces_no_projection"] is True
+
+
+# --- like for like across teams: per game, not per rest of season (#491) --------------------
+
+def _two_equal_rates():
+    """Same ESPN rate (10/game) and the same replacement; one team has its bye ahead, so its
+    rest-of-season total is one game short (9 x 10 against 10 x 10)."""
+    rows = [
+        {"player": "Plays Through", "key": "plays through", "pos": "WR", "espn_id": 1,
+         "nfl_team": "CCC", "injury_status": "ACTIVE", "espn_avg": 10.0, "espn_total": 100.0,
+         "espn_week": 5, "espn_week_proj": 10.0, "percent_owned": 5.0},
+        {"player": "Bye Ahead", "key": "bye ahead", "pos": "WR", "espn_id": 2,
+         "nfl_team": "AAA", "injury_status": "ACTIVE", "espn_avg": 10.0, "espn_total": 90.0,
+         "espn_week": 5, "espn_week_proj": 10.0, "percent_owned": 5.0}]
+    return pl.DataFrame(rows, schema=FREE_AGENT_SCHEMA)
+
+
+def test_two_players_with_an_equal_per_game_rate_get_equal_value_whatever_their_bye():
+    cal = waiver.calendar(_games())                       # AAA's bye is week 6, CCC has none
+    got = waiver.build(_two_equal_rates(), _roster(), week=5, cal=cal)
+    by = {r["player"]: r for r in got["rows"]}
+    assert by["Bye Ahead"]["bye_ahead"] is True and by["Plays Through"]["bye_ahead"] is False
+    assert by["Bye Ahead"]["value"] == pytest.approx(by["Plays Through"]["value"])
+    # the control has teeth: the old total-based gap is real, shown, and not what ranks
+    assert by["Plays Through"]["value_total"] - by["Bye Ahead"]["value_total"] == 10.0
+    assert [r["player"] for r in got["rows"]] == ["Bye Ahead", "Plays Through"]   # a tie: by name
+
+
+def test_without_an_average_the_total_is_divided_by_the_teams_remaining_games():
+    """The fallback: a total over the games that team has left is the same per-game rate."""
+    pool = _two_equal_rates().with_columns(pl.lit(0.0).alias("espn_avg"))
+    got = waiver.build(pool, _roster(), week=5, remaining={"CCC": 10, "AAA": 9})
+    values = [r["value"] for r in got["rows"]]
+    assert values[0] == pytest.approx(values[1])
+
+
+def test_with_neither_an_average_nor_a_schedule_there_is_no_rate_and_so_no_value():
+    pool = _two_equal_rates().with_columns(pl.lit(0.0).alias("espn_avg"))
+    got = waiver.build(pool, _roster(), week=5)
+    assert got["rows"] == [] and got["unprojected"] == 2
+
+
+def test_for_roster_reads_the_remaining_games_from_the_schedule(world, monkeypatch):
+    """The wiring: the schedule's `WeekGames.remaining` reaches the rate fallback."""
+    # the planted schedule leaves CCC 14 games and AAA 13 (its week-6 bye is ahead): 10 a game
+    pool = _two_equal_rates().with_columns(
+        pl.lit(0.0).alias("espn_avg"),
+        pl.when(pl.col("nfl_team") == "CCC").then(140.0).otherwise(130.0).alias("espn_total"))
+    fa_mod.refresh(lambda: (pool, False), world, datetime(2026, 10, 17, 12, tzinfo=UTC))
+    got = waiver.for_roster(_roster(), at=AT, fa_path=world)
+    by = {r["player"]: r for r in got["rows"]}
+    assert by["Bye Ahead"]["value"] == pytest.approx(by["Plays Through"]["value"])
 
 
 def test_the_replacement_tie_goes_to_the_first_name_not_the_row_order():
@@ -253,7 +309,7 @@ def test_a_failed_fetch_is_served_last_good_with_the_reason_on_the_block(world):
     fa_mod.refresh(lambda: (_ for _ in ()).throw(ConnectionError("ESPN is down")), world,
                    datetime(2026, 10, 18, tzinfo=UTC))
     got = waiver.for_roster(_roster(), at=AT, fa_path=world)
-    assert "ESPN is down" in got["last_error"]
+    assert "ConnectionError" in got["last_error"] and "ESPN is down" not in got["last_error"]
     assert got["recommended"][0] == "Rb Alpha"            # the pool is still the last good one
 
 
@@ -321,7 +377,7 @@ def test_render_prints_the_failed_fetch_note(world):
     fa_mod.refresh(lambda: (_ for _ in ()).throw(ConnectionError("ESPN is down")), world,
                    datetime(2026, 10, 18, tzinfo=UTC))
     out = waiver.render(waiver.for_roster(_roster(), at=AT, fa_path=world))
-    assert "NOTE (last_error)" in out and "ESPN is down" in out
+    assert "NOTE (last_error)" in out and "ConnectionError" in out
 
 
 # --- the journal ----------------------------------------------------------------------------
@@ -360,6 +416,32 @@ def test_settle_scores_three_finished_weeks_against_the_player_replaced(tmp_path
     assert alpha["n_no_row"] == 1                          # Weak Back had no row in week 6
     assert doc["scored"] is True and doc["outcome"]["horizon_weeks"] == [5, 6, 7]
     assert waiver.settle(2026, 5, pts, tmp_path, last_final=7).endswith("left as it was")
+
+
+def test_kickers_and_defences_are_left_unscored_and_out_of_the_mean(tmp_path, world):
+    """nflverse player stats carry neither, so scoring them reads 0 and would drag the mean
+    down: they are marked unscored with a reason and `mean_net` is over the rest."""
+    _journalled(tmp_path, world)
+    doc = waiver.read(2026, tmp_path)[0]
+    assert "K" in {p["pos"] for p in doc["picks"]}
+    pts = {w: {"rb alpha": 20.0, "weak back": 10.0, "rb beta": 15.0, "wr xray": 12.0,
+               "wr two": 12.0} for w in (5, 6, 7)}
+    waiver.settle(2026, 5, pts, tmp_path, last_final=7)
+    out = waiver.read(2026, tmp_path)[0]["outcome"]
+    kz = next(p for p in out["picks"] if p["player"] == "K Zulu")
+    assert kz["scored"] is False and "not in nflverse" in kz["reason"] and "net" not in kz
+    assert out["n_unscored"] == 1
+    # Alpha +30, Beta +15, Xray 0 over three weeks: mean 15, not (45 + 0 for the kicker) / 4
+    assert out["mean_net"] == 15.0
+
+
+def test_settle_with_only_kickers_has_no_mean(tmp_path):
+    p = waiver.journal_path(2026, 5, tmp_path)
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"scored": False, "picks": [
+        {"player": "K Zulu", "pos": "K", "replaces": "Our K"}]}))
+    waiver.settle(2026, 5, {}, tmp_path, last_final=7)
+    assert waiver.read(2026, tmp_path)[0]["outcome"]["mean_net"] is None
 
 
 def test_settle_leaves_an_unfinished_horizon_unscored(tmp_path, world):

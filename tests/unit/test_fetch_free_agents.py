@@ -31,21 +31,36 @@ def test_a_good_fetch_writes_the_pool_and_a_sidecar(tmp_path):
     assert meta == {"fetched_at": NOW.isoformat(), "n": 2, "capped": False, "last_error": None}
 
 
-def test_a_failed_fetch_serves_last_good_untouched_and_records_the_reason(tmp_path):
+def test_a_failed_fetch_serves_last_good_untouched_and_records_the_reason(tmp_path, capsys):
     path = tmp_path / "fa.parquet"
     F.refresh(lambda: (_pool(1, 2, 3), False), path, NOW)
     before = path.read_bytes()
     line, df = F.refresh(_boom, path, NOW)
     assert df is not None and df.height == 3
-    assert "serving last-good" in line and "ESPN is down" in line
+    assert "serving last-good" in line and "ConnectionError" in line
     assert path.read_bytes() == before                    # the pool keeps its own date
     meta = F.read_meta(path)
-    assert "ESPN is down" in meta["last_error"] and meta["n"] == 3   # earlier facts survive
+    assert meta["n"] == 3                                  # earlier facts survive
+    # what is published is the type and a fixed sentence; the message stays on local stderr
+    assert meta["last_error"] == "ConnectionError: the latest ESPN free-agent fetch failed"
+    assert "ESPN is down" not in json.dumps(meta) and "ESPN is down" not in line
+    assert "ESPN is down" in capsys.readouterr().err
+
+
+def test_request_detail_in_an_error_never_reaches_the_sidecar(tmp_path):
+    path = tmp_path / "fa.parquet"
+    F.refresh(lambda: (_pool(1), False), path, NOW)
+
+    def leak():
+        raise RuntimeError("GET https://x/leagues/123456?swid=SECRET failed")
+    F.refresh(leak, path, NOW)
+    raw = F.meta_path(path).read_text()
+    assert "SECRET" not in raw and "123456" not in raw and "RuntimeError" in raw
 
 
 def test_a_failed_fetch_with_nothing_on_disk_is_a_sentence_not_a_frame(tmp_path):
     line, df = F.refresh(_boom, tmp_path / "fa.parquet", NOW)
-    assert df is None and "none are on disk" in line and "ESPN is down" in line
+    assert df is None and "none are on disk" in line and "ConnectionError" in line
 
 
 def test_a_pool_at_the_cap_says_so(tmp_path):

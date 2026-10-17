@@ -5,14 +5,17 @@ No gate has run on it. It is journalled (`record`, `settle`) so one can.
 
 **What is ranked.** For each free agent, *value* is
 
-    his ESPN rest-of-season projection  minus  that of the rostered player he would replace
+    his ESPN projected points per game  minus  that of the rostered player he would replace
 
 where "the rostered player he would replace" is the lowest-projected player at his own position
 on our roster that is not on injured reserve (starter or bench alike; the ticket's "lowest
-starter or bench player"). Both sides are ESPN's own `projected_total_points` -- the same
-games-still-to-play basis (`hub.season.roster` reads the ratio of total to average as games
-left) -- so the subtraction compares like with like. A free agent who is not better than the
-player he would replace has value <= 0 and is never recommended.
+starter or bench player"). **Per game, not per rest of season (#491's lesson):** ESPN's
+`projected_total_points` covers only the games a team has left, so a player whose bye is still
+ahead has one game fewer -- some 6-7% of a season -- and a total would mark him down for it.
+The rate is `espn_avg`, or the total over that team's remaining games
+(`WeekGames.remaining`) when the average is absent. The rest-of-season totals and `bye_ahead`
+are shown beside each row and used for nothing. A free agent who is not better than the player
+he would replace has value <= 0 and is never recommended.
 
 **Which projection, and why that one.** Not `mu` (the board blend), not the weekly ECR. `mu` is
 a per-week number for the players the board scoped, and a free agent is by construction mostly
@@ -63,8 +66,9 @@ from hub.paths import FREE_AGENTS_PARQUET, ROSTER_PARQUET, STATE_DIR
 ROOT = STATE_DIR / "waiver_journal"
 
 LABEL = "provisional"
-BASIS = ("value = the free agent's ESPN rest-of-season projection minus that of the lowest-"
-         "projected non-IR rostered player at his position (ESPN's own points, unshrunk)")
+BASIS = ("value = the free agent's ESPN projected points per game minus that of the lowest-"
+         "projected non-IR rostered player at his position (ESPN's own points, unshrunk); "
+         "rest-of-season totals and bye_ahead are shown, not used")
 SHRINKAGE = ("unshrunk: the empirical-Bayes player model (#497) is not built, so a top-of-the-"
              "pool projection is biased upward by the selection that put it there")
 SHOWN_NOT_SORTED = ("snap_delta, ecr, week_proj and percent_owned are shown beside each row and "
@@ -85,6 +89,8 @@ SNAP_ENOUGH_WEEKS = 8
 # ADR-0013's horizon: the points a claim is scored on are the next three weeks'.
 HORIZON = 3
 INJURED_RESERVE = "IR"
+# Positions nflverse's weekly player stats do not carry, so a realised score cannot be read.
+UNSCORABLE = frozenset({"K", "D/ST"})
 
 
 def _team(code: str | None) -> str | None:
@@ -104,23 +110,42 @@ def _proj(value: Any) -> float:
 
 # --- the replacement ---------------------------------------------------------------------
 
-def replacements(roster: pl.DataFrame) -> dict[str, dict[str, Any]]:
+def per_game(row: Mapping[str, Any], remaining: Mapping[str, int] | None) -> float:
+    """ESPN's projected points per game, 0.0 when it carries none.
+
+    `espn_avg` is already per game. Without it the rest-of-season total is divided by the games
+    his own team has left (`WeekGames.remaining`, #491): a total counts only the games still to
+    be played, so a player whose bye is ahead has one fewer and a total is not like for like.
+    """
+    avg = _proj(row.get("espn_avg"))
+    if avg > 0:
+        return avg
+    team = _team(row.get("nfl_team"))
+    left = (remaining or {}).get(team) if team else None
+    total = _proj(row.get("espn_total"))
+    return total / left if total > 0 and left else 0.0
+
+
+def replacements(roster: pl.DataFrame,
+                 remaining: Mapping[str, int] | None = None) -> dict[str, dict[str, Any]]:
     """Per position, the rostered player a free agent there would replace.
 
-    The lowest ESPN rest-of-season projection among players not on injured reserve; ties go to
-    the name that sorts first so the answer does not depend on row order. A player ESPN
-    carries no projection for counts as zero, and is flagged so the page can say that the value
-    is against an empty spot rather than against a weak player.
+    The lowest ESPN per-game projection among players not on injured reserve; ties go to the
+    name that sorts first so the answer does not depend on row order. A player ESPN carries no
+    projection for counts as zero, and is flagged so the page can say that the value is against
+    an empty spot rather than against a weak player. The rest-of-season total rides along for
+    display only.
     """
     out: dict[str, dict[str, Any]] = {}
     for r in roster.iter_rows(named=True):
         if r.get("slot") == INJURED_RESERVE or not r.get("pos"):
             continue
-        proj = _proj(r.get("espn_total"))
-        cand = {"player": r["player"], "proj": proj, "week_proj": r.get("espn_week_proj"),
-                "key": r.get("key"), "no_projection": proj == 0.0}
+        pg = per_game(r, remaining)
+        cand = {"player": r["player"], "pg": pg, "proj": _proj(r.get("espn_total")),
+                "week_proj": r.get("espn_week_proj"),
+                "key": r.get("key"), "no_projection": pg == 0.0}
         cur = out.get(r["pos"])
-        if cur is None or (proj, r["player"]) < (cur["proj"], cur["player"]):
+        if cur is None or (pg, r["player"]) < (cur["pg"], cur["player"]):
             out[r["pos"]] = cand
     return out
 
@@ -195,23 +220,32 @@ def _snap_reason(week: int | None, have: bool) -> str | None:
 
 def _row(fa: Mapping[str, Any], repl: Mapping[str, Any], cal: Mapping[str, Any],
          bye_now: frozenset[str], snaps: Mapping[str, Mapping[str, Any]],
-         ecr: Mapping[str, float]) -> dict[str, Any]:
+         ecr: Mapping[str, float], remaining: Mapping[str, int] | None = None,
+         week: int | None = None) -> dict[str, Any]:
     team = _team(fa.get("nfl_team"))
     c = cal.get(team) if team else None
     snap = snaps.get(fa["key"])
     fa_proj = _proj(fa.get("espn_total"))
+    fa_pg = per_game(fa, remaining)
     wk, rwk = fa.get("espn_week_proj"), repl.get("week_proj")
     status = fa.get("injury_status") or ""
     # GUARD waiver-value-is-net-of-the-replacement [unit/test_waiver.py]: the subtraction
-    # that makes a pickup a gain over his roster spot and not merely a good player
-    value = fa_proj - repl["proj"] if fa_proj > 0 else None
+    # that makes a pickup a gain over his roster spot and not merely a good player; per game,
+    # so a bye ahead (one fewer game in a rest-of-season total) is not a penalty (#491)
+    value = fa_pg - repl["pg"] if fa_pg > 0 else None
     # /GUARD
+    bye = c["bye_week"] if c else None
     return {
         "player": fa["player"], "pos": fa["pos"], "nfl_team": fa.get("nfl_team"),
         "injury_status": status, "percent_owned": fa.get("percent_owned"),
+        # `value` is points per game; the totals and `bye_ahead` are display only
         "proj": fa_proj if fa_proj > 0 else None,
+        "proj_per_game": fa_pg if fa_pg > 0 else None,
         "value": value,
+        "value_total": fa_proj - repl["proj"] if fa_proj > 0 else None,
+        "bye_ahead": bool(bye is not None and week is not None and bye >= week),
         "replaces": repl["player"], "replaces_proj": repl["proj"],
+        "replaces_per_game": repl["pg"],
         "replaces_no_projection": repl["no_projection"],
         "week_proj": wk, "week_value": (wk - rwk if wk is not None and rwk is not None
                                         else None),
@@ -233,19 +267,24 @@ def build(fa: pl.DataFrame, roster: pl.DataFrame, *, week: int | None = None,
           cal: Mapping[str, Any] | None = None,
           snaps: Mapping[str, Mapping[str, Any]] | None = None,
           ecr: Mapping[str, float] | None = None,
-          top: int = TOP_PER_POSITION) -> dict[str, Any]:
+          top: int = TOP_PER_POSITION,
+          remaining: Mapping[str, int] | None = None) -> dict[str, Any]:
     """The published `waiver` object: the best `top` free agents per position, ranked by value.
+
+    `value` is ESPN points per game over the replacement's, so players with different numbers
+    of games left compare like for like; `remaining` is `WeekGames.remaining`.
 
     `recommended` names those with value > 0 and no blocking injury designation; everyone else
     on a row is still shown, so a reader sees that a position has nobody worth the move.
     """
-    repl = replacements(roster)
+    repl = replacements(roster, remaining)
     rows, no_spot = [], 0
     for r in fa.iter_rows(named=True):
         if r["pos"] not in repl:
             no_spot += 1
             continue
-        rows.append(_row(r, repl[r["pos"]], cal or {}, bye_now, snaps or {}, ecr or {}))
+        rows.append(_row(r, repl[r["pos"]], cal or {}, bye_now, snaps or {}, ecr or {},
+                         remaining, week))
     ranked = sorted((r for r in rows if r["value"] is not None),
                     key=lambda r: (-r["value"], r["player"]))
     kept: list[dict[str, Any]] = []
@@ -263,7 +302,8 @@ def build(fa: pl.DataFrame, roster: pl.DataFrame, *, week: int | None = None,
         "recommended": [r["player"] for r in kept if r["recommended"]],
         "unprojected": sum(1 for r in rows if r["value"] is None),
         "no_roster_spot": no_spot,
-        "replaced_by_position": {p: {"player": v["player"], "proj": v["proj"]}
+        "replaced_by_position": {p: {"player": v["player"], "proj": v["proj"],
+                                     "per_game": v["pg"]}
                                  for p, v in sorted(repl.items())},
     }
 
@@ -303,12 +343,13 @@ def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | 
     cal: dict[str, Any] = {}
     week: int | None = None
     bye: frozenset[str] = frozenset()
+    remaining: dict[str, int] = {}
     try:
         games = schedule.priced_games(season, at=moment, base=base)
         cal = calendar(games)
         wk = week_games(games, moment)
         if wk is not None:
-            week, bye = wk.week, wk.bye
+            week, bye, remaining = wk.week, wk.bye, dict(wk.remaining)
         else:
             reasons["calendar_reason"] = "no week is open in the schedule"
     except Exception as e:                       # unattended: say which failure, never raise
@@ -326,7 +367,8 @@ def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | 
             f"snap trend not computed ({type(e).__name__})")
     ecr, ecr_reason = ({}, "no week is open") if week is None else lineup_journal.ecr_ranks(
         season, week, base)
-    got = build(fa, roster, week=week, bye_now=bye, cal=cal, snaps=snaps, ecr=ecr)
+    got = build(fa, roster, week=week, bye_now=bye, cal=cal, snaps=snaps, ecr=ecr,
+                remaining=remaining)
     as_of = meta.get("fetched_at")
     stale = None
     if isinstance(as_of, str):
@@ -404,16 +446,25 @@ def settle(season: int, week: int, points_by_week: Mapping[int, Mapping[str, flo
         return {"points": round(sum(points_by_week.get(w, {}).get(k, 0.0) for w in horizon), 2),
                 "n_no_row": sum(1 for w in horizon if k not in points_by_week.get(w, {}))}
 
-    scored = []
+    scored: list[dict[str, Any]] = []
     for p in doc["picks"]:
+        # GUARD waiver-settle-leaves-k-and-dst-unscored [unit/test_waiver.py]: nflverse player
+        # stats carry no kickers or defences, so scoring them reads 0 and drags the mean down
+        if p.get("pos") in UNSCORABLE:
+            scored.append({"player": p["player"], "replaces": p["replaces"], "scored": False,
+                           "reason": f"{p['pos']} is not in nflverse player stats, so no "
+                                     "realised points exist to score it against"})
+            continue
+        # /GUARD
         got_in, got_out = total(p["player"]), total(p["replaces"])
         scored.append({"player": p["player"], "replaces": p["replaces"],
                        "in_points": got_in["points"], "out_points": got_out["points"],
                        "net": round(got_in["points"] - got_out["points"], 2),
                        "n_no_row": got_in["n_no_row"] + got_out["n_no_row"]})
+    nets: list[float] = [s["net"] for s in scored if "net" in s]
     doc["outcome"] = {"horizon_weeks": list(horizon), "picks": scored,
-                      "mean_net": (round(sum(s["net"] for s in scored) / len(scored), 2)
-                                   if scored else None)}
+                      "mean_net": round(sum(nets) / len(nets), 2) if nets else None,
+                      "n_unscored": len(scored) - len(nets)}
     doc["scored"] = True
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return f"week {week}: scored"
@@ -459,8 +510,9 @@ def render(waiver: Mapping[str, Any]) -> str:
             mark = "*" if r["recommended"] else " "
             snap = "   n/a" if r["snap_delta"] is None else f"{r['snap_delta'] * 100:+5.1f}"
             bye = "-" if r["bye_week"] is None else str(r["bye_week"])
-            lines.append(f"   {mark} {r['player']:<24} {r['proj']:6.1f} vs {r['replaces']:<22}"
-                         f" {r['value']:+6.1f}  snap {snap}pp  bye {bye}"
+            lines.append(f"   {mark} {r['player']:<24} {r['proj_per_game']:5.1f}/g"
+                         f" vs {r['replaces']:<22}"
+                         f" {r['value']:+6.2f}/g snap {snap}pp  bye {bye}"
                          + (f"  [{r['blocked']}]" if r["blocked"] else ""))
     return "\n".join(lines)
 

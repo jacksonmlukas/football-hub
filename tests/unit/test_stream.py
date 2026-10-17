@@ -172,6 +172,27 @@ def test_a_capped_pool_and_a_failed_latest_fetch_are_said_in_the_reason():
     assert "ConnectionError: down" in s["availability_reason"]
 
 
+def test_a_capped_pool_never_says_false_for_a_unit_it_did_not_list():
+    """Being cut by the cap is not being rostered: unlisted reads null with a reason, a listed
+    unit is still true, and only a unit our own roster holds is a known false."""
+    pool = _pool(("D/ST", "AAA"), ("K", "DDD"))
+    s = stream.build(_games(), _roster(), 5, frozenset({"ZZZ"}), SEEN, AT, pool,
+                     {"capped": True})
+    dst = {r["team"]: r for r in s["dst"]}
+    assert dst["AAA"]["available"] is True and dst["AAA"]["available_reason"] is None
+    assert dst["EEE"]["available"] is None and "cap" in dst["EEE"]["available_reason"]
+    assert dst["BBB"]["available"] is False            # Bills D/ST is on our roster
+    assert dst["ZZZ"]["available"] is False             # our own Bye Defence: a known false
+    assert {r["team"]: r for r in s["dst"]}["GGG"]["available"] is None   # unranked, unlisted
+    assert not any(r["available"] is False for r in s["k"] if not r["rostered"])
+    assert s["available_known"] is False
+    assert s["available_known_by_position"] == {"dst": False, "k": False}
+    # an uncapped pool of the same shape does say false
+    s2 = stream.build(_games(), _roster(), 5, frozenset({"ZZZ"}), SEEN, AT, pool, {})
+    assert {r["team"]: r for r in s2["dst"]}["EEE"]["available"] is False
+    assert s2["available_known_by_position"] == {"dst": True, "k": True}
+
+
 def test_a_pool_with_only_one_position_makes_the_other_all_unavailable():
     s = stream.build(_games(), _roster(), 5, frozenset(), SEEN, AT, _pool(("K", "DDD")))
     assert all(r["available"] is False for r in s["dst"])
