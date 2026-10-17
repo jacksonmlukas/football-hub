@@ -34,7 +34,7 @@ from hub import jsonio
 ROOT = Path(__file__).resolve().parents[2]
 
 VERDICTS = ("Removed", "Demoted", "Shown never ranked", "Inert", "Null",
-            "Not established", "Adopted")
+            "Inconclusive", "Not established", "Adopted")
 
 SCREENS = "docs/signal-screens.md"
 INDEX = "docs/architecture.md"
@@ -137,15 +137,20 @@ def _screen_cells(line: str) -> list[str]:
 
 
 _MINUS = "\N{MINUS SIGN}"
-_FIGURE = re.compile(rf"(?:partial )?r\s*=\s*[+{_MINUS}-]?\d*\.?\d+")
+_NUM = rf"[+{_MINUS}-]?\d*\.?\d+"
+_INTERVAL = re.compile(rf"\[\s*({_NUM})\s*,\s*({_NUM})\s*\]")
+# A screen's figure: the partial r, with its 95% interval when the row carries one (#505).
+_FIGURE = re.compile(rf"(?:partial )?r\s*=\s*{_NUM}(?:,\s*95% interval\s*\[[^\]]*\])?")
 
 
 def _screen_rows(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     """The signals screened before the season and found null, from the screens index.
 
     A preseason screen is one whose horizon is not a week (the next-week rows are a different
-    programme and carry their own table); a null is a result cell opening with ``**null`` --
-    a struck-through one (``~~``) is withdrawn and is not a verdict.
+    programme and carry their own table). A result cell opening ``**inconclusive`` is the
+    verdict ``Inconclusive``, with its 95% interval read into ``interval`` when it carries one
+    (#505); one still opening ``**null`` is the old ``Null``. A struck-through cell (``~~``)
+    is withdrawn and is not a verdict.
     """
     path = root / SCREENS
     try:
@@ -161,18 +166,21 @@ def _screen_rows(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
         if not line.startswith("|"):
             continue
         cells = _screen_cells(line)
-        if len(cells) < 4 or not cells[2].startswith("**null"):
+        if len(cells) < 4 or not cells[2].lower().startswith(("**null", "**inconclusive")):
             continue
         signal, horizon, result, detail = cells[0], cells[1], cells[2], cells[3]
         if "week" in horizon.lower():
             continue
         fig = _FIGURE.search(result)
+        verdict = "Inconclusive" if result.lower().startswith("**inconclusive") else "Null"
+        bounds = _INTERVAL.search(fig.group(0).replace(_MINUS, "-")) if fig else None
         link = re.search(r"\]\(([^)#]+)", detail)
         rows.append({
-            "name": f"{signal} ({horizon})", "verdict": "Null",
+            "name": f"{signal} ({horizon})", "verdict": verdict,
             "figure": fig.group(0).replace(_MINUS, "-") if fig else None,
             "adr": None, "issue": None, "as_of": as_of, "source": SCREENS,
             "detail": f"docs/{link.group(1)}" if link else None,
+            **({"interval": [float(bounds.group(1)), float(bounds.group(2))]} if bounds else {}),
         })
     return rows, []
 

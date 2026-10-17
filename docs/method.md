@@ -773,6 +773,13 @@ count belonging to the table beneath this line — corrected 2026-09-07 under #5
 | 14 | **Snap-share trend** | **screen positive** — +0.236 beyond consensus |
 | 15 | Weekly projection vs weekly consensus rank, at setting a lineup | **shown, never ranked on** — −0.304 pts/team-week, 2 of 3 seasons lost; the market/Usage blend it closed on re-scored to −1.004, REMOVE, pending #206 ([weekly-blend-gate.md](weekly-blend-gate.md)) *(Restated 2026-09-21, #358: the verdict stands; this design could detect effects down to 0.768 pts/team-week at 80% power, k=4 seasons; [detectable-effects.md](detectable-effects.md) row 15.)* *(Restated 2026-10-07 under rule 13, #430: **REMOVE on 3 resolved of 4, 1 abstained**, t interval [−2.032, −0.262], under rule (C) of [ADR-0019](adr/0019-a-gate-requires-every-season.md)'s 2026-10-06 amendment; the module is kept as an unwired Exhibit, not deleted. The "shown, never ranked on" above is the prior value, kept. See the 2026-10-07 amendment in [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md).)* |
 
+*(Restated 2026-10-17, #505: rows 1-5 above call the preseason screens "null". They are
+**inconclusive**: a screen near zero has shown an interval, not zero, and these designs could
+only resolve partial r of 0.09-0.21 ([detectable-effects.md](detectable-effects.md) rows 1-5).
+Row 1's "r = 0.21" is year-over-year self-persistence, not partial r beyond ECR (≈ +0.01); the
+intervals, where the record holds the inputs for one, are in
+[signal-screens.md](signal-screens.md). Prior text kept above.)*
+
 What separates #12 and #14 from the other thirteen is not sophistication — #12 is a nine-cell
 lookup table of ratios. It is *what information they use*. The first twelve failures all tried
 to out-think a market using information that market had had all summer. #12 used Wednesday's

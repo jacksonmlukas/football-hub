@@ -47,9 +47,52 @@ def test_the_readmes_verdicts_each_appear_with_the_same_word():
     got = {r["name"]: r["verdict"] for r in rows}
     for name, verdict in README_SIX.items():
         assert got.get(name) == verdict, f"{name!r}: ledger says {got.get(name)!r}"
-    # The sixth README row, the five preseason signals: each is a Null row of its own.
-    nulls = [r for r in rows if r["verdict"] == "Null"]
-    assert len(nulls) == 5 and all(r["adr"] is None for r in nulls)
+    # The sixth README row, the five preseason signals: each is an Inconclusive row of its own
+    # (restated from "Null" under #505: a screen near zero has shown an interval, not zero).
+    screens = [r for r in rows if r["verdict"] == "Inconclusive"]
+    assert len(screens) == 5 and all(r["adr"] is None for r in screens)
+    assert not [r for r in rows if r["verdict"] == "Null"], "the word is retired for screens"
+
+
+def test_the_screens_carry_the_intervals_the_code_computes():
+    """The doc's intervals are `hub.screen_interval`'s output, not typed numbers (#505), and a
+    screen with no stored n or se carries none rather than an invented one."""
+    from hub import screen_interval as si
+
+    rows, _ = pl.build(ROOT)
+    by = {r["name"]: r for r in rows if r["verdict"] == "Inconclusive"}
+    climb = by["Depth-chart climb (next season)"]
+    assert climb["interval"] == [round(x, 3) for x in si.fisher_interval(0.0085, 283 + 282 + 313 + 287)]
+    assert climb["figure"] == si.render(0.0085, si.fisher_interval(0.0085, 1165))
+    age = by["Age (next season)"]
+    assert age["interval"] == [round(x, 3) for x in si.fisher_interval(0.0076, 424 + 417 + 415 + 455 + 429)]
+    rest = by["Depth-chart climb (rest of season)"]
+    assert rest["interval"] == [round(x, 3) for x in si.t_interval(0.012, 0.052, 4)]
+    for name in ("Expected-vs-actual points (next season)",
+                 "Recency-weighted expected-vs-actual (next season)"):
+        assert by[name]["figure"] is None and "interval" not in by[name], (
+            "the 0.21 is self-persistence; with no n there is no interval to report")
+
+
+def test_control_a_planted_interval_row_is_read(tmp_path):
+    root = _tree(tmp_path)
+    page = root / "docs" / "signal-screens.md"
+    page.write_text(page.read_text().replace(
+        "partial r = +0.0076, 95% interval [-0.035, +0.050]",
+        "partial r = -0.0420, 95% interval [-0.101, +0.017]"))
+    rows, _ = pl.build(root)
+    age = next(r for r in rows if r["name"] == "Age (next season)")
+    assert age["figure"] == "partial r = -0.0420, 95% interval [-0.101, +0.017]"
+    assert age["interval"] == [-0.101, 0.017] and age["verdict"] == "Inconclusive"
+
+
+def test_control_a_screen_row_that_is_neither_null_nor_inconclusive_is_dropped(tmp_path):
+    root = _tree(tmp_path)
+    page = root / "docs" / "signal-screens.md"
+    page.write_text(page.read_text().replace("| **inconclusive** — partial r = +0.0076",
+                                             "| **maybe** — partial r = +0.0076"))
+    rows, _ = pl.build(root)
+    assert all(r["name"] != "Age (next season)" for r in rows)
 
 
 def test_every_row_has_the_shape_the_page_reads():

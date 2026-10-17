@@ -85,7 +85,7 @@ def test_the_opening_counts_the_rows(counted):
 
 def test_the_opening_splits_preseason_from_in_season(counted):
     m = re.search(r"The first (\w+) rows are the (\w+) hypotheses screened before the "
-                  r"season: (\w+) were null and \*\*one not\*\*", counted["opening"])
+                  r"season: (\w+) were inconclusive and \*\*one not\*\*", counted["opening"])
     assert m, "the opening no longer states the preseason split"
     assert _number(m.group(1)) == counted["preseason_rows"], (
         f"the paragraph says {m.group(1)} preseason rows; the table has "

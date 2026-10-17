@@ -43,7 +43,7 @@ def fisher_interval(r: float, n: int, controls: int = 1,
 
 def t_interval(mean: float, se: float, seasons: int,
                level: float = LEVEL) -> tuple[float, float]:
-    """`mean` -/+ t(k-1) * `se`, where `se` is the between-season se of the mean of `seasons` r's."""
+    """`mean` -/+ t(k-1) * `se`; `se` is the between-season se of the mean of `seasons` r's."""
     if seasons < 2:
         raise ValueError("a between-season se needs at least two seasons")
     half = t_quantile(0.5 + level / 2, seasons - 1) * se
