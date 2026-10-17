@@ -1739,11 +1739,30 @@ def test_a_never_fetched_source_reads_not_fetched_and_a_stale_one_reads_stale(no
 
 
 def test_the_committed_manifests_source_entries_are_what_the_publisher_writes():
+    """The manifest is a snapshot taken at publish time, and the capture jobs rewrite their own
+    `bigten.json`/`cfbd.json` between publishes (the 2026-10-17 bigten capture did, and an
+    unconditional equality here failed the push gate). So the entry must equal what the
+    publisher writes only while the side file is no newer than the manifest; once a capture
+    has moved it, the entry must still have the publisher's shape, and the next publish
+    re-syncs it."""
+    from datetime import datetime
+
     from hub import publish
+
+    def stamp(s):
+        return datetime.fromisoformat(s.replace("Z", "+00:00")) if isinstance(s, str) else None
+
     man = _committed_manifest()
+    published = stamp(man.get("generated_at"))
     for name in publish.SIDE_SOURCES:
-        assert next(a for a in man["artifacts"] if a["name"] == name) == \
-            publish.side_record(DATA, name)
+        entry = next(a for a in man["artifacts"] if a["name"] == name)
+        assert set(entry) == {"name", "present", "fetched", "stale", "reason", "generated_at"}
+        assert not (entry["fetched"] is False and entry["stale"] is False), (
+            f"{name}: a never-fetched source cannot be fresh")
+        now = publish.side_record(DATA, name)
+        moved = stamp(now["generated_at"])
+        if published is None or moved is None or moved <= published:
+            assert entry == now, f"{name}: the manifest's entry drifted from its side file"
 
 
 def test_the_footer_reads_source_health_from_the_manifest_and_not_the_side_files(node):
