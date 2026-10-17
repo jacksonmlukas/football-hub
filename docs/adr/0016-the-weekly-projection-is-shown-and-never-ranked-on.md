@@ -1,3 +1,11 @@
+---
+name: Weekly projection
+verdict: Shown never ranked
+figure: "-0.304 pts/team-week, CI [-1.043, +0.415]"
+as_of: 2026-09-07
+issue: 44
+---
+
 # The Weekly projection is shown and never ranked on
 
 **Status:** accepted 2026-08-28. **Re-scored 2026-09-07** — the closing figure changed sign

@@ -1,3 +1,11 @@
+---
+name: Lineup optimiser
+verdict: Inert
+figure: "+0.00 pts/game, CI [-0.00, +0.00]"
+as_of: 2026-09-21
+issue: 358
+---
+
 # The lineup optimiser waits for real variance
 
 **Status:** accepted 2026-08-24. Decision unchanged; its forecast was measured 2026-08-25 and did not hold — see *What would change the verdict*, below.

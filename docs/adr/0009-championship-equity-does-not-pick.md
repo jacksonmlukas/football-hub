@@ -1,3 +1,11 @@
+---
+name: Championship equity
+verdict: Removed
+figure: "t interval [-17.22, -4.82] pts/team-game, 3 of 4 seasons resolved"
+as_of: 2026-10-08
+issue: 320
+---
+
 # Championship equity does not pick
 
 **Status:** accepted 2026-08-24.
