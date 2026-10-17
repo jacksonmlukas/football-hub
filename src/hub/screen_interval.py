@@ -23,9 +23,11 @@ from __future__ import annotations
 import math
 from statistics import NormalDist
 
+from hub.declare import not_an_input
 from hub.models.experiment import t_quantile
 
-LEVEL = 0.95
+LEVEL = not_an_input(
+    0.95, "the coverage a screen's interval is printed at; it reaches no prediction or model")
 
 
 def fisher_interval(r: float, n: int, controls: int = 1,
