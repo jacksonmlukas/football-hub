@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14T15:41:59+00:00",
+  "generated_at": "2026-10-17T16:58:15+00:00",
   "season": 2026,
   "week": 6,
   "artifacts": [
@@ -8,28 +8,28 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-14T15:41:58+00:00"
+      "generated_at": "2026-10-17T16:58:13+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-14T15:41:58+00:00"
+      "generated_at": "2026-10-17T16:58:14+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-14T15:41:58+00:00"
+      "generated_at": "2026-10-17T16:58:14+00:00"
     },
     {
       "name": "roster",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-14T15:41:57+00:00"
+      "generated_at": "2026-10-17T16:58:11+00:00"
     },
     {
       "name": "draft_board",
@@ -43,23 +43,30 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-14T15:41:59+00:00"
+      "generated_at": "2026-10-17T16:58:15+00:00"
+    },
+    {
+      "name": "ledger",
+      "present": true,
+      "stale": false,
+      "reason": null,
+      "generated_at": "2026-10-17T16:58:15+00:00"
     },
     {
       "name": "bigten",
       "present": true,
       "fetched": true,
       "stale": true,
-      "reason": "the page's shape changed (PageShapeChanged); the raw page is archived and nothing was parsed out of it",
-      "generated_at": "2026-10-16T06:08:42+00:00"
+      "reason": "the page parsed but linked no report documents; nothing was archived from it (2 links skipped: off-host)",
+      "generated_at": "2026-10-17T05:49:06+00:00"
     },
     {
       "name": "cfbd",
       "present": true,
-      "fetched": false,
-      "stale": true,
-      "reason": "nothing was fetched: TypeError. Its message is on stderr and deliberately not here: a contract violation quotes the payload values that broke it, and this file is committed",
-      "generated_at": "2026-10-14T15:41:51+00:00"
+      "fetched": true,
+      "stale": false,
+      "reason": null,
+      "generated_at": "2026-10-17T16:58:04+00:00"
     }
   ],
   "weeks": [
@@ -67,7 +74,7 @@
       "name": "preds_2026_wk06",
       "season": 2026,
       "week": 6,
-      "generated_at": "2026-10-14T15:41:58+00:00"
+      "generated_at": "2026-10-17T16:58:13+00:00"
     },
     {
       "name": "preds_2026_wk05",

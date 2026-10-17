@@ -1,0 +1,133 @@
+{
+  "name": "ledger",
+  "source": "docs/adr + docs front matter + docs/signal-screens.md",
+  "generated_at": "2026-10-17T16:58:15+00:00",
+  "shape": "rows",
+  "n": 13,
+  "rows": [
+    {
+      "name": "Championship equity",
+      "verdict": "Removed",
+      "figure": "-13.49 pts/team-game, 4 of 4 resolved",
+      "adr": "docs/adr/0009-championship-equity-does-not-pick.md",
+      "issue": 467,
+      "as_of": "2026-10-09",
+      "source": "docs/adr/0009-championship-equity-does-not-pick.md"
+    },
+    {
+      "name": "Market/Usage blend",
+      "verdict": "Removed",
+      "figure": "-1.004 pts/team-week, CI [-1.391, -0.621], 0 of 4 seasons",
+      "adr": "docs/adr/0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md",
+      "issue": 44,
+      "as_of": "2026-09-11",
+      "source": "docs/adr/0017-the-market-usage-blend-is-a-model-not-a-shrinkage.md"
+    },
+    {
+      "name": "Weekly projection",
+      "verdict": "Removed",
+      "figure": "t interval [-2.032, -0.262] pts/team-week, 3 of 4 seasons resolved",
+      "adr": "docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md",
+      "issue": 430,
+      "as_of": "2026-10-07",
+      "source": "docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md",
+      "detail": "kept as an unwired exhibit"
+    },
+    {
+      "name": "VOR ordering",
+      "verdict": "Demoted",
+      "figure": "-5.06 pts/team-game",
+      "adr": null,
+      "issue": 358,
+      "as_of": "2026-09-21",
+      "source": "docs/market-value.md"
+    },
+    {
+      "name": "Snap-share trend",
+      "verdict": "Shown never ranked",
+      "figure": "partial r +0.236, 12 of 12 cells",
+      "adr": "docs/adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md",
+      "issue": null,
+      "as_of": "2026-08-27",
+      "source": "docs/adr/0013-the-snap-trend-is-shown-and-never-ranked-on.md"
+    },
+    {
+      "name": "edge (consensus vs ADP)",
+      "verdict": "Shown never ranked",
+      "figure": "not measurable: no historical ADP",
+      "adr": "docs/adr/0010-edge-is-displayed-but-never-ranked-on.md",
+      "issue": 358,
+      "as_of": "2026-09-21",
+      "source": "docs/adr/0010-edge-is-displayed-but-never-ranked-on.md"
+    },
+    {
+      "name": "Lineup optimiser",
+      "verdict": "Inert",
+      "figure": "+0.00 pts/game, CI [-0.00, +0.00]",
+      "adr": "docs/adr/0012-the-lineup-optimiser-waits-for-real-variance.md",
+      "issue": 358,
+      "as_of": "2026-09-21",
+      "source": "docs/adr/0012-the-lineup-optimiser-waits-for-real-variance.md"
+    },
+    {
+      "name": "Age (next season)",
+      "verdict": "Null",
+      "figure": null,
+      "adr": null,
+      "issue": null,
+      "as_of": "2026-09-21",
+      "source": "docs/signal-screens.md",
+      "detail": null
+    },
+    {
+      "name": "Depth-chart climb (next season)",
+      "verdict": "Null",
+      "figure": "partial r = +0.008",
+      "adr": null,
+      "issue": null,
+      "as_of": "2026-09-21",
+      "source": "docs/signal-screens.md",
+      "detail": "docs/depth-chart-signal.md"
+    },
+    {
+      "name": "Depth-chart climb (rest of season)",
+      "verdict": "Null",
+      "figure": null,
+      "adr": null,
+      "issue": null,
+      "as_of": "2026-09-21",
+      "source": "docs/signal-screens.md",
+      "detail": "docs/depth-chart-signal.md"
+    },
+    {
+      "name": "Expected-vs-actual points (next season)",
+      "verdict": "Null",
+      "figure": "r = 0.21",
+      "adr": null,
+      "issue": null,
+      "as_of": "2026-09-21",
+      "source": "docs/signal-screens.md",
+      "detail": "docs/lambda-sweep.md"
+    },
+    {
+      "name": "Recency-weighted expected-vs-actual (next season)",
+      "verdict": "Null",
+      "figure": null,
+      "adr": null,
+      "issue": null,
+      "as_of": "2026-09-21",
+      "source": "docs/signal-screens.md",
+      "detail": "docs/lambda-sweep.md"
+    },
+    {
+      "name": "Weekly injury cost",
+      "verdict": "Not established",
+      "figure": "+0.0623 MAE, t interval [-0.189, +0.314], 1 of 3 seasons resolved",
+      "adr": null,
+      "issue": 360,
+      "as_of": "2026-10-07",
+      "source": "docs/weekly-injury.md"
+    }
+  ],
+  "skipped": 0
+}

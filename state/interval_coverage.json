@@ -1,6 +1,6 @@
 {
   "name": "interval_coverage",
-  "generated_at": "2026-10-14T15:41:48+00:00",
+  "generated_at": "2026-10-17T16:58:00+00:00",
   "centre": "prior",
   "lookahead": false,
   "interval": "conformal",
@@ -535,7 +535,7 @@
   },
   "backtest_key": {
     "config_digest": "cfb8f409bc6c",
-    "code_digest": "e9af15fc",
+    "code_digest": "7de987cb",
     "data_digest": "13c1d5fa2d7e",
     "seasons": [
       2021,
@@ -738,8 +738,8 @@
       }
     ],
     "min_bucket": 50,
-    "key": "e4a71ee41a94",
-    "generated_at": "2026-10-10T18:24:25+00:00"
+    "key": "2de2126c6ec8",
+    "generated_at": "2026-10-17T16:57:58+00:00"
   },
   "audit": {
     "look": 1,

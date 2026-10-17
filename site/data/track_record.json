@@ -1,13 +1,13 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-10-14T15:41:58+00:00",
+  "generated_at": "2026-10-17T16:58:14+00:00",
   "shape": "summary",
-  "n_scored": 94,
+  "n_scored": 95,
   "n_tied": 1,
-  "n_preregistered": 78,
+  "n_preregistered": 79,
   "is_backtest": true,
-  "note": "78 of 94 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "note": "79 of 95 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
   "late_game_ids": [
     "2025_18_ARI_LA",
     "2025_18_BAL_PIT",
@@ -30,7 +30,7 @@
   "seasons": [
     {
       "season": 2026,
-      "n_scored": 78,
+      "n_scored": 79,
       "scored_game_ids": [
         "2026_01_ARI_LAC",
         "2026_01_ATL_PIT",
@@ -109,83 +109,131 @@
         "2026_05_MIN_NO",
         "2026_05_PHI_JAX",
         "2026_05_SF_SEA",
-        "2026_05_TB_DAL"
+        "2026_05_TB_DAL",
+        "2026_06_SEA_DEN"
       ],
-      "log_loss": 0.6477973738122389,
-      "brier": 0.22800225889752498,
+      "log_loss": 0.6505116897608311,
+      "brier": 0.22934184440150246,
       "bins": [
         {
           "bin": "0.0-0.1",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         },
         {
           "bin": "0.1-0.2",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         },
         {
           "bin": "0.2-0.3",
           "n": 5,
           "predicted": 0.26881273027939157,
           "actual": 0.2,
-          "gap": -0.06881273027939155
+          "gap": -0.06881273027939155,
+          "lo": 0.04596245388060399,
+          "hi": 0.5647074465784567
         },
         {
           "bin": "0.3-0.4",
           "n": 11,
           "predicted": 0.3796470746065893,
           "actual": 0.2727272727272727,
-          "gap": -0.1069198018793166
+          "gap": -0.1069198018793166,
+          "lo": 0.11469412885053903,
+          "hi": 0.5204899835674235
         },
         {
           "bin": "0.4-0.5",
-          "n": 14,
-          "predicted": 0.42779413271539113,
-          "actual": 0.5,
-          "gap": 0.07220586728460887
+          "n": 15,
+          "predicted": 0.4274225362535136,
+          "actual": 0.5333333333333333,
+          "gap": 0.10591079707981971,
+          "lo": 0.3331549296376211,
+          "hi": 0.723324556721703
         },
         {
           "bin": "0.5-0.6",
           "n": 18,
           "predicted": 0.5785702425458467,
           "actual": 0.5555555555555556,
-          "gap": -0.023014686990291078
+          "gap": -0.023014686990291078,
+          "lo": 0.36852889549929546,
+          "hi": 0.7280635945473454
         },
         {
           "bin": "0.6-0.7",
           "n": 15,
-          "predicted": 0.6471946467692344,
+          "predicted": 0.6471946467692345,
           "actual": 0.6666666666666666,
-          "gap": 0.01947201989743219
+          "gap": 0.01947201989743208,
+          "lo": 0.4551721473456388,
+          "hi": 0.8272252844509812
         },
         {
           "bin": "0.7-0.8",
           "n": 13,
-          "predicted": 0.7362754355862617,
+          "predicted": 0.7362754355862619,
           "actual": 0.6153846153846154,
-          "gap": -0.12089082020164632
+          "gap": -0.12089082020164643,
+          "lo": 0.3926079602348733,
+          "hi": 0.7984073974169317
         },
         {
           "bin": "0.8-0.9",
           "n": 2,
           "predicted": 0.8359802656835579,
           "actual": 1.0,
-          "gap": 0.16401973431644212
+          "gap": 0.16401973431644212,
+          "lo": 0.42503060900634654,
+          "hi": 1.0
         },
         {
           "bin": "0.9-1.0",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         }
       ],
-      "n_preregistered": 78,
+      "baselines": {
+        "coin_flip": {
+          "p": 0.5,
+          "n": 79,
+          "log_loss": 0.6931471805599455,
+          "brier": 0.25
+        },
+        "home_constant": {
+          "p": 0.5503453289712832,
+          "n": 79,
+          "log_loss": 0.6918478621092252,
+          "brier": 0.249348238923196,
+          "source_seasons": [
+            2016,
+            2017,
+            2018,
+            2019,
+            2020,
+            2021,
+            2022,
+            2023,
+            2024,
+            2025
+          ],
+          "source_n_games": 2751
+        }
+      },
+      "n_preregistered": 79,
       "n_backtest": 0
     },
     {
@@ -217,72 +265,119 @@
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         },
         {
           "bin": "0.1-0.2",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         },
         {
           "bin": "0.2-0.3",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         },
         {
           "bin": "0.3-0.4",
           "n": 2,
           "predicted": 0.37687237941034113,
           "actual": 1.0,
-          "gap": 0.6231276205896589
+          "gap": 0.6231276205896589,
+          "lo": 0.42503060900634654,
+          "hi": 1.0
         },
         {
           "bin": "0.4-0.5",
           "n": 2,
           "predicted": 0.41457296023084916,
           "actual": 0.5,
-          "gap": 0.08542703976915084
+          "gap": 0.08542703976915084,
+          "lo": 0.12086631942227372,
+          "hi": 0.8791336805777263
         },
         {
           "bin": "0.5-0.6",
           "n": 2,
           "predicted": 0.5930742653255309,
           "actual": 0.5,
-          "gap": -0.09307426532553087
+          "gap": -0.09307426532553087,
+          "lo": 0.12086631942227372,
+          "hi": 0.8791336805777263
         },
         {
           "bin": "0.6-0.7",
           "n": 2,
           "predicted": 0.623127620589659,
           "actual": 0.5,
-          "gap": -0.12312762058965898
+          "gap": -0.12312762058965898,
+          "lo": 0.12086631942227372,
+          "hi": 0.8791336805777263
         },
         {
           "bin": "0.7-0.8",
           "n": 2,
           "predicted": 0.7720528190539049,
           "actual": 0.5,
-          "gap": -0.2720528190539049
+          "gap": -0.2720528190539049,
+          "lo": 0.12086631942227372,
+          "hi": 0.8791336805777263
         },
         {
           "bin": "0.8-0.9",
           "n": 6,
           "predicted": 0.8531921577233438,
           "actual": 1.0,
-          "gap": 0.14680784227665622
+          "gap": 0.14680784227665622,
+          "lo": 0.6892160186940858,
+          "hi": 1.0
         },
         {
           "bin": "0.9-1.0",
           "n": 0,
           "predicted": null,
           "actual": null,
-          "gap": null
+          "gap": null,
+          "lo": null,
+          "hi": null
         }
       ],
+      "baselines": {
+        "coin_flip": {
+          "p": 0.5,
+          "n": 16,
+          "log_loss": 0.6931471805599453,
+          "brier": 0.25
+        },
+        "home_constant": {
+          "p": 0.5512070226773957,
+          "n": 16,
+          "log_loss": 0.6470320071362955,
+          "brier": 0.22701864783278547,
+          "source_seasons": [
+            2015,
+            2016,
+            2017,
+            2018,
+            2019,
+            2020,
+            2021,
+            2022,
+            2023,
+            2024
+          ],
+          "source_n_games": 2734
+        }
+      },
       "n_preregistered": 0,
       "n_backtest": 16
     }
@@ -293,74 +388,121 @@
       "n": 0,
       "predicted": null,
       "actual": null,
-      "gap": null
+      "gap": null,
+      "lo": null,
+      "hi": null
     },
     {
       "bin": "0.1-0.2",
       "n": 0,
       "predicted": null,
       "actual": null,
-      "gap": null
+      "gap": null,
+      "lo": null,
+      "hi": null
     },
     {
       "bin": "0.2-0.3",
       "n": 5,
       "predicted": 0.26881273027939157,
       "actual": 0.2,
-      "gap": -0.06881273027939155
+      "gap": -0.06881273027939155,
+      "lo": 0.04596245388060399,
+      "hi": 0.5647074465784567
     },
     {
       "bin": "0.3-0.4",
       "n": 11,
       "predicted": 0.3796470746065893,
       "actual": 0.2727272727272727,
-      "gap": -0.1069198018793166
+      "gap": -0.1069198018793166,
+      "lo": 0.11469412885053903,
+      "hi": 0.5204899835674235
     },
     {
       "bin": "0.4-0.5",
-      "n": 14,
-      "predicted": 0.42779413271539113,
-      "actual": 0.5,
-      "gap": 0.07220586728460887
+      "n": 15,
+      "predicted": 0.4274225362535136,
+      "actual": 0.5333333333333333,
+      "gap": 0.10591079707981971,
+      "lo": 0.3331549296376211,
+      "hi": 0.723324556721703
     },
     {
       "bin": "0.5-0.6",
       "n": 18,
       "predicted": 0.5785702425458467,
       "actual": 0.5555555555555556,
-      "gap": -0.023014686990291078
+      "gap": -0.023014686990291078,
+      "lo": 0.36852889549929546,
+      "hi": 0.7280635945473454
     },
     {
       "bin": "0.6-0.7",
       "n": 15,
-      "predicted": 0.6471946467692344,
+      "predicted": 0.6471946467692345,
       "actual": 0.6666666666666666,
-      "gap": 0.01947201989743219
+      "gap": 0.01947201989743208,
+      "lo": 0.4551721473456388,
+      "hi": 0.8272252844509812
     },
     {
       "bin": "0.7-0.8",
       "n": 13,
-      "predicted": 0.7362754355862617,
+      "predicted": 0.7362754355862619,
       "actual": 0.6153846153846154,
-      "gap": -0.12089082020164632
+      "gap": -0.12089082020164643,
+      "lo": 0.3926079602348733,
+      "hi": 0.7984073974169317
     },
     {
       "bin": "0.8-0.9",
       "n": 2,
       "predicted": 0.8359802656835579,
       "actual": 1.0,
-      "gap": 0.16401973431644212
+      "gap": 0.16401973431644212,
+      "lo": 0.42503060900634654,
+      "hi": 1.0
     },
     {
       "bin": "0.9-1.0",
       "n": 0,
       "predicted": null,
       "actual": null,
-      "gap": null
+      "gap": null,
+      "lo": null,
+      "hi": null
     }
   ],
-  "log_loss": 0.6477973738122389,
-  "brier": 0.22800225889752498,
+  "log_loss": 0.6505116897608311,
+  "brier": 0.22934184440150246,
+  "baselines": {
+    "coin_flip": {
+      "p": 0.5,
+      "n": 79,
+      "log_loss": 0.6931471805599455,
+      "brier": 0.25
+    },
+    "home_constant": {
+      "p": 0.5503453289712832,
+      "n": 79,
+      "log_loss": 0.6918478621092252,
+      "brier": 0.249348238923196,
+      "source_seasons": [
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "source_n_games": 2751
+    }
+  },
   "interval_coverage": {
     "centre": "prior",
     "lookahead": false,
@@ -371,7 +513,7 @@
     "gate_claim": 0.8,
     "band": 0.02,
     "verdict": "COVERS",
-    "generated_at": "2026-10-14T15:41:48+00:00",
+    "generated_at": "2026-10-17T16:58:00+00:00",
     "interval": "conformal",
     "gate_clipped_share": 0.277586,
     "n_uncalibrated": 383,
@@ -650,8 +792,8 @@
         }
       ],
       "min_bucket": 50,
-      "key": "e4a71ee41a94",
-      "generated_at": "2026-10-10T18:24:25+00:00"
+      "key": "2de2126c6ec8",
+      "generated_at": "2026-10-17T16:57:58+00:00"
     },
     "about": "player_weeks"
   },
@@ -661,5 +803,42 @@
     "sd": 12.741,
     "z": 1.2816,
     "half_width": 16.33
-  }
+  },
+  "closing_line_value": [
+    {
+      "season": 2026,
+      "descriptive": true,
+      "definition": "close_prob(pick) - published_prob(pick), in probability points, on the side the published probability favours; the close is the last capture at or before kickoff, with its lead time stated",
+      "close_probability": "normal conversion of the close spread at the published margin sd",
+      "true_close_lead_minutes": 30,
+      "n": 7,
+      "n_true_close": 0,
+      "n_early_close": 7,
+      "n_no_pick": 0,
+      "n_published_after_close": 72,
+      "true_close": {
+        "n": 0,
+        "mean": null,
+        "lo": null,
+        "hi": null
+      },
+      "early_close": {
+        "n": 7,
+        "mean": 0.0017666431435792798,
+        "lo": -0.005581696578234735,
+        "hi": 0.009114982865393294,
+        "median_lead_minutes": 253.63333333333333
+      },
+      "log_loss": {
+        "n": 7,
+        "published": 0.8395249948390145,
+        "close": 0.8467033459827676
+      },
+      "n_h2h_close": 0,
+      "h2h_log_loss": {
+        "n": 0,
+        "close": null
+      }
+    }
+  ]
 }
