@@ -90,6 +90,7 @@ FLOOR: dict[str, int] = {
     "src/hub/league.py": 0,
     "src/hub/ledger.py": 1,
     "src/hub/live_chain.py": 1,
+    # Measured 0 missing lines (--cov json, 2026-10-17, after test_market_row's degradation tests).
     "src/hub/market_row.py": 0,
     "src/hub/models/__init__.py": 0,
     "src/hub/models/base.py": 2,

@@ -142,6 +142,45 @@ def test_a_row_already_published_keeps_the_price_it_was_published_with(site, bas
         {k: first[k] for k in market_row.MARKET_FIELDS}
 
 
+def _played(game, result):
+    return (_sched([game]).with_columns(
+        result=pl.when(pl.col("game_id") == game).then(pl.lit(float(result)))
+        .otherwise(None)))
+
+
+def test_the_record_scores_and_carries_clv_over_rows_with_the_published_kickoff_string(
+        site, base):
+    """The published `kickoff` is an offset string; the scorer joins the schedule's datetime."""
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture(base, "g1", when, -3.5)
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert isinstance(row["kickoff"], str)
+    _capture(base, "g1", KICK - dt.timedelta(minutes=12), -6.0)      # the true close
+    serve(schedules=_played("g1", 7))
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict) and got["n_scored"] == 1
+    (block,) = got["closing_line_value"]
+    assert block["n_true_close"] == 1
+
+
+def test_a_kickoff_earlier_than_the_capture_withholds_the_price(site, base, monkeypatch):
+    """The `>` boundary: a capture stamped after the (wrong) kickoff is in play."""
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture(base, "g1", when, -3.5)
+    early = when - dt.timedelta(seconds=1)
+    monkeypatch.setattr(market_row, "kickoffs", lambda season: ({"g1": early}, None))
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert row["market_prob"] is None and "after kickoff" in row["market_missing"]
+
+
+def test_a_kickoff_equal_to_the_capture_still_publishes_the_price(site, base, monkeypatch):
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture(base, "g1", when, -3.5)
+    monkeypatch.setattr(market_row, "kickoffs", lambda season: ({"g1": when}, None))
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert row["market_prob"] is not None
+
+
 def test_attach_leaves_rows_that_carry_the_fields_untouched():
     rows = [{"game_id": "g1", "market_prob": 0.5}]
     assert market_row.attach(rows, 2026) == [{"game_id": "g1", "market_prob": 0.5}]
