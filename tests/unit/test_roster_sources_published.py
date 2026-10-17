@@ -33,6 +33,13 @@ def _published(site, tmp_path, df):
     return json.loads((site / "roster.json").read_text())
 
 
+@pytest.fixture(autouse=True)
+def _no_stream_wire(monkeypatch):
+    """The K / D/ST heuristic (#494) reads the schedule; not what is under test here."""
+    from hub.season import stream
+    monkeypatch.setattr(publish, "_roster_stream", lambda df: stream.unavailable("stubbed"))
+
+
 @pytest.fixture
 def site(tmp_path):
     return tmp_path / "site"
