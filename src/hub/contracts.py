@@ -1075,6 +1075,31 @@ SNAP_COUNTS = not_an_input(Contract(
     "prediction; #71: adding a data source must not move a model version")
 
 
+# ESPN's free agents, as `hub.fetch.espn.free_agent_rows` hands them over (#493): the league's
+# unrostered pool from one bulk request, one row per player. Declared from `espn_api`'s Player
+# vocabulary rather than from a capture -- the league needs the user's cookie and no capture of
+# it is committed -- so `verified_against_live` is False, and the fixture is hand-built.
+#
+# `espn_avg` and `espn_total` may be 0.0: ESPN writes that for a player it has not projected,
+# and the waiver ranker reads a non-positive projection as "no projection", never as a value.
+# `percent_owned` is ESPN's own -1 when it carries none, hence the lower bound. `unique` on the
+# id: a player in the pool twice would be ranked twice.
+ESPN_FREE_AGENTS = Contract(
+    name="espn_free_agents",
+    required={"player": pl.Utf8, "key": pl.Utf8, "pos": pl.Utf8, "espn_id": pl.Int64,
+              "nfl_team": pl.Utf8, "injury_status": pl.Utf8, "espn_avg": pl.Float64,
+              "espn_total": pl.Float64, "espn_week": pl.Int64,
+              "espn_week_proj": pl.Float64, "percent_owned": pl.Float64},
+    non_null=("player", "key", "pos", "espn_id"),
+    unique=("espn_id",),
+    no_nan=("espn_avg", "espn_total", "espn_week_proj", "percent_owned"),
+    ranges={"espn_avg": (0, 60), "espn_total": (0, 1000), "espn_week_proj": (0, 80),
+            "percent_owned": (-1, 100)},
+    min_rows=1,
+    verified_against_live=False,
+)
+
+
 def check_roster_artifact(payload: dict[str, Any]) -> None:
     """The roster artifact's #479 fields: quantiles, swaps with odds, unprojected names.
 
