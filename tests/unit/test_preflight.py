@@ -579,12 +579,16 @@ class _GuardRuns:
     script copy and its own basetemp -- so they run at most four at a time, and each test still
     reads and asserts about its own two, in the same order. Only the guards the session selected
     are started; a mutant bash will not parse is never started, its test fails on the parse.
+    Under xdist each worker would see every item, so there nothing is started ahead and each
+    test starts its own.
     """
 
     def __init__(self, items: list[pytest.Item], root: Path) -> None:
         self._root = root
         self._pool = ThreadPoolExecutor(min(4, os.cpu_count() or 1))
         self._runs: dict[Guard, tuple[Future, Future]] = {}
+        if "PYTEST_XDIST_WORKER" in os.environ:         # pragma: no cover - no xdist here
+            return
         for item in items:
             if not (isinstance(item, pytest.Function) and item.originalname
                     == "test_removing_the_guard_stops_the_planted_input_being_caught"):
