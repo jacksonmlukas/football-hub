@@ -20,7 +20,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised 30 -> 60 on 2026-10-19: the unit+contracts suite outgrew 30 minutes on the runner,
+    # and GitHub reports a job timeout as "cancelled", so every push and scheduled run from
+    # 2026-10-16 ended cancelled rather than red. `--durations` below names where the time goes;
+    # making the suite faster is its own ticket.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -36,7 +40,7 @@ jobs:
       # shape of test this repo has a documented incident about.
       - run: >
           uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=88
-          --cov-report=json:coverage.json
+          --cov-report=json:coverage.json --durations=25
       # The total floor above cannot see one module losing its tests: #104 took
       # `models/weekly.py` from 98% to 22% and the total only fell to 89.62%, which cleared
       # 88 and passed. This is per-module and it is a ratchet -- see tests/coveragefloor.py.
