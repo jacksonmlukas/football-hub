@@ -731,3 +731,39 @@ The already-seen `scale_only` gain (+0.0006) is about a third of that MDE.
 Nothing that prices a game. `MARGIN_SD`, `hub.models.margin` and `hub.models.market` are not
 edited; the new module is not imported by any pinned module, and `weekly_forward`'s pinned
 digest is checked unchanged after the change.
+
+## Power and MDE before the run: computed 2026-10-18, before the real walk-forward was run (#502)
+
+The design above, run as written: real `spread_line` and `total_line` for every game (7,351
+scored games, **0 missing a total**; 2004-2025 scored, k = 22), outcomes **simulated** (the
+real `home_won` column is dropped before anything is fitted or scored), 200 trials per truth,
+seeds `SeedSequence([502, trial])`, `HARNESS.decide` at 500 bootstrap draws. The script is a
+scratch file outside the repo calling only `total_sd`'s public functions (with the normal CDF
+vectorised by `scipy.special.ndtr`, the same function); not committed, the numbers are.
+
+| truth | ADOPT | REMOVE | SHOW | NOT-RUNNABLE | mean gain | season-mean se | MDE (mean, range) | ceiling (simulated) | seasons won | increment |
+|---|---|---|---|---|---|---|---|---|---|---|
+| null, `Phi(s / 12.741)` | 0/200 | 0/200 | 200 | 0 | -0.00039 | 0.00038 | 0.00109 (0.00039-0.00247) | +0.00462 | 9.2 of 22 | -0.00018 |
+| planted, `sd = 12.741 (T/44)^0.5` | 0/200 | 0/200 | 200 | 0 | **-0.00022** | 0.00044 | 0.00125 (0.00035-0.00283) | +0.00479 | 10.3 of 22 | +0.00001 |
+
+**What it says, before the run.**
+
+1. **The gate can run.** The MDE (about 0.0011 to 0.0013 nats a game) sits well below the
+   simulated ceiling (about 0.0046; it is pure in-sample overfit under both truths, as said
+   above), and NOT-RUNNABLE fired in 0 of 400 trials. A SHOW from the real run is a verdict,
+   not an exemption.
+2. **ADOPT is not reachable at the hypothesised effect, and is named an exemption there
+   (rule 16).** Variance proportional to the total, at full strength, is worth *less* than the
+   cost of estimating two parameters on ten seasons: the fitted arm's expected gain over the
+   incumbent is **negative** (-0.00022) when the planted truth is exactly the hypothesis, and
+   the increment over a constant sd is +0.00001. ADOPT fired in 0 of 200 planted trials (upper
+   95% bound 1.5%). So, at the size the issue's mechanism implies, the reachable reading is
+   **SHOW**, and a SHOW is not evidence of equivalence. A real ADOPT would need a total
+   dependence or a level gap far larger than variance-proportional-to-scoring (the unit
+   fixture's `sd0 = 9, β = 2.5` is one).
+3. **Null size is 0 of 200** for ADOPT and for REMOVE.
+4. **The null arm loses on average** (-0.00039), as it should: fitting noise against a truth
+   the incumbent already is. That is the size of the estimation cost the real reading has to
+   overcome before any gain shows.
+
+Nothing above was tuned after seeing it; the design in the pre-registration is unchanged.
