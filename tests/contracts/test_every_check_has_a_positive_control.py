@@ -88,6 +88,14 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_ledger_entry_round_trips_its_seasons_field",
         "test_same_digests_different_recipes_do_not_compare",
     )),
+    # #375: the posterior's expected-utility action, both tiers and both directions -- a
+    # planted +-20 S_REF effect ADOPTs and REMOVEs on 99% of trials, and the tier boundaries
+    # read the right statistic -- plus the null-size check it is held to under the costly bar.
+    "hub.models.posterior.posterior_action": ("tests/unit/test_posterior.py", (
+        "test_a_planted_enormous_effect_always_adopts",
+        "test_posterior_action_reads_its_tier",
+        "test_the_posterior_rule_s_null_size_is_controlled",
+    )),
     "hub.models.experiment.run_gate": ("tests/unit/test_gate_run.py", (
         "test_a_void_condition_preempts_every_branch_and_is_the_caller_s_sentence",
         "test_a_ceiling_below_the_effect_says_so_loudly_in_the_gate_s_own_places",

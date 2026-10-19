@@ -96,6 +96,27 @@ def _round(v):
     return v
 
 
+def _without_posterior(lines: list[str]) -> list[str]:
+    """`lines` less #375's posterior block: its head line and the indented lines under it.
+
+    The block is additive and decides nothing during the transition (`docs/gate-power.md`,
+    2026-10-18), so the golden -- which holds #386's *decision* byte-identical -- is compared
+    with it removed, and every other line still has to match to the byte. That the block is
+    printed is `test_posterior.py`'s and `test_gate_run.py`'s to hold, not this capture's.
+    """
+    out: list[str] = []
+    in_block = False
+    for ln in lines:
+        if ln.startswith("posterior on the pooled effect"):
+            in_block = True
+            continue
+        if in_block and ln.startswith(("  prior N(0", "  mean ", "  sensitivity -- ")):
+            continue
+        in_block = False
+        out.append(ln)
+    return out
+
+
 def _reduce(run: experiment.GateRun) -> dict:
     """`GateRun` -> a plain, JSON-comparable dict: verdict, summary, seasons, and the lines
     `run_gate` renders *before* the stamp block. NaN is compared by name (`_nan`) rather than
@@ -109,6 +130,7 @@ def _reduce(run: experiment.GateRun) -> dict:
             summary[k] = v if isinstance(v, str) else _round(float(v))
     lines = list(run.lines)
     lines = lines[: lines.index("")] if "" in lines else lines
+    lines = _without_posterior(lines)
     seasons = [{k: _round(v) for k, v in row.items()} for row in run.seasons.to_dicts()]
     return {
         "verdict": list(run.verdict),

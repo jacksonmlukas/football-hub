@@ -5133,3 +5133,50 @@ every published number are unchanged** — this is the transition's first landin
 weekly forward pin (#456) moves. Declaring the new constants moves `fitted_digest` once, as
 every new `chosen` constant does. **Not run by this ticket:** the posterior on any gate's real
 seasons; re-running the record is #358's and #311's work joined.
+
+## Amended 2026-10-18, before any real fit: two findings from the checks above, and one engine fix
+
+Written the same day, after the tests in *Rule 16 before the first real read* ran on synthetic
+data and before the posterior was fitted to any gate's real seasons. The design above is not
+edited; this records what the checks returned and the one change the engine needed.
+
+**1. The costly tier's null size fails under heterogeneity (check 2). This reopens `P_COSTLY`,
+which is the maintainer's.** At `tau = 0` every cell passes. At the heterogeneity `S_REF`
+implies (`tau = √(S_REF² − se²)`, the cells with `S_REF/se` = 1.5 and 2), the 0.9 bar's null
+ADOPT rate is **7.3–9.7%** and its REMOVE rate **7.2–10.0%** across k = 3–6, against a bar of
+`ALPHA + 2 MC SE` = 5.7% at 4,000 trials. Not loosened: the test is split into its passing
+half (`test_the_posterior_rule_s_null_size_is_controlled`, τ = 0) and the failing half, held as
+a **strict** `xfail` (`..._under_heterogeneity`) that names this finding, so a change of bar
+that fixes it fails the suite until the marker comes off. For the decision, from the same
+harness (8,000 trials a cell, worst cell k = 6, `S_REF/se` = 2): the null ADOPT rate is 10.1% at
+0.9, 7.2% at 0.925, **4.7% at 0.95**, 2.3% at 0.975; power at a 3-pooled-SE effect (τ = 0, k = 4)
+is 0.87, 0.80, **0.68**, 0.42.
+
+**2. A consistent effect's `P(delta > 0)` saturates below one.** Under `N(0, S_REF)` and
+`HalfNormal(S_REF)`, k gains of *any* size, all equal, read at most **0.9585 at k = 3, 0.9774 at
+k = 4, 0.9874 at k = 5, 0.9929 at k = 6**: the model puts the excess in `tau` (every season
+drawn high by chance) rather than in `delta`, whose normal prior has the lighter tail. Pinned
+by `test_a_consistent_effect_saturates_below_certainty`. It bounds finding 1's remedy: a costly
+bar at or above 0.9585 can never ADOPT a k = 3 gate (injury_type, component_calibration,
+injury_retention), so 0.975 is excluded for them by construction and 0.95 clears it by 0.0085.
+It also means the posterior *mean* of a large real effect sits near 2 `S_REF` however large the
+effect — td_dispersion's measured gain is about 8 `S_REF` — which is what this prior says and
+is printed, not adjusted.
+
+**3. Engine fix: the `tau` grid's upper end follows the data.** The pre-registered grid ended at
+`8 × tau_scale`. Finding 2's mechanism puts the posterior on `tau` far past that when the gains
+conflict with the prior: at gains of `100 × S_REF` (k = 4, `se = S_REF`) the truncated grid
+read a pooled mean of 5.8 where the integral is 2.02. Each fit's grid now ends at `8 ×
+max(tau_scale, max|gain| + max se)`, with nodes spaced as `u²` (dense near zero, where the prior's
+shape lives) and the Jacobian in the weights; `test_the_tau_grid_does_not_truncate_a_conflicting_posterior`
+holds the answer equal to one on a grid eight times as far at eight times the nodes, at 20, 100
+and 1000 `S_REF`. At every gain inside `20 × S_REF` the two grids agree to 1e-4, so no check
+above depended on it.
+
+**4. The digest moves, and no price does.** Declaring the five constants `chosen` moves
+`fitted_digest` `9f2d0b0c` → `58da3a91` and `config_digest` `839ceda9` → `f7aaf995` (re-pinned in
+`tests/unit/test_config.py` with the record). No prediction reads them. But `config_digest` is
+in every ledger key, so **each gate's next run starts a new width-history series**, and every
+prediction row carries a new version string. That is the cost of `chosen` over `not_an_input`
+(the declaration `ALPHA`, `POWER` and `FDR_Q` carry, for "nothing here predicts"); it is named
+here for the maintainer rather than chosen silently.
