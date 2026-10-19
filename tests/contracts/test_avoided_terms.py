@@ -42,6 +42,7 @@ a test holds it to that: the only honest count is the one the dict computes.
 """
 from __future__ import annotations
 
+import functools
 import inspect
 import re
 from dataclasses import dataclass, field
@@ -519,8 +520,17 @@ def scan_names(paths: tuple[Path, ...] = NAME_ROOTS,
 
 
 def _all_hits() -> list[Hit]:
-    """Both halves: the scanned files read whole, and `tests/` read for its names."""
-    return scan() + scan_names()
+    """Both halves: the scanned files read whole, and `tests/` read for its names.
+
+    Read once a session and handed out as a fresh list (#514): the two tests that read it ask
+    different questions of the same tree, and the scan is a full read of `src/`, `site/js/`
+    and `tests/` -- the bulk of this module's time when it ran twice."""
+    return list(_all_hits_once())
+
+
+@functools.cache
+def _all_hits_once() -> tuple[Hit, ...]:
+    return (*scan(), *scan_names())
 
 
 # --- what is outstanding, and why ---------------------------------------------
