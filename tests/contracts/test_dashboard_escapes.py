@@ -1138,15 +1138,21 @@ def _plant(node: str, tmp_path: Path, name: str, rel: str, old: str, new: str) -
     return _mutant_site(tmp_path / name, {rel: mutant})
 
 
-def _run_module_against(page: Path, selectors: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
+def _run_module_against(page: Path, selectors: tuple[str, ...] = (), *,
+                        first_failure: bool = False) -> subprocess.CompletedProcess:
     """Run the page's tests against the page at `page`.
 
     `selectors` are a guard's own, relative to `tests/`; with none given the whole module runs,
     which is what the pair of tests below that prove the child is reading the mutant want.
+    `first_failure` is `-x`, for a caller whose evidence is *a* failure (#514): the Python
+    harness has always stopped there. It can only make the reading stricter: an error ahead of
+    the first failure now ends the run as the harness error it is, rather than being outvoted
+    by a failure further down.
     """
     args = selector_args(selectors, TESTS) if selectors else [str(Path(__file__).resolve())]
     return subprocess.run(
-        [sys.executable, "-m", "pytest", *args, "--tb=no", *CHILD_FLAGS],
+        [sys.executable, "-m", "pytest", *args, *(["-x"] if first_failure else []), "--tb=no",
+         *CHILD_FLAGS],
         cwd=ROOT, capture_output=True, text=True, timeout=600,
         env={**os.environ, "HUB_DASHBOARD_PAGE": str(page), "HUB_DASHBOARD_MUTANT": "1"},
     )
@@ -1155,6 +1161,20 @@ def _run_module_against(page: Path, selectors: tuple[str, ...] = ()) -> subproce
 def _failed(got: subprocess.CompletedProcess) -> set[str]:
     """The test names the child reported as failures -- not errors, which prove nothing."""
     return set(outcome(got).failed)
+
+
+def _only(test: str) -> tuple[str, ...]:
+    """The selector for one test of this module, for a planted failure that asks whether *that*
+    test goes red on a mutant (#514).
+
+    Every `assert expected in _failed(got)` below asks exactly that, and the answer does not
+    depend on the other ~150 tests the whole-module child also ran -- each renders its own page
+    in its own node process. One test is about a second of child; the whole module was fifteen,
+    once per mutant, and that was most of this file's five minutes. The two runs that do need the
+    whole module -- the green control, and the forgetful page whose failures must be the scan
+    *and nothing else* -- still run it. A name that stops resolving selects nothing, the child
+    reports no failure, and the assertion goes red rather than passing quietly."""
+    return (f"{Path(__file__).parent.name}/{Path(__file__).name}::{test}",)
 
 
 # --- the harness's own premise -----------------------------------------------
@@ -1271,7 +1291,8 @@ def test_a_table_that_stops_escaping_its_cells_is_caught(node, tmp_path):
         "mutating nothing. Re-point it at whatever `table` escapes with now.")
     assert _parses(node, unwrapped).returncode == 0
 
-    got = _run_module_against(_mutant_site(tmp_path, {"js/table.js": unwrapped}))
+    got = _run_module_against(_mutant_site(tmp_path, {"js/table.js": unwrapped}),
+                              _only("test_the_table_escapes_every_cell_without_being_asked"))
     assert got.returncode != 0, (
         f"`table` stopped escaping its cells and every test still passed.\n{got.stdout}")
     assert "test_the_table_escapes_every_cell_without_being_asked" in _failed(got), (
@@ -1301,7 +1322,8 @@ def test_removing_a_guard_turns_the_pages_tests_red(guard, node, tmp_path):
                     f"alone -- as written, a red run would prove nothing.")
 
     rel = guard.path.relative_to(SITE).as_posix()
-    got = outcome(_run_module_against(_mutant_site(tmp_path, {rel: mutant}), guard.selectors))
+    got = outcome(_run_module_against(_mutant_site(tmp_path, {rel: mutant}), guard.selectors,
+                                      first_failure=True))
     if got.errors and not got.failed:                   # pragma: no cover - harness error
         pytest.fail(
             f"removing guard {guard.name!r} made the child red without a test failing, which "
@@ -1338,7 +1360,7 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
          "export const frozenPreds = new Map();",
          "test_the_frozen_predictions_live_in_one_module_level_map_nothing_can_replace"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1540,7 +1562,7 @@ def test_a_page_with_the_zones_wrong_turns_the_contract_red(name, expected, node
     assert mutant != text, f"{name}: the mutation did not land"
     if rel.endswith(".js"):
         assert _parses(node, mutant).returncode == 0
-    got = _run_module_against(_mutant_site(tmp_path / name, {rel: mutant}))
+    got = _run_module_against(_mutant_site(tmp_path / name, {rel: mutant}), _only(expected))
     assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -1822,7 +1844,7 @@ def test_a_page_that_drops_an_artifact_or_hides_a_failure_turns_the_status_line_
         ("record-has-no-banner", "js/main.js", "stale: staleOf(trArt),", "",
          "test_a_stale_track_record_is_bannered_at_its_panel"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2006,9 +2028,10 @@ def test_a_page_where_the_call_is_not_first_or_a_name_is_bare_turns_the_lineup_r
     ]:
         if name == "call-not-first":
             assert new != old, f"{name}: the mutation did not land"
-            got = _run_module_against(_mutant_site(tmp_path / name, {rel: new}))
+            got = _run_module_against(_mutant_site(tmp_path / name, {rel: new}),
+                                      _only(expected))
         else:
-            got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
+            got = _run_module_against(_plant(node, tmp_path, name, rel, old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2148,7 +2171,8 @@ def test_a_page_that_diffs_against_a_stale_prior_or_renders_a_stale_line_as_curr
          "const named = ns => ns.join(\", \");",
          "test_a_changed_swap_since_the_last_regen_is_shown"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/lineup.js", old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/lineup.js", old, new),
+                                  _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2176,7 +2200,8 @@ def test_a_page_whose_footer_is_unguarded_loses_its_panels(node, tmp_path):
     assert inner in block
     mutant = text[:start] + inner + text[end:]
     assert _parses(node, mutant).returncode == 0
-    got = _run_module_against(_mutant_site(tmp_path / "unguarded", {"js/main.js": mutant}))
+    got = _run_module_against(_mutant_site(tmp_path / "unguarded", {"js/main.js": mutant}),
+                              _only("test_a_status_record_that_throws_costs_the_footer_and_nothing_else"))
     assert "test_a_status_record_that_throws_costs_the_footer_and_nothing_else" in _failed(got)
 
 
@@ -2391,7 +2416,8 @@ def test_a_page_that_types_a_figure_or_ignores_the_window_turns_the_statement_re
         ("empty-when-absent", "html: `<p>${esc(failureWarn(art,", "html: `${esc(failureWarn(art,",
          "test_an_absent_record_fills_the_slot_with_a_standing_reason"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/statement.js", old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, "js/panels/statement.js", old, new),
+                                  _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2503,7 +2529,7 @@ def test_a_page_that_loses_its_modules_turns_the_module_contracts_red(node, tmp_
          "document.getElementById('boot-status');\nexport const cap",
          "test_the_notice_ships_visible_and_only_start_hides_it"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, rel, old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
 
 
@@ -2543,5 +2569,5 @@ def test_a_page_that_ignores_the_manifests_weeks_turns_the_archive_red(node, tmp
         ("own-list", "man.weeks.filter(", '[{ name: "preds_1999_wk01" }, ...man.weeks].filter(',
          "test_every_week_the_committed_manifest_lists_is_a_file_that_is_committed"),
     ]:
-        got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new))
+        got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
