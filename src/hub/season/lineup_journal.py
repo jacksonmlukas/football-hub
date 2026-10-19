@@ -9,6 +9,11 @@ record" is what reopens that. So three sources are written down every week, side
             capture (`hub.fetch.consensus`; a capture taken at or after the deadline is not read).
 - `espn` -- the best lineup by ESPN's own projection for the scoring period.
 
+Beside them, `rule` records what was actually published that week (`hub.season.lineup_rule`):
+`mu` through week 7, weekly ECR from week 8 as a provisional rule, the capture week it was set
+on, and the reason whenever that was not the week's own ECR. Once scored, `realised.set` is
+that lineup's points.
+
 All three choose from the same pool `lock` does (a projected, startable, available player), so a
 difference between lineups is a difference in *source*, not in who was eligible. Once the week is
 scored, each lineup's realised PPR points are written beside it.
@@ -238,10 +243,18 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     espn, espn_reason = espn_weekly(df)
     got = lineups(df, ecr, ecr_reason, espn, espn_reason)
     sets = [tuple(v["lineup"]) for v in got.values() if v["lineup"]]
+    # What was actually published (#492, ADR-0014's "what was actually done"): the rule the
+    # week fell under, the source that set it, why if it was not the week's own ECR, and the
+    # lineup itself -- the same `lineup_rule.decide` the publisher calls, on the same capture.
+    from hub.season import lineup_rule
+    set_lock, decision = lineup_rule.decide(df, season, wk, captures, ecr=ecr,
+                                            ecr_reason=ecr_reason)
+    rule = {**decision.as_dict(), "lineup": sorted(set_lock.best_lineup) or None}
     doc = {
         "season": season, "week": wk,
         "recorded_at": (now or datetime.now(UTC)).astimezone(UTC).isoformat(),
         "sources": got,
+        "rule": rule,
         # More than one distinct lineup among the sources that answered.
         "disagree": len(set(sets)) > 1,
         "scored": False,
@@ -284,6 +297,13 @@ def settle(season: int, week: int, points: Mapping[str, float],
         ks = [player_key(n) for n in lineup]
         realised[s] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
                        "n_no_row": sum(1 for k in ks if k not in points)}
+    # The lineup the rule set, scored beside the three sources (an entry from before #492's
+    # switch carries no `rule` and gains no `set`).
+    set_lineup = (doc.get("rule") or {}).get("lineup")
+    if set_lineup:
+        ks = [player_key(n) for n in set_lineup]
+        realised["set"] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
+                           "n_no_row": sum(1 for k in ks if k not in points)}
     doc["realised"], doc["scored"] = realised, True
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return f"week {week}: scored"

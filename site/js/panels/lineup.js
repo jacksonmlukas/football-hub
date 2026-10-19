@@ -73,6 +73,24 @@ export function lineupChanges(ros, stale, byName) {
   return wrap(cls, said + stamp);
 }
 
+// What set the lineup (#492): the model's `mu` through week 7, weekly consensus rank (ECR) from
+// week 8 as a provisional rule (ADR-0014), which is labelled so wherever it is shown and never
+// called an edge. A reason -- the week's capture missing, served last-good, or a fall back to
+// `mu` -- renders in the unconfirmed state. An artifact from before the switch shipped carries
+// no `lineup_rule` and nothing is said.
+export function ruleNote(rule) {
+  if (!rule || typeof rule !== "object") return "";
+  const from = rule.ecr_week != null && rule.ecr_week !== rule.week
+    ? ` (week ${esc(String(rule.ecr_week))}'s capture)` : "";
+  const said = rule.source === "ecr"
+    ? `Lineup set by weekly consensus rank (ECR)${from}: a provisional rule (ADR-0014) from week
+         ${esc(String(rule.ecr_from_week ?? ""))}, not a measured edge; journalled so its forward
+         record can reopen it.`
+    : `Lineup set by the model's projection (mu).`;
+  const why = rule.reason ? `<p class="${STATE.unconfirmed}">${esc(rule.reason)}.</p>` : "";
+  return `<p class="legend lineup-rule">${said}</p>` + why;
+}
+
 // The lineup call, kept apart from the DOM so a test can import it: the gain at display
 // size, the two totals under it, who was withheld, then the swaps and the caveat. A gain under
 // the threshold and a null gain each say so in the same slot -- the headline never blanks.
@@ -82,8 +100,14 @@ export function lineupHeadline(ros, stale) {
   const byName = new Map(rows.map(r => [r.player, r]));
   const gain = ros?.gain;
   const changed = lineupChanges(ros, stale, byName);
+  // Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and
+  // says only what the model makes of the consensus lineup, so it may be negative.
+  const byRank = ros?.lineup_rule?.source === "ecr";
+  const note = ruleNote(ros?.lineup_rule);
   const totals = (gain != null && ros.set_total != null && ros.optimal_total != null)
-    ? `<p class="lineup-totals">set lineup ${fmt(ros.set_total, 1)} &rarr; best available ${fmt(ros.optimal_total, 1)}</p>`
+    ? (byRank
+      ? `<p class="lineup-totals">mu projects set lineup ${fmt(ros.set_total, 1)} &rarr; consensus lineup ${fmt(ros.optimal_total, 1)}</p>`
+      : `<p class="lineup-totals">set lineup ${fmt(ros.set_total, 1)} &rarr; best available ${fmt(ros.optimal_total, 1)}</p>`)
     : "";
   // Withheld players come before the swaps: the recommendation is only trustworthy if the
   // reader can see who was taken out of it. The unconfirmed state, as a chip's worth of prose.
@@ -94,16 +118,26 @@ export function lineupHeadline(ros, stale) {
          of a full slate. They are excluded from the lineup below.</p>`
     : "";
   if (gain == null) {
-    return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip;
-  }
-  if (!(gain > 0.05)) {
-    return `<p class="lineup-call">The set lineup is already the best available one.</p>` + changed + totals + chip;
+    return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip + note;
   }
   const side = n => n == null ? "&mdash;" : whoIs(n, byName);
-  const swaps = pairSwaps(ros.sit ?? [], ros.start ?? [], byName)
+  const pairs = pairSwaps(ros.sit ?? [], ros.start ?? [], byName);
+  const swaps = pairs
     .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
+  if (byRank) {
+    if (!pairs.length) {
+      return `<p class="lineup-call">The set lineup is already the consensus lineup.</p>` + changed + totals + chip + note;
+    }
+    return `<p class="lineup-call">Consensus rank calls ${pairs.length} swap${pairs.length === 1 ? "" : "s"}.</p>`
+      + changed + totals + chip + `<ul class="swaps">${swaps}</ul>`
+      + `<p class="legend">Consensus ranks are captured before the week's first game and do not know
+         who is hurt since, so settle it at lock.</p>` + note;
+  }
+  if (!(gain > 0.05)) {
+    return `<p class="lineup-call">The set lineup is already the best available one.</p>` + changed + totals + chip + note;
+  }
   return `<div class="lineup-gain">+${fmt(gain, 1)}<span class="unit"> pts a week</span></div>`
     + changed + totals + chip + `<ul class="swaps">${swaps}</ul>`
     + `<p class="legend">These projections are season-long and do not know who is hurt this week,
-         so settle it at lock.</p>`;
+         so settle it at lock.</p>` + note;
 }

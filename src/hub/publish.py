@@ -41,7 +41,7 @@ from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
-from hub.season.roster import degenerate, lock, withheld_reason
+from hub.season.roster import degenerate, withheld_reason
 
 if TYPE_CHECKING:
     # Typing only. `survivor` imports the real module locally, the way every other
@@ -965,7 +965,15 @@ def roster(out: Path | None = None,
     # `test_publish.py` stay green. An empty frame falls through to `_publish`, which is the
     # one place this rule is meant to live; `hub.season.roster.write` refuses to create the
     # empty parquet in the first place.
-    lk = lock(df)
+    # Which source sets the lineup this week (#492): `mu` through week 7, weekly consensus rank
+    # from week 8 as a provisional rule (ADR-0014), read off the roster's own scoring period so
+    # a replayed week publishes the lineup it published then. Never raises: a missing capture
+    # is served last-good, or falls back to `mu`, and `lineup_rule` says which and why.
+    from hub.names import player_key
+    from hub.season import lineup_journal, lineup_rule
+    wk = lineup_journal.roster_week(df)
+    ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
+    lk, rule = lineup_rule.decide(df, SEASON_AHEAD, wk, ecr=ecr_by_key, ecr_reason=ecr_reason)
     # The lock's own lineup, read rather than rebuilt. This used to reconstruct it from the
     # two deltas -- the set starters, less those to sit, plus those to start -- which agrees
     # with the lock wherever it priced a comparison and says nothing at all where it did not.
@@ -979,10 +987,6 @@ def roster(out: Path | None = None,
 
     # The other two sources beside `mu` (#492): weekly consensus rank and ESPN's projection for
     # the scoring period. Null with a reason, never zero, when either is missing.
-    from hub.names import player_key
-    from hub.season import lineup_journal
-    wk = lineup_journal.roster_week(df)
-    ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
     _, espn_reason = lineup_journal.espn_weekly(df)
 
     # The weekly distribution, the swaps and who is unprojected (#479): read off the same
@@ -1025,6 +1029,10 @@ def roster(out: Path | None = None,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench,
                         week=wk, ecr_reason=ecr_reason, espn_week_reason=espn_reason,
+                        # What set `start`/`sit`/`best_start` this week and why (#492): `mu` or
+                        # weekly ECR, labelled `provisional` when ECR (ADR-0014), with the reason
+                        # whenever it is not the week's own ECR. `gain` stays in `mu` points.
+                        lineup_rule=rule.as_dict(),
                         # Why each withheld player is: "bye", "on injured reserve", or ESPN's
                         # missed-games projection (#490). Beside `withheld`, not inside it, so
                         # readers of the list of names are unchanged.

@@ -65,6 +65,12 @@ CONDITIONAL: dict[str, dict[str, str]] = {
         "buyback_open": "written only once the entry is out",
         "buyback_cutoff_week": "written only once the entry is out",
     },
+    "roster": {
+        # Written by every publish from #492's rule switch on; the committed roster.json was
+        # published before it, and the page says nothing about the rule when it is absent.
+        # Remove this entry once the committed file carries it.
+        "lineup_rule": "written from the #492 rule switch on; the committed file predates it",
+    },
 }
 
 
