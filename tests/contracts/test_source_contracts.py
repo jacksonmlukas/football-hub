@@ -39,6 +39,7 @@ from hub.contracts import (
     CFBD_GAMES,
     CFBD_LINES,
     DEPTH_CHARTS,
+    ESPN_FREE_AGENTS,
     ESPN_SCOREBOARD,
     FF_OPPORTUNITY,
     FF_RANKINGS,
@@ -355,6 +356,34 @@ def test_cfbd_games_contract_holds_on_the_documented_shape():
 
 def test_cfbd_lines_contract_holds_on_the_documented_shape():
     assert CFBD_LINES.validate(frame("cfbd_lines.synthetic.json")).height == 1
+
+
+def _free_agent_frame() -> pl.DataFrame:
+    from hub.fetch.espn import FREE_AGENT_SCHEMA
+    return pl.DataFrame(load("espn_free_agents.synthetic.json"), schema=FREE_AGENT_SCHEMA)
+
+
+def test_espn_free_agents_contract_holds_on_the_hand_built_pool():
+    """Five rows in the frame `free_agent_rows` returns: two skill players, a tight end ESPN
+    did not project (0.0 and a null week, which the contract admits and the ranker reads as no
+    projection), a kicker and a defence with ESPN's -1 for no ownership figure (#493)."""
+    from hub.fetch.espn import FREE_AGENT_SCHEMA
+    df = pl.DataFrame(load("espn_free_agents.synthetic.json"), schema=FREE_AGENT_SCHEMA)
+    got = ESPN_FREE_AGENTS.validate(df)
+    assert got.height == 5 and set(got["pos"]) == {"RB", "WR", "TE", "K", "D/ST"}
+    assert got["espn_week_proj"].null_count() == 1
+
+
+@pytest.mark.parametrize("plant", [
+    lambda d: pl.concat([d, d.head(1)]),                                    # a duplicate id
+    lambda d: d.drop("espn_total"),                                         # a renamed column
+    lambda d: d.with_columns(pl.lit(float("nan")).alias("espn_avg")),       # a NaN
+    lambda d: d.with_columns(pl.lit(900.0).alias("espn_avg")),              # out of range
+    lambda d: d.with_columns(pl.col("espn_id").cast(pl.Utf8)),              # a retype
+])
+def test_espn_free_agents_contract_refuses_each_planted_break(plant):
+    with pytest.raises(ContractViolation):
+        ESPN_FREE_AGENTS.validate(plant(_free_agent_frame()))
 
 
 def test_bigten_captures_contract_holds_on_the_hand_built_index():

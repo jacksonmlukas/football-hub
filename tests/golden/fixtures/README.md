@@ -46,6 +46,7 @@ sentence stop agreeing.
 | `cfbd_games.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `cfbd_lines.synthetic.json` | **Hand-built** from CFBD's documented response shape |
 | `odds_spreads.synthetic.json` | **Hand-built** from The Odds API's documented response shape |
+| `espn_free_agents.synthetic.json` | **Hand-built** rows in the frame `hub.fetch.espn.free_agent_rows` returns, from `espn_api`'s Player attributes: the league needs the user's cookie, so no capture of the pool is committed (#493) |
 | `bigten_captures.synthetic.json` | **Hand-built** index of `hub.fetch.bigten`'s own archive: the 2026 page held no report on 2026-09-11, so nothing existed to capture — see below |
 | `bigten_page_sidearm.html` | **Captured** 2026-10-16, the availability-reports page as served since 2026-10-07 (archive page `4814b76d3a0e98c2`), trimmed to its article; a tracking token is redacted — see below |
 | `bigten_page_nextdata.synthetic.html` | **Hand-built** page of the earlier Next.js `__NEXT_DATA__` shape; the archive holds none (#499) |

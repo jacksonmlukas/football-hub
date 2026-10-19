@@ -922,8 +922,24 @@ def _previous_decision(dest: Path, stamp: str) -> dict[str, Any] | None:
 def _roster_stream(df: pl.DataFrame) -> dict[str, Any]:
     """The K / D/ST streaming heuristic for the roster artifact; a seam for tests, which
     must not reach the schedule's network source."""
+    from hub.fetch import free_agents
     from hub.season import stream as stream_mod
-    return stream_mod.for_roster(df, SEASON_AHEAD)
+    try:
+        pool, meta = free_agents.read()      # last-good, never fetched: availability (#493)
+    except Exception:  # an unreadable pool is no pool: the ranking still publishes
+        pool, meta = None, {}
+    return stream_mod.for_roster(df, SEASON_AHEAD, free_agents=pool, pool_meta=meta)
+
+
+def _roster_waiver(df: pl.DataFrame) -> dict[str, Any]:
+    """The waiver ranking for the roster artifact (#493); a seam for tests, which must not
+    reach the schedule's network source or the snap counts. Reads the last-good free-agent
+    pool from disk and never fetches."""
+    from hub.season import waiver as waiver_mod
+    try:
+        return waiver_mod.for_roster(df, SEASON_AHEAD)
+    except Exception as e:  # unattended: say which failure, never raise
+        return waiver_mod.unavailable(f"the ranking could not be built ({type(e).__name__})")
 
 
 def roster(out: Path | None = None,
@@ -1028,7 +1044,12 @@ def roster(out: Path | None = None,
                         # betting market's implied totals, labelled as one and never a
                         # measured edge (ADR-0014). Null-with-reason where the schedule or
                         # the odds are absent.
-                        stream=_roster_stream(df))
+                        stream=_roster_stream(df),
+                        # Which free agents beat the player they would replace (#493): a
+                        # provisional rule (ADR-0014) on ESPN's unshrunk projection, with the
+                        # snap trend and weekly ECR shown beside and never sorted on. Last-good
+                        # pool, labelled; a missing pool is `missing` with the command to run.
+                        waiver=_roster_waiver(df))
     # The new fields' own contract (#479): a malformed one is a stale call with the reason,
     # served as last-good, like every other call the lock cannot stand behind.
     from hub.contracts import ContractViolation, check_roster_artifact
