@@ -801,14 +801,14 @@ reachable one. The interval excludes a gain above about 0.0013 nats a game, a qu
 | `increment`, what the total adds over `scale_only` | **-0.00027** | [-0.00056, +0.00002] | 8 of 22 |
 
 * **What the challenger gains is in the level, not the total.** `scale_only` reproduces #465's
-  post hoc figure (+0.0006, 14 of 22) on the same seasons; the fitted level runs 11.1 to 13.3
-  and sits below 12.741 in every season since 2011. That arm was not gated and is not gated
+  post hoc figure (+0.0006, 14 of 22) on the same seasons; the challenger's fitted `sd0` runs 11.1 to 13.3
+  and sits below 12.741 in every fit from 2008 on. That arm was not gated and is not gated
   here (rule 1: it was already looked at), so this is a pointer for `margin.verdict`'s own
   offseason re-decision of `MARGIN_SD` under the house rule, not a finding.
 * **The total dependence does not carry out of sample, and points the other way.** Adding the
   total costs 0.00027 nats a game, lower in 14 of 22 seasons, its interval just reaching zero.
-  The fitted β swings from +0.46 to -0.49 between neighbouring windows and is negative in the
-  last eleven fits but two; the last fit (2016-2025) is `sd0 = 11.24` at a total of 44,
+  The fitted β swings from +0.46 to -0.49 between neighbouring windows and is negative in
+  eight of the last eleven fits; the last fit (2016-2025) is `sd0 = 11.24` at a total of 44,
   **β = -0.38**, a *narrower* sd at higher totals, the opposite of variance growing with
   scoring. Descriptive only: a β that changes sign between overlapping ten-season windows is
   noise around zero more than a reversal.
