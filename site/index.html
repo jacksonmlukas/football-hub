@@ -15,6 +15,25 @@
   CLAUDE.md asks for last-good state over errors, so nothing here throws on a bad fetch.
 -->
 <style>
+  /* Self-hosted type (ADR-0026, #477). Same-origin WOFF2 under site/fonts/, Latin subset, SIL OFL
+     licences beside them. `swap` plus the system fallbacks mean a failed load never blanks text.
+     Only declared here: nothing below uses these faces yet, the visual system that does is #478,
+     and a face nothing references is never fetched. */
+  @font-face { font-family: "Big Shoulders Display"; font-weight: 700; font-style: normal;
+               font-display: swap; src: url("fonts/BigShouldersDisplay-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 400; font-style: normal;
+               font-display: swap; src: url("fonts/Geist-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 500; font-style: normal;
+               font-display: swap; src: url("fonts/Geist-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 600; font-style: normal;
+               font-display: swap; src: url("fonts/Geist-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "Geist Mono"; font-weight: 400; font-style: normal;
+               font-display: swap; src: url("fonts/GeistMono-Regular.woff2") format("woff2"); }
+  :root {
+    --font-display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --font-text: "Geist", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
   :root {
     --bg: #fbfbfa; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
     --card: #fff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
