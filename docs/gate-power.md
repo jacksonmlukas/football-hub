@@ -3867,6 +3867,8 @@ that form is a new ADR-0024 decision, not an amendment to this section.
 
 # Pre-registered 2026-09-21 — PROPOSED: the posterior gate (#375)
 
+**Superseded in part 2026-10-18** — the prior scale, the engine and the single-threshold decision rule; see `# Pre-registered 2026-10-18 — ADOPTED: the posterior gate's constants, decision rule and engine (#375)` at the end of this document. The text below is kept as written.
+
 **Status: PROPOSED.** Drafted under the operate-mode freeze (#326), which blocks a modelling
 change *landing* and not writing the rule before the number — #329, #305 and #364 (above) are
 the precedent. It becomes the rule on a maintainer `ADOPTED:` comment on this section; until
@@ -4942,3 +4944,192 @@ today's. **The verdict word does not change (REMOVE), the ceiling does not chang
 per-season se (3.3); no mechanism for the direction was traced. Not acted on. The 0.5 and 1.5 rows of `docs/pick-noise.md` were not re-run and
 carry the same 2025 caveat. The ledger entry `state/gate-width.json` is not changed by this
 restatement; the run's `state/inputs` record was not kept (dirty tree, unpinned data).
+
+---
+
+# Pre-registered 2026-10-18 — ADOPTED: the posterior gate's constants, decision rule and engine (#375)
+
+**Written and committed before any code that reads it exists, and before the posterior has been
+fitted to any gate's real seasons.** The commit adding this section changes nothing under
+`src/` or `tests/`; the module, the tests and the checks below land in later commits, and the
+design here is not edited after them. **Status: ADOPTED 2026-10-18** by the maintainer in
+session, on the draft brought to them under the 2026-10-16 decision on #375 (the session drafts
+`prior_sd`, `tau_scale` and the switching cost, each with its reasoning, and brings them for
+approval *before* they are pre-registered or declared): "ADOPTED as drafted: prior_sd = tau_scale
+= s_ref frozen per gate from the latest ledger entry; two-tier decision (reversible E[gain]>0,
+costly P(δ>0)>0.9); sensitivity under s_ref/2 and s_ref/4; numpy quadrature engine", and, on
+the three points the draft named as needing an explicit yes, "your recs".
+
+> *Recorded by AI, 2026-10-18, at the maintainer's instruction in session. The disposition is the maintainer's.*
+
+## What this supersedes in the 2026-09-21 section, and what it keeps
+
+That section (above, `# Pre-registered 2026-09-21 — PROPOSED: the posterior gate (#375)`) is
+kept as written. **Superseded by name:**
+
+1. **The prior scale** — its candidate 1(a), `prior_sd = s/√k`, `tau_scale = s`, ADOPTED on
+   #375 on 2026-09-21. The 2026-10-16 prediction review's first note (the prior reuses the
+   data) is the reason; the replacement is below.
+2. **The engine** — its candidate 3, NumPyro via the `bayes` extra, ADOPTED the same day.
+   Replaced by numpy quadrature (below), because a gate built on an optional extra has no
+   posterior in the default environment every worktree and CI job runs in.
+3. **The single-threshold decision rule** `E[utility] > switching_cost` with
+   `switching_cost = chosen(0.0)` for every gate, and **the null-size check's scope.** At zero
+   cost the posterior mean's sign is the sample mean's sign under any prior centred at zero, so
+   the null ADOPT rate is 1/2 by construction and the `ALPHA` size check that section
+   pre-registered could not pass. The two-tier rule below puts the size check on the tier it
+   can bind and a regret check on the other.
+
+**Kept unchanged:** the hierarchical normal model's form; `NOT-RUNNABLE` (S6) and `VOID` ahead
+of everything; the transition (the posterior is printed *beside* the verdict word, never
+instead of it, until a dated decision retires the word after the record is re-run under #358
+and #311); the ceiling arm per gate; the exclusions; "what published number moves" (none,
+until the transition ends); the sequencing.
+
+## The model and its likelihood
+
+```
+gain_s  ~ Normal(delta_s, se_s)    # s = 1..k, the gate's own held-out seasons
+delta_s ~ Normal(delta, tau)
+delta   ~ Normal(0, prior_sd)
+tau     ~ HalfNormal(tau_scale)
+```
+
+`gain_s` and `se_s` are `per_season`'s own `gain` and `se` columns: the season's mean paired
+difference and its within-season bootstrap SE over the gate's declared `within` unit (#335).
+That is the 2026-10-16 review's second note — the within-season evidence is the likelihood,
+not a bootstrap over k season means. **A season with a non-finite or non-positive `se` makes
+the posterior not computed, named on the line**, never imputed: a gate whose `within` unit is
+a declared no-op (one cluster per season) has no within-season noise to put in a likelihood,
+and inventing one is a choice this section does not make.
+
+## The constants (all `chosen`, in `hub.models.posterior`)
+
+**`S_REF`: one frozen number per gate, `prior_sd = tau_scale = S_REF[gate]`.** `S_REF[gate]` is
+the sample standard deviation (ddof = 1) of the season gains stored in that gate's **latest
+entry in `state/gate-width.json` as of this commit** (base `d819fb9`). Frozen: no run
+recomputes it, so a run's prior does not move with the data that run fits. **It is named for
+what it is:** data-informed — it was measured on earlier runs over the same seasons the
+posterior will read, so it is not independent of them — but it takes neither its location
+(zero) nor its scale from the *effect estimate* it will judge, which is the 2026-09-21
+adoption's own line. Its scale is the gate's season-to-season scatter, which contains both
+the within-season noise and any real heterogeneity; at k = 4 it is twice the pooled SE.
+
+| gate | unit | k | `S_REF` | latest entry |
+|---|---|---|---|---|
+| draft | points per team game | 4 | 4.54 | 2026-10-07 |
+| weekly | points per team week | 4 | 0.648 | 2026-10-06 |
+| interval_shape | CRPS points per player-week | 5 | 0.00808 | 2026-10-07 |
+| player_spread | MAE points of predicted weekly sd | 5 | 0.0302 | 2026-10-06 |
+| injury_type | MAE points per designated player-week | 3 | 0.0454 | 2026-10-07 |
+| component_calibration | points per game of MAE | 3 | 0.0706 | 2026-10-06 |
+| injury_retention | MAE points per designated player-week | 3 | 0.125 | 2026-10-07 |
+| favourite_longshot | nats of log loss per game | 22 | 0.00302 | 2026-10-09 |
+| state_space_rating | nats of log-loss per game | 26 | 0.0146 | 2026-10-15 |
+| td_dispersion | nats of held-out log score per player-week | 6 | 0.00155 | 2026-10-16 |
+
+Three numbers on this table disagree with figures the reader may have seen, and each is named
+rather than reconciled:
+
+- **The table shown to the maintainer in session** backed `s` out of each entry's interval
+  width with a t-quantile. The ledger's `lo`/`hi` are `summarise`'s percentile bootstrap, not a
+  t-interval, so that derivation understated `s` by about 1.3–2× on every gate but
+  td_dispersion (where it overstated it). The adopted rule reads `s` "from the latest ledger
+  entry"; the ledger stores the season gains themselves, so the values above are the rule's and
+  the session table's are superseded. **Flagged to the maintainer with this commit.**
+- **Draft:** #357's published `s = 7.34` predates #335; the latest ledger entry is the pre-#315
+  run (−11.02), not the 2026-10-09 restatement (−13.49) above, which was never written to the
+  ledger. The rule reads the ledger.
+- **Weekly:** 0.648 against the 2026-10-16 review's domain-scale suggestion of 0.5. Recorded,
+  not adjusted.
+
+**Gates with no `S_REF`, so no posterior is computed and the line says so:** `lineup`,
+`quarterback_gate`, `margin_shape`, `margin_width` (no ledger entry) and `lookahead_margin_sd`
+(its latest entry stores one season record, so no spread). `favourite_longshot` has an `S_REF`
+but every stored season's `se` is NaN (its `within` unit is a no-op), so by the likelihood rule
+above it is not computed either. Adding a gate to `S_REF` is a dated amendment here, by the same
+rule (the gate's then-latest ledger entry), made before that gate's posterior is first read.
+
+**`REVERSIBLE`: the gates whose action is a constant or refit swap inside a shipped module** —
+`td_dispersion` and `injury_type`. Every other gate is **costly**: its ADOPT replaces a
+shipped model or adds a dependency, and its REMOVE retires a shipped module to `hub.exhibits`.
+Moving a gate between tiers is a dated amendment here.
+
+**The switching cost**, per tier, in the gate's own units:
+
+- **Reversible: `chosen(0.0)`.** ADOPT when `E[delta | data] > 0`, REMOVE when `< 0`, SHOW at
+  exactly zero. Under #364's linear utility this is the expected-utility action at zero
+  friction; a wrong reversible switch is undone at the next run.
+- **Costly: a probability bar, `P_COSTLY = chosen(0.9)`.** ADOPT when `P(delta > 0 | data) >
+  0.9`, REMOVE when `P(delta > 0 | data) < 0.1`, SHOW between. This is the expected-utility
+  action under an asymmetric loss whose cost of a wrong switch is nine times the gain of a right
+  one, stated as the probability rather than as a number in each gate's units because that is
+  what keeps one rule across ten units. **#364's game-level case** reads this tier until its
+  dollar figure exists; that figure, in EV units, is the named successor to the 0.9.
+
+`VOID` and `NOT-RUNNABLE`, when the verdict word reads either, are the action too: the
+posterior's numbers are printed and its action is not.
+
+**Sensitivity: `SENSITIVITY = chosen((0.5, 0.25))`** — every computed posterior is refitted with
+`prior_sd = S_REF × 0.5` and `S_REF × 0.25` (`tau_scale` unchanged) and printed beside the
+primary. They decide nothing. An action that differs between the primary and either is printed
+**prior-sensitive**, and during the transition a prior-sensitive action is not published as
+settled. `s/4` is a hard skeptic: below about four pooled SEs it almost never crosses 0.9, and
+that is what it is for.
+
+**`CREDIBLE = chosen(0.95)`**, an equal-tailed interval.
+
+## The engine: numpy quadrature, no new dependency
+
+Given `tau`, `delta` is conjugate: `delta | tau, data` is normal with precision
+`1/prior_sd² + Σ 1/(tau² + se_s²)`, and the marginal likelihood of the gains given `tau` is a
+k-variate normal whose determinant and quadratic form close in O(k) by the matrix determinant
+lemma. So the posterior is a finite mixture of normals over a `tau` grid — 2,001 points on
+`[0, 8 × tau_scale]`, beyond which a `HalfNormal` holds under 1e-15 of its mass — and every
+reported number is exact up to that grid: the mean, `P(delta > 0)`, and the interval by
+bisection on the mixture CDF. numpy only (scipy is not a declared dependency; the normal CDF is
+`math.erf`, as `hub.models.margin` already does it), deterministic (so `gate` stays pure: two
+calls on one frame return one `GateRun`), and present in every environment. NumPyro, Stan and
+MCMC diagnostics are not needed for a two-parameter model with a one-dimensional
+non-conjugate part. The grid size is a numerical setting, not a prior, and is declared
+`not_an_input`.
+
+## Rule 16 before the first real read: calibration and size (tests, `tests/unit/test_posterior.py`)
+
+1. **Simulation-based calibration.** Draw `(delta, tau)` from the prior, `delta_s`, and `gain_s`
+   around `delta_s` at a fixed `se_s` profile; fit; record the posterior CDF at the true `delta`
+   and at the true `tau` (the PIT, the continuous form of the SBC rank). 1,000 replicates per
+   cell; pass when a Kolmogorov–Smirnov distance from uniform stays under its 1% critical value
+   (1.63/√n). Cells: k = 3, 4, 5 at `se_s = S_REF` (the season noise equal to the scatter), and
+   k = 10 at `se_s = S_REF / 4` (#364's game-level shape: more seasons, tighter seasons).
+   **Positive control (rule 18):** data drawn with `prior_sd = 4 × S_REF` and fitted at
+   `S_REF` must fail the same KS bar at k = 4.
+2. **Null size of the costly tier.** At `delta = 0`, 4,000 trials per cell, the realised ADOPT
+   rate must be `≤ ALPHA + 2 × its Monte Carlo SE` (and REMOVE, by symmetry, the same). Cells:
+   k ∈ {3, 4, 5, 6} × `S_REF / se_s` ∈ {1, 1.5, 2} (the gates above span 0.5–1.8) × `tau` ∈ {0,
+   √(S_REF² − se_s²)} (no heterogeneity, and all the heterogeneity the frozen scale implies).
+   **A cell that fails is a finding, not a test to loosen**: it reopens the costly tier's bar
+   (the 2026-09-21 section's "what would reopen this"), and the test records which cell.
+3. **The reversible tier's check is regret, not size.** Its null ADOPT rate is 1/2 by
+   construction and the test pins that as a property, not a defect. What it must show: with
+   `delta` drawn from the prior, the posterior-mean rule's expected regret (`max(delta, 0)` minus
+   the realised gain of the action) is no larger than the t-interval rule's (`ADOPT` only when
+   the 95% t-interval over the k gains excludes zero), at k = 3, 4, 5.
+4. **Positive controls for the action itself (rule 18):** a planted `delta = 20 × S_REF`
+   ADOPTs on ≥ 99% of trials in both tiers, and `−20 × S_REF` REMOVEs on ≥ 99%
+   (`test_a_planted_enormous_effect_always_adopts`; `test_the_posterior_rule_s_null_size_is_controlled`
+   is check 2).
+5. **Sensitivity is exercised:** a fixture whose primary action and `s/4` action differ prints
+   *prior-sensitive*; one where they agree does not.
+
+## What lands, and what does not
+
+`gate()` gains an optional `prior`; `run_gate` and `Harness.decide` look it up by the gate's
+name. `GateRun` gains `posterior` (absent when not computed); the rendered report gains the
+posterior block after the per-season table. **The verdict word, its rule, the ledger entry and
+every published number are unchanged** — this is the transition's first landing, additive.
+`hub.models.posterior` is imported by `hub.models.experiment` alone, which is
+`CLOSURE_EXEMPT` and not descended into, so no gate's arm closure, ledger code digest or the
+weekly forward pin (#456) moves. Declaring the new constants moves `fitted_digest` once, as
+every new `chosen` constant does. **Not run by this ticket:** the posterior on any gate's real
+seasons; re-running the record is #358's and #311's work joined.
