@@ -1150,6 +1150,26 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
                 if not ranked and not r.get("missing"):
                     problems.append(f"stream {kind} {r.get('team')}: unranked with no reason")
                 # /GUARD
+    rule = payload.get("lineup_rule")
+    if rule is not None:
+        # What set the lineup (#492): ECR is a provisional rule and is labelled so wherever it
+        # is shown (ADR-0014); a lineup not set by the week's own ECR under the ECR rule says why.
+        src = rule.get("source")
+        # GUARD lineup-rule-source-known [unit/test_lineup_rule.py]: mu or ecr, nothing else
+        if src not in ("mu", "ecr"):
+            problems.append(f"lineup_rule source is {src!r}, not 'mu' or 'ecr'")
+        # /GUARD
+        # GUARD lineup-rule-labelled [unit/test_lineup_rule.py]: ECR is `provisional` (ADR-0014)
+        if src in ("mu", "ecr") and rule.get("label") != ("provisional" if src == "ecr"
+                                                          else "model"):
+            problems.append(f"lineup_rule label is {rule.get('label')!r} for source {src!r}")
+        # /GUARD
+        stale_ecr = src == "ecr" and rule.get("ecr_week") != rule.get("week")
+        # GUARD lineup-rule-departure-explained [unit/test_lineup_rule.py]: a lineup not set by
+        # the week's own rule and capture says why
+        if (src != rule.get("rule") or stale_ecr) and not rule.get("reason"):
+            problems.append("lineup_rule departs from the week's own rule with no reason")
+        # /GUARD
     waiver = payload.get("waiver")
     if waiver is not None:
         # GUARD waiver-labelled [unit/test_waiver_roster.py]: a provisional rule on an unshrunk

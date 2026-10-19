@@ -178,10 +178,12 @@ def _published(tmp_path, df):
 
 
 def test_the_publisher_carries_quantiles_swaps_and_unprojected(tmp_path, monkeypatch):
+    from hub.season import lineup_rule
     from hub.season.roster import Lock
     # A thin fixture cannot field a legal lineup, so the lock's answer is planted: the swaps
-    # are the week-6 shape and the publisher's job is to carry them with their odds.
-    monkeypatch.setattr(publish, "lock", lambda df: Lock(
+    # are the week-6 shape and the publisher's job is to carry them with their odds. Planted
+    # where the publisher's lineup rule (#492) calls it.
+    monkeypatch.setattr(lineup_rule, "lock", lambda df, **kw: Lock(
         50.0, 60.0, 10.0, ["Denzel Boston", "Ja'Marr Chase"],
         ["Denzel Boston", "Ja'Marr Chase"], ["Bhayshul Tuten", "DJ Moore"], ["DJ Moore"]))
     df = pl.concat([WEEK6, _frame([("Kicker", "K", "CIN", None, None, False)])]).with_columns(

@@ -309,7 +309,8 @@ class Lock(NamedTuple):
     withheld: list[str]              # excluded as unavailable, whatever they project
 
 
-def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
+def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
+         ranks: Mapping[str, float] | None = None) -> Lock:
     """Compare the lineup as set against the best one that could be set.
 
     **Availability is applied before the comparison, not after.** The alternative -- rank on
@@ -345,7 +346,7 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
         return Lock(None, None, None, [], [], [], withheld)
 
     try:
-        best = best_by_points(pool)["starters"]
+        best = best_by_points(pool if ranks is None else _by_rank(pool, ranks))["starters"]
     except (NoLegalLineup, TooManyLineups):
         # Withholding can make a thin roster unfillable, and a lock that raises would take
         # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
@@ -355,10 +356,34 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False) -> Lock:
     # Priced over `pool`, so both totals count the same players. A withheld starter drops out
     # of the set lineup's value rather than out of one side of a subtraction.
     set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
-    best_total = float(best["mu"].sum())
+    # In `mu` whichever source chose the lineup: under ranks this is what the model says the
+    # consensus lineup is worth, so `gain` may be negative, and it is the lineup that is the call.
+    best_total = float(best["mu"].sum() if ranks is None else
+                       pool.filter(pl.col("player").is_in(best["player"].to_list()))["mu"].sum())
     chosen, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
     return Lock(set_total, best_total, best_total - set_total,
                 sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
+
+
+# A rank is lower-is-better and the lineup search maximises a total, so it is handed a score that
+# falls as the rank rises. Any constant above every rank gives the same lineup.
+RANK_CEILING = not_an_input(
+    1000.0, "an offset turning a rank (lower is better) into a score to maximise; any value "
+            "above the largest rank gives the same lineup")
+
+
+def _by_rank(pool: pl.DataFrame, ranks: Mapping[str, float]) -> pl.DataFrame:
+    """The pool restricted to the players `ranks` ranks, with `mu` replaced by a rank score.
+
+    An unranked player is left out rather than ranked last, as `hub.season.lineup_journal` does
+    for its ECR source: a rank nobody published is not a rank. Keyed by `key` when the roster
+    carries it, else by `player_key` of the name."""
+    keys = (pool["key"].to_list() if "key" in pool.columns
+            else [player_key(n) for n in pool["player"]])
+    have = pool.with_columns(pl.Series("_k", keys)).filter(pl.col("_k").is_in(list(ranks)))
+    score = {k: RANK_CEILING - float(v) for k, v in ranks.items()}
+    return have.with_columns(
+        pl.col("_k").replace_strict(score, return_dtype=pl.Float64).alias("mu")).drop("_k")
 
 
 def withheld_reason(row: Mapping[str, object]) -> str:
@@ -491,7 +516,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
                 else f"  MISSING {r['missing_games']} GAMES")
         print(f"  {flag} {r['pos']:<4} {r['player']:<24} {shown}{inj}{miss}")
 
-    lk = lock(df)
+    # The published rule (#492): `mu` through week 7, weekly consensus rank from week 8.
+    from hub.season.lineup_rule import decide
+    lk, rule = decide(df)
+    print(f"\n  lineup set by {rule.source} ({rule.label})"
+          + (f" -- {rule.reason}" if rule.reason else ""))
     if lk.gain is not None:
         print(f"\n  set {lk.set_total:.1f}  ->  best {lk.best_total:.1f}  "
               f"({lk.gain:+.1f} a week)")

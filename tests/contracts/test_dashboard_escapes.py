@@ -1966,7 +1966,11 @@ def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
     """Either valid branch of the committed call, whichever this week's optimiser landed on."""
     ros = json.loads((SITE / "data" / "roster.json").read_text())
     body = _render(node)["panels"]["p-lineup"]["body"]
-    if ros["gain"] is not None and ros["gain"] > 0.05:
+    by_rank = (ros.get("lineup_rule") or {}).get("source") == "ecr"
+    if by_rank and ros["gain"] is not None and (ros["start"] or ros["sit"]):
+        assert body.startswith('<p class="lineup-call">Consensus rank calls'), body[:120]
+        _call_first_with_names(body, ros)
+    elif not by_rank and ros["gain"] is not None and ros["gain"] > 0.05:
         assert body.startswith('<div class="lineup-gain">+'), body[:120]
         _call_first_with_names(body, ros)
     else:
@@ -1983,6 +1987,52 @@ def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_
     assert '<ul class="swaps">' in body
     flat = _render(node, {"roster": dict(ros, gain=0.0)})["panels"]["p-lineup"]["body"]
     assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
+
+
+# --- what set the lineup: mu through week 7, weekly consensus rank from week 8 (#492) ----------
+#
+# Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and is
+# negative whenever the model rates the consensus swap lower -- which is exactly the week the old
+# headline would have said "already the best available one" over a lineup it was changing.
+
+ECR_RULE = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 8,
+            "ecr_from_week": 8, "ecr_week": 8, "reason": None}
+ECR_ROSTER = dict(SWAP_ROSTER, withheld=[], sit=["Weak RB"], start=["Strong RB"],
+                  gain=-2.0, set_total=80.0, optimal_total=78.0, lineup_rule=ECR_RULE)
+
+
+def test_a_consensus_lineup_calls_its_swaps_even_when_mu_rates_them_lower(node):
+    out = _headline(node, ECR_ROSTER)
+    assert out.startswith('<p class="lineup-call">Consensus rank calls 1 swap.</p>'), out[:120]
+    assert "lineup-gain" not in out and "already the best" not in out
+    assert out.count("<li>") == 1 and _who("Strong RB", "RB", "SF") in out
+    assert "mu projects set lineup 80.0 &rarr; consensus lineup 78.0" in out
+
+
+def test_a_consensus_lineup_is_labelled_a_provisional_rule_and_never_an_edge(node):
+    out = _headline(node, ECR_ROSTER)
+    assert '<p class="legend lineup-rule">Lineup set by weekly consensus rank (ECR):' in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    flat = _headline(node, dict(ECR_ROSTER, sit=[], start=[]))
+    assert flat.startswith('<p class="lineup-call">The set lineup is already the consensus lineup.')
+    assert "a provisional rule (ADR-0014)" in flat
+
+
+def test_a_lineup_not_set_by_the_weeks_own_consensus_says_why_in_the_unconfirmed_state(node):
+    stale = dict(ECR_RULE, ecr_week=7, reason=f"no capture for week 8 {HOSTILE}")
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=stale))
+    assert "(week 7's capture)" in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no capture for week 8 &lt;script&gt;' in out
+    assert "<script>" not in out
+    mu = dict(ECR_RULE, source="mu", label="model", ecr_week=None, reason="no ECR at all")
+    out = _headline(node, dict(SWAP_ROSTER, lineup_rule=mu))
+    assert out.startswith('<div class="lineup-gain">+11.5'), "mu keeps the gain headline"
+    assert "Lineup set by the model's projection (mu)." in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no ECR at all.</p>' in out
+
+
+def test_an_artifact_from_before_the_switch_says_nothing_about_the_rule(node):
+    assert "lineup-rule" not in _headline(node, SWAP_ROSTER)
 
 
 def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else():
