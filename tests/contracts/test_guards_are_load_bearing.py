@@ -44,6 +44,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,7 +104,8 @@ def _without(guard: Guard) -> str:
     return excise(guard.path.read_text(), guard)
 
 
-def _run_against(mutant_src: Path, selectors: tuple[str, ...]) -> subprocess.CompletedProcess:
+def _run_against(mutant_src: Path, selectors: tuple[str, ...], basetemp: Path | None = None
+                 ) -> subprocess.CompletedProcess:
     """Run the tests a guard names against a mutated copy of the source tree.
 
     `-o pythonpath=` and not the environment variable. `pyproject.toml` sets
@@ -111,10 +113,14 @@ def _run_against(mutant_src: Path, selectors: tuple[str, ...]) -> subprocess.Com
     anything `PYTHONPATH` contributes -- so the first version of this ran every mutant against
     the real source and reported all four guards green. The harness caught itself, which is
     the only reason this comment exists rather than a ninth dead guard.
+
+    `basetemp` is the child's own `tmp_path` root, for a child that runs beside others (#514):
+    two pytest processes sharing the default root each prune the other's numbered directories.
     """
+    own = ["--basetemp", str(basetemp)] if basetemp is not None else []
     return subprocess.run(
         [sys.executable, "-m", "pytest", *selector_args(selectors, TESTS), "-x", *CHILD_FLAGS,
-         "-o", f"pythonpath={mutant_src}"],
+         *own, "-o", f"pythonpath={mutant_src}"],
         cwd=ROOT, capture_output=True, text=True, timeout=300, env=os.environ.copy(),
     )
 
@@ -702,8 +708,81 @@ def test_every_unproved_block_names_a_test_that_expires_it():
 
 # --- the habit ----------------------------------------------------------------
 
+def _mutant_tree(guard: Guard, root: Path) -> Path:
+    """A copy of `src/` under `root` with that guard excised, for `-o pythonpath=` to point at."""
+    mutant = _without(guard)
+    tree = root / "src"
+    for path in SRC.rglob("*.py"):
+        dst = tree / "hub" / path.relative_to(SRC)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(mutant if path == guard.path else path.read_text())
+    return tree
+
+
+# Children run at once, this many at a time (#514). Each is a separate pytest process against
+# its own mutant tree and its own basetemp, so they share nothing but the CPU -- and serially
+# they were ninety-odd interpreter startups end to end, the bulk of this file's six minutes.
+# Bounded rather than one per core: other lanes share the machine, and the runner has four.
+CONCURRENT_CHILDREN = min(4, os.cpu_count() or 1)
+
+
+class _MutantRuns:
+    """Every selected guard's child run, started together and read one test at a time.
+
+    Only the guards this session will actually run are started -- read off the collected items,
+    so `-k one-guard` starts one child, not ninety. A guard whose mutant will not parse is never
+    started; its test fails on the parse before it asks. Under xdist each worker would see every
+    item, so there nothing is started ahead and each test starts its own.
+    """
+
+    def __init__(self, items: list[pytest.Item], root: Path) -> None:
+        self._root = root
+        self._pool = ThreadPoolExecutor(CONCURRENT_CHILDREN)
+        self._runs: dict[Guard, Future[subprocess.CompletedProcess]] = {}
+        if "PYTEST_XDIST_WORKER" in os.environ:         # pragma: no cover - no xdist here
+            return
+        for item in items:
+            if not (isinstance(item, pytest.Function)
+                    and item.originalname == "test_removing_the_guard_turns_its_tests_red"):
+                continue
+            guard = item.callspec.params["guard"]
+            if isinstance(guard, Guard) and _selectors(guard) and _parses(guard):
+                self._start(guard)
+
+    def _start(self, guard: Guard) -> None:
+        if guard in self._runs:
+            return
+        # Numbered as well as named: a name is unique within a module, not across `src/`.
+        here = self._root / f"{len(self._runs):03d}-{guard.name}"
+        here.mkdir()
+        self._runs[guard] = self._pool.submit(
+            lambda: _run_against(_mutant_tree(guard, here), _selectors(guard), here / "tmp"))
+
+    def result(self, guard: Guard) -> subprocess.CompletedProcess:
+        self._start(guard)
+        return self._runs[guard].result()
+
+    def close(self) -> None:
+        self._pool.shutdown(cancel_futures=True)
+
+
+def _parses(guard: Guard) -> bool:
+    try:
+        ast.parse(_without(guard))
+    except SyntaxError:
+        return False
+    return True
+
+
+@pytest.fixture(scope="module")
+def mutant_runs(request, tmp_path_factory):
+    runs = _MutantRuns(request.session.items, tmp_path_factory.mktemp("mutants"))
+    yield runs
+    runs.close()
+
+
 @pytest.mark.parametrize("guard", _declared(), ids=repr)
-def test_removing_the_guard_turns_its_tests_red(guard, tmp_path):
+def test_removing_the_guard_turns_its_tests_red(guard, mutant_runs):
     """Delete the guard, run the tests it names against the mutant, require failure.
 
     Three outcomes have to be told apart, and the middle one is the whole point. A test
@@ -722,15 +801,9 @@ def test_removing_the_guard_turns_its_tests_red(guard, tmp_path):
                     f"that will not parse ({e}). Widen the markers so the block stands "
                     f"alone -- as written, a red run would prove nothing.")
 
-    tree = tmp_path / "src"
-    for path in SRC.rglob("*.py"):
-        dst = tree / "hub" / path.relative_to(SRC)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(mutant if path == guard.path else path.read_text())
-
     selectors = _selectors(guard)
     assert selectors, f"no test module derives from {guard.path.name}"
-    got = outcome(_run_against(tree, selectors))
+    got = outcome(mutant_runs.result(guard))
     if got.errors and not got.failed:                   # pragma: no cover - harness error
         pytest.fail(
             f"the mutant run for {guard.name!r} is red without a test failing, which is a "
