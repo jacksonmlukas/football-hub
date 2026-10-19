@@ -767,3 +767,56 @@ vectorised by `scipy.special.ndtr`, the same function); not committed, the numbe
    overcome before any gain shows.
 
 Nothing above was tuned after seeing it; the design in the pre-registration is unchanged.
+
+## Result: the gate ran once, 2026-10-18 (#502)
+
+`uv run python -m hub.models.total_sd --run`, one ledger entry (`total_sd`, data digest
+`bd05873c`), run from the clean tree at `ced840b`. 22 held-out seasons, 2004-2025, 0 games
+missing a total (VOID did not fire); 2026 is in progress and below `MIN_SCORED_GAMES`.
+
+**The verdict line, verbatim:**
+
+> SHOW: keep as a measurement, no consumer. 22 resolved of 22, 0 abstained (won 15, tied 0, lost 7 of 22 seasons) and the interval contains zero -- absence of evidence, not evidence of equivalence.
+
+| | |
+|---|---|
+| mean gain, `sd(total)` fitted on wins over `Phi(s / MARGIN_SD)` | **+0.00034** nats a game |
+| t interval over the 22 seasons (the gate's) | [-0.00059, +0.00128] |
+| 95% interval (bootstrap, printed) | [-0.00056, +0.00120] |
+| MDE at 80% power | **+0.00130** |
+| ceiling (a perfect P(win \| spread, total), pooled) | **+0.00512** |
+| seasons | won 15, lost 7, 22 resolved, 0 abstained |
+| P(challenger better), achieved power at the observed effect | 78.2%, 9.4% |
+
+**It could run, and it did not resolve a gain.** MDE 0.00130 below the ceiling 0.00512, so
+this is a verdict, not an exemption, and it is the reading the rule-16 table said was the
+reachable one. The interval excludes a gain above about 0.0013 nats a game, a quarter of the
+(flattered) ceiling.
+
+**Descriptive, outside the gate, never ranked on.** The two columns the pre-registration named:
+
+| column | mean a game | t interval | seasons positive |
+|---|---|---|---|
+| `scale_only`, a constant sd fitted on wins, over the incumbent | +0.00061 | [-0.00022, +0.00144] | 14 of 22 |
+| `increment`, what the total adds over `scale_only` | **-0.00027** | [-0.00056, +0.00002] | 8 of 22 |
+
+* **What the challenger gains is in the level, not the total.** `scale_only` reproduces #465's
+  post hoc figure (+0.0006, 14 of 22) on the same seasons; the fitted level runs 11.1 to 13.3
+  and sits below 12.741 in every season since 2011. That arm was not gated and is not gated
+  here (rule 1: it was already looked at), so this is a pointer for `margin.verdict`'s own
+  offseason re-decision of `MARGIN_SD` under the house rule, not a finding.
+* **The total dependence does not carry out of sample, and points the other way.** Adding the
+  total costs 0.00027 nats a game, lower in 14 of 22 seasons, its interval just reaching zero.
+  The fitted β swings from +0.46 to -0.49 between neighbouring windows and is negative in the
+  last eleven fits but two; the last fit (2016-2025) is `sd0 = 11.24` at a total of 44,
+  **β = -0.38**, a *narrower* sd at higher totals, the opposite of variance growing with
+  scoring. Descriptive only: a β that changes sign between overlapping ten-season windows is
+  noise around zero more than a reversal.
+
+**What it means for #502.** No consumer is wired and nothing is adopted. `MARGIN_SD`,
+`hub.models.margin` and `hub.models.market` are unedited; `total_sd` is outside the weekly arm's
+closure and the pinned digest is unchanged (`test_weekly_forward` green on this tree). The
+σ-by-total question is answered as far as this archive can answer it: at the size its mechanism
+implies, the effect is below what estimating it costs (rule-16 table), and the real run agrees.
+Whether a constant sd fitted on wins should replace the margin-fitted 12.741 is
+`margin.verdict`'s question, gated in the offseason by the maintainer, not this one's.
