@@ -1651,16 +1651,30 @@ def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
         assert r["fetched"] is False and r["reason"], "an absent file is a named non-fetch"
 
 
+def _never_fetched(man: dict, *names: str) -> dict:
+    """The manifest with each named source in the state `publish.side_record` writes for one
+    never got: `fetched` false, so not fresh, with a standing reason. Built here because the
+    committed sources move with the capture jobs (cfbd went live 2026-10-17); the footer's
+    never-fetched wording is held against this state, not against whatever is committed."""
+    for a in man["artifacts"]:
+        if a["name"] in names:
+            a.update(fetched=False, stale=True, reason=f"nothing was fetched for {a['name']}")
+    return man
+
+
 def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line(node):
-    got = _render(node)["footer"]
+    man = _never_fetched(_committed_manifest(), "bigten", "cfbd")
+    got = _render(node, {"manifest": man})["footer"]
     names = _footer_names(got)
     for name in MANIFEST_NAMES:
         assert name in names, f"{name} is missing from the footer: {names}"
     assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
-    cfbd = json.loads((SITE / "data" / "cfbd.json").read_text())
-    assert cfbd["fetched"] is False
-    assert "nothing was fetched" in got, "cfbd's own reason is not on the line"
+    for name in ("bigten", "cfbd"):
+        assert f"not fetched: nothing was fetched for {name}" in got, f"{name}'s reason is missing"
     assert " ago" in got, "no ages on the line"
+    # Whichever state the committed files are in, the footer still names every artifact once.
+    live = _render(node)["footer"]
+    assert sorted(_footer_names(live)) == sorted(names) and live.count("<p") == 1
 
 
 def test_a_healthy_artifact_adds_no_reason_to_the_line(node):
@@ -1714,7 +1728,7 @@ def test_stale_live_scores_are_reported_at_the_slate(node):
 def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node):
     """What `publish` writes for a side file that is not there: present false, a standing
     reason. The footer says so from the manifest alone."""
-    man = _with_artifact("bigten", present=False, stale=True, generated_at=None,
+    man = _with_artifact("bigten", present=False, fetched=False, stale=True, generated_at=None,
                          reason="no bigten.json has been published")
     got = _render(node, {"manifest": man, "bigten": None})["footer"]
     assert "bigten never" in got and "not fetched" in got
@@ -1726,16 +1740,26 @@ def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node
 
 def test_a_never_fetched_source_reads_not_fetched_and_a_stale_one_reads_stale(node):
     """#351's `fetched` is not #347's `stale`: cfbd with `fetched: false` was never got and
-    says "not fetched"; bigten fetched and gone stale says "stale". Planted from the committed
-    manifest, whose cfbd is the real never-fetched case."""
-    man = _committed_manifest()
-    cfbd = next(a for a in man["artifacts"] if a["name"] == "cfbd")
-    assert cfbd["fetched"] is False and cfbd["reason"], "the committed cfbd entry lost `fetched`"
+    says "not fetched"; bigten fetched and gone stale says "stale". Both states are planted,
+    because the committed manifest's are not stable: cfbd was never fetched until 2026-10-17,
+    and bigten's stale reason changes with each capture."""
+    man = _never_fetched(_committed_manifest(), "cfbd")
+    bigten = next(a for a in man["artifacts"] if a["name"] == "bigten")
+    bigten.update(present=True, fetched=True, stale=True, reason="the page linked no reports")
     got = _render(node, {"manifest": man})["footer"]
-    assert "not fetched: nothing was fetched" in got
-    assert "stale: the page" in got
+    assert "not fetched: nothing was fetched for cfbd" in got
+    assert "stale: the page linked no reports" in got
     cfbd_span = re.search(r"<span class=\"[^\"]*\">cfbd [^<]*</span>", got)
     assert cfbd_span and "&mdash; stale" not in cfbd_span.group(0)
+    bigten_span = re.search(r"<span class=\"[^\"]*\">bigten [^<]*</span>", got)
+    assert bigten_span and "not fetched" not in bigten_span.group(0)
+    # The committed manifest, whatever its state: the key is there, and the wording follows it.
+    live = _render(node)["footer"]
+    for a in _committed_manifest()["artifacts"]:
+        if a["name"] in ("bigten", "cfbd"):
+            assert isinstance(a["fetched"], bool), f"{a['name']} lost `fetched`"
+            span = re.search(rf"<span class=\"[^\"]*\">{a['name']} [^<]*</span>", live)
+            assert span and ("not fetched" in span.group(0)) == (not a["fetched"]), span
 
 
 def test_the_committed_manifests_source_entries_are_what_the_publisher_writes():
@@ -1851,6 +1875,17 @@ SWAP_ROSTER = {
 }
 
 
+def _roster_with_gain() -> dict:
+    """The committed roster mutated to a known positive gain: its own rows, one swap between
+    two of them. The committed call is whatever this week's optimiser said -- once the set
+    lineup is already optimal there is no gain and no swap to render -- so a test of the
+    positive-gain panel cannot lean on it."""
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    out, inn = [r["player"] for r in ros["rows"] if r.get("available", True)][:2]
+    ros.update(gain=11.5, set_total=80.0, optimal_total=91.5, sit=[out], start=[inn])
+    return ros
+
+
 def _headline(node: str, ros: dict) -> str:
     return _run(node, f"import {{ lineupHeadline }} from {_mod('panels/lineup.js')};\n"
                       f"console.log(lineupHeadline({json.dumps(ros)}));")
@@ -1921,13 +1956,33 @@ def test_a_hostile_name_in_the_headline_is_escaped(node):
     assert "<script>" not in out and out.count("&lt;script&gt;") >= 5
 
 
-def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
-    body = _render(node)["panels"]["p-lineup"]["body"]
-    assert body.startswith('<div class="lineup-gain">+'), body[:120]
+def _call_first_with_names(body: str, ros: dict) -> None:
     for name in ros["start"] + ros["sit"] + ros["withheld"]:
         row = next(r for r in ros["rows"] if r["player"] == name)
         assert _who(name.replace("'", "&#39;"), row["pos"], row["nfl_team"]) in body
+
+
+def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
+    """Either valid branch of the committed call, whichever this week's optimiser landed on."""
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    body = _render(node)["panels"]["p-lineup"]["body"]
+    if ros["gain"] is not None and ros["gain"] > 0.05:
+        assert body.startswith('<div class="lineup-gain">+'), body[:120]
+        _call_first_with_names(body, ros)
+    else:
+        assert body.startswith('<p class="lineup-call'), body[:120]
+        assert "lineup-gain" not in body and '<ul class="swaps">' not in body
+        _call_first_with_names(body, dict(ros, start=[], sit=[]))
+
+
+def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_name(node):
+    ros = _roster_with_gain()
+    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    assert body.startswith('<div class="lineup-gain">+11.5'), body[:120]
+    _call_first_with_names(body, ros)
+    assert '<ul class="swaps">' in body
+    flat = _render(node, {"roster": dict(ros, gain=0.0)})["panels"]["p-lineup"]["body"]
+    assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
 
 
 def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else():
@@ -2113,7 +2168,7 @@ def test_the_line_sits_directly_under_the_call_and_a_missing_prior_never_costs_t
 
 
 def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(node):
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    ros = _roster_with_gain()
     ros["previous"] = {"generated_at": "2000-01-01T00:00:00+00:00",
                        "start": [], "sit": [], "withheld": []}
     body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
@@ -2158,7 +2213,7 @@ def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
     """Planted: a `reason` whose `String()` throws. `statusLine` escapes it, and nothing else on
     the page reads `bigten`, so before the guard `render()` rejected here and no panel drew."""
     man = _with_artifact("bigten", reason={"toString": 1})
-    got = _render(node, {"manifest": man})
+    got = _render(node, {"manifest": man, "roster": _roster_with_gain()})
     assert "status line unavailable" in got["footer"]
     assert got["panels"]["p-lineup"]["body"].startswith('<div class="lineup-gain">')
     assert "<table" in got["panels"]["p-roster"]["body"]

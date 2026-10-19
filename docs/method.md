@@ -752,7 +752,7 @@ the fifteenth (#52, 2026-09-11). Measurements taken since 2026-08-29 that this t
 row — touchdown luck zeroed, durability shipped, the lambda sweep re-run, pick noise refitted —
 are the separate work the count needs next; each has its own page and none of them is a gate.
 
-This fifteen counts **measurements**, not decision records. There are twenty-five of those,
+This fifteen counts **measurements**, not decision records. There are twenty-six of those,
 in [`docs/adr/`](adr/). The two numbers were equal for eleven days in August and this file
 carried both, which is how the Primary sources table below came to describe the ADRs with the
 count belonging to the table beneath this line — corrected 2026-09-07 under #51.
@@ -816,6 +816,6 @@ The most useful artifact in this repo is the record of what was measured and the
 | The one positive screen | [snap-trend-signal.md](snap-trend-signal.md) |
 | The one adopted model | [weekly-injury.md](weekly-injury.md) |
 | Why the ceiling closed a question | [player-spread.md](player-spread.md) |
-| Twenty-five decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
+| Twenty-six decisions, with their trade-offs | [`docs/adr/`](adr/), indexed in [architecture.md](architecture.md) |
 | Objectives, and how objective 1 is judged | [decisions.md](decisions.md) |
 | What each of the fifteen measurements could detect, at 80% power | [detectable-effects.md](detectable-effects.md) |
