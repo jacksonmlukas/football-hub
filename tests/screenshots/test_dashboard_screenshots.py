@@ -76,7 +76,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return str(FIXTURE_DATA / rel[len("data/"):])
         return str(SITE / rel)
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
 
