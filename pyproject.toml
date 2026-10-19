@@ -43,7 +43,15 @@ seq = ["torch"]
 # the modern-python shim outright. `--all-extras` still installs this group, because groups
 # are orthogonal to extras -- so no documented command changes.
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "ruff", "pyrefly>=1.0", "hypothesis"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "pyrefly>=1.0",
+    "hypothesis",
+    "playwright>=1.64.0",
+    "pillow>=12.3.0",
+]
 
 [build-system]
 requires = ["hatchling"]
