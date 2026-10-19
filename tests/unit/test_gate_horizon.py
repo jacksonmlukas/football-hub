@@ -111,11 +111,15 @@ def test_a_collapsed_cluster_frame_gives_the_row_level_verdict(gh):
     assert a.seasons["se"].to_list() == pytest.approx(b.seasons["se"].to_list())
 
 
-def test_a_cell_does_not_depend_on_how_its_trials_are_split_across_workers(gh):
+def test_a_cell_does_not_depend_on_how_its_trials_are_split_across_workers(gh, monkeypatch):
+    # Three chunks of fifty rather than one of 2,000 (#514): what is compared is the seeding,
+    # which is per chunk, so several chunks test more of it than one large one did, in a
+    # fortieth of the trials.
+    monkeypatch.setattr(gh, "CHUNK", 50)
     cell = gh.weekly_cell(4, 13, 0.3)
     procs = gh.estimates()
-    once = gh.run_cells([cell], procs, trials=gh.CHUNK, workers=1)
-    again = gh.run_cells([cell], procs, trials=gh.CHUNK, workers=1)
+    once = gh.run_cells([cell], procs, trials=3 * gh.CHUNK, workers=1)
+    again = gh.run_cells([cell], procs, trials=3 * gh.CHUNK, workers=1)
     assert once == again
 
 
