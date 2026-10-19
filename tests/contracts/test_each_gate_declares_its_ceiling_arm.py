@@ -35,10 +35,10 @@ def test_twelve_harnesses_over_the_ten_gate_modules():
     injury harness (retention against `out_zero`), which makes it eleven; #465 declares a twelfth in
     `favourite_longshot`, a tenth module; #365 declares a thirteenth in the unwired exhibit
     `state_space_rating`, an eleventh; #472 declares a fourteenth in `td_dispersion`, a twelfth
-    module."""
+    module; #502 declares a fifteenth in `total_sd`, a thirteenth."""
     found = all_harnesses()
-    assert len(found) == 14, f"expected fourteen harnesses, found {len(found)}: {sorted(found)}"
-    assert len(GATE_MODULES) == 12, f"expected twelve gate modules, found {sorted(GATE_MODULES)}"
+    assert len(found) == 15, f"expected fifteen harnesses, found {len(found)}: {sorted(found)}"
+    assert len(GATE_MODULES) == 13, f"expected thirteen gate modules, found {sorted(GATE_MODULES)}"
 
 
 @pytest.mark.parametrize("key", sorted(all_harnesses()))
