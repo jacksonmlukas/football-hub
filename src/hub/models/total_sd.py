@@ -59,7 +59,9 @@ T_REF = not_an_input(
 
 # The ceiling's total bands, edges in points: below 41, 41 to under 47, 47 and over. Fixed in
 # the pre-registration from the usual range of NFL totals, without looking.
-TOTAL_BANDS: tuple[float, ...] = (41.0, 47.0)
+TOTAL_BANDS: tuple[float, ...] = not_an_input(
+    (41.0, 47.0), "the pre-registered cells of a gate's in-sample ceiling arm; it bounds a "
+                  "measurement and no price reads it")
 
 # Unchanged from #465, so the two gates score the same seasons.
 MIN_PAST_SEASONS = 5
