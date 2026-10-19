@@ -25,3 +25,6 @@ htmlcov/
 
 # Personal Claude Code overrides -- machine-local, never shared.
 .claude/settings.local.json
+
+# Screenshot check output (#475): actual and diff images written when a baseline comparison fails.
+test-results/
