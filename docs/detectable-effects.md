@@ -69,6 +69,14 @@ reading `t` off `r` without one. Units are stated in every row for this reason.
 > hold-out, today's inputs, reproduced). A reader quoting a detectable effect for this gate quotes
 > the recipe with it.
 
+> **Row 1, restated 2026-10-17 (#505, rule 13; the row above is kept, not edited).** Its `s`
+> (0.0456) and `delta` (0.092) were computed on the four per-season r's in `lambda-sweep.md`,
+> +0.249 / +0.152 / +0.192 / +0.242, which are **year-over-year self-persistence**, not the
+> screen's partial r beyond ECR (≈ +0.01, published with no n or per-season values). The
+> 0.092 is therefore the detectable effect on the wrong statistic and is not this screen's;
+> its partial-r MDE **cannot be recomputed** from what is stored. Rows 3-5 are partial r's
+> and stand.
+
 ## Reading this table
 
 **Six rows have no `delta`: #2, #7, #8, #9, #10, #12.** Two shapes among them: #8 is closed as

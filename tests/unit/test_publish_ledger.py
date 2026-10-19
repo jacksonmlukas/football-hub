@@ -10,7 +10,7 @@ def test_ledger_is_written_with_its_own_generated_at(tmp_path):
     assert got["n"] == len(got["rows"]) >= 10
     written = json.loads((tmp_path / "ledger.json").read_text())
     assert written["generated_at"] and written["shape"] == "rows"
-    assert {r["verdict"] for r in written["rows"]} >= {"Removed", "Null", "Not established"}
+    assert {r["verdict"] for r in written["rows"]} >= {"Removed", "Inconclusive", "Not established"}
 
 
 def test_publish_all_puts_the_ledger_in_the_manifest(tmp_path):

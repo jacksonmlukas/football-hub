@@ -1,12 +1,13 @@
 # Signal screens
 
 Twenty rows for beating consensus, one since withdrawn. The first seven rows are the six
-hypotheses screened before the season: five were null and **one not** — the snap-share trend,
-screened 2026-08-25, which is the first thing in this repo to survive a control for ECR. The
-weekly screen that followed added thirteen rows at the next-week horizon; the table has **five
-rows positive**, which is four signals — the snap-share trend at two horizons, the prior TD
-rate per yard, defence vs position and injury severity — and every other row is null. This is
-the index; the ones with longer stories have their own documents. The counts in this paragraph
+hypotheses screened before the season: five were inconclusive and **one not** — the
+snap-share trend, screened 2026-08-25, which is the first thing in this repo to survive a
+control for ECR. The weekly screen that followed added thirteen rows at the next-week horizon;
+the table has **five rows positive**, which is four signals — the snap-share trend at two
+horizons, the prior TD rate per yard, defence vs position and injury severity — and every
+other row is null (the weekly rows keep that word; the preseason five were restated, see below).
+This is the index; the ones with longer stories have their own documents. The counts in this paragraph
 are read off the table by `tests/contracts/test_signal_screens_index_counts_its_table.py`.
 
 Kept because a record of what does not work is worth more than a fifth attempt at the same
@@ -14,11 +15,11 @@ thing, and because two of these produced errors worth not repeating.
 
 | signal | horizon | result | detail |
 |---|---|---|---|
-| Expected-vs-actual points | next season | **null** — r = 0.21 self-persistence, ~4% shared variance | [lambda-sweep.md](lambda-sweep.md) |
-| Recency-weighted expected-vs-actual | next season | **null, and worse** — shorter windows strictly degrade it | [lambda-sweep.md](lambda-sweep.md) |
-| Depth-chart climb | next season | **null** — partial r = +0.008 beyond ECR | [depth-chart-signal.md](depth-chart-signal.md) |
-| Depth-chart climb | rest of season | **null** — within 1 se of zero at weeks 6/8/10/12 | [depth-chart-signal.md](depth-chart-signal.md) |
-| Age | next season | **null** — see below | this document |
+| Expected-vs-actual points | next season | **inconclusive, no interval** — the 0.21 is year-over-year self-persistence (~4% shared variance), not an effect beyond ECR; the beyond-ECR partial r is ≈ +0.01 with no stored n or per-season values, so no interval can be computed | [lambda-sweep.md](lambda-sweep.md) |
+| Recency-weighted expected-vs-actual | next season | **inconclusive, and worse** — shorter windows strictly degrade it; only a pooled self-persistence is stored, no n, so no interval | [lambda-sweep.md](lambda-sweep.md) |
+| Depth-chart climb | next season | **inconclusive** — partial r = +0.0085, 95% interval [-0.049, +0.066] beyond ECR (n = 1,165) | [depth-chart-signal.md](depth-chart-signal.md) |
+| Depth-chart climb | rest of season | **inconclusive** — partial r = +0.0120, 95% interval [-0.153, +0.177] at week 10 (4 seasons); within 1 se of zero at weeks 6/8/10/12 | [depth-chart-signal.md](depth-chart-signal.md) |
+| Age | next season | **inconclusive** — partial r = +0.0076, 95% interval [-0.035, +0.050] beyond ECR (n = 2,140); see below | this document |
 | **Snap-share trend** | next 3 weeks, in season | **POSITIVE** — partial r **+0.24** beyond PPG *and* ECR, 12/12 season-anchor cells, placebo-clean | [snap-trend-signal.md](snap-trend-signal.md) |
 | Snap-share trend | next 3 weeks, before week 8 | **null** — sign flips between seasons | [snap-trend-signal.md](snap-trend-signal.md) |
 | **Snap-share trend** | **next week**, week ≥ 8 | **POSITIVE** — partial r **+0.043** beyond PPG *and* weekly ECR, joint-screened, 5/5 seasons | [weekly-screen.md](weekly-screen.md) |
@@ -34,6 +35,38 @@ thing, and because two of these produced errors worth not repeating.
 | Expected points in the priors | next week | **null, slightly negative** — the rebuild loses 0.005 MAE and the frozen gate falls +0.711 → +0.082 *(on the blend gate's figure of that date; since restated, see [weekly-blend-gate.md](weekly-blend-gate.md))* | [expected-and-routes.md](expected-and-routes.md) |
 | Wind | next week | ~~**null** — 4/5 seasons~~ **withdrawn 2026-09-10 (#170)** — not a screenable predictor: game-time observed weather, and the column screened had every missing reading coded as calm. **Superseded and unestablished**; see [weekly-screen.md](weekly-screen.md) | [weekly-screen.md](weekly-screen.md) |
 | Rest days | next week | **null** — −0.014, 3/5 seasons | [weekly-screen.md](weekly-screen.md) |
+
+*(Restated 2026-10-17, #505: the five preseason rows above were written as **null**. A screen
+that finds partial r near zero has shown r is inside an interval, not that it is zero, and
+`detectable-effects.md` rows 1-5 put the smallest effect these designs could resolve at partial
+r 0.09-0.21. So the rows now read **inconclusive**, with a 95% interval where the record keeps
+the inputs for one (`hub.screen_interval`). Fisher z on the pooled partial r with one control,
+`tanh(atanh(r) ± 1.96/sqrt(n-4))`: depth-chart climb, next season, r = +0.0085 on n = 283 + 282
++ 313 + 287 = 1,165, interval [-0.049, +0.066]; age, r = +0.0076 on n = 424 + 417 + 415 + 455
++ 429 = 2,140, interval [-0.035, +0.050] (se 0.0216, the "se ~0.022" printed below). Rest-of-season
+depth-chart climb keeps only the per-season r's and their between-season se, so its interval is
+mean ± t(0.975, 3 df) × se at week 10, all players: +0.012 ± 3.182 × 0.052 = [-0.153, +0.177].
+Expected-vs-actual points and its recency-weighted variant get **no interval**: the 0.21 in the
+old row is year-over-year self-persistence (`lambda-sweep.md`), not a partial r beyond ECR, the
+beyond-ECR figure (≈ +0.01) was published without an n or per-season values, and the screen's
+code is not in the repo, so there is nothing to compute an interval from and none is invented.
+The two pooled-n intervals are a single Fisher z on n summed across seasons; the same players
+recur across seasons, so those rows are not independent and the intervals are a lower bound on
+the true width. The rest-of-season interval is the season-clustered t interval, the repo's
+convention (ADR-0019). The opening paragraph was also changed in place; as it read before:
+"Twenty rows for beating consensus, one since withdrawn. The first seven rows are the six
+hypotheses screened before the season: five were null and **one not** — the snap-share trend,
+screened 2026-08-25, which is the first thing in this repo to survive a control for ECR. The
+weekly screen that followed added thirteen rows at the next-week horizon; the table has **five
+rows positive**, which is four signals — the snap-share trend at two horizons, the prior TD
+rate per yard, defence vs position and injury severity — and every other row is null. This is
+the index; the ones with longer stories have their own documents."
+The old rows read: "**null** — r = 0.21 self-persistence, ~4% shared variance"; "**null, and
+worse**"; "**null** — partial r = +0.008 beyond ECR"; "**null** — within 1 se of zero at weeks
+6/8/10/12"; "**null** — see below". Not done here: re-running the screens on a spline of
+log(ECR) or as out-of-sample incremental skill over a consensus-only baseline, which needs the
+data and code this index does not hold; the linear partial r on a rank with a convex
+points~rank relationship stands as written.)*
 
 ## Where the weekly work landed
 
