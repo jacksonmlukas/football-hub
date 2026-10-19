@@ -593,3 +593,141 @@ still reads "trailing 10 seasons, as of 2025", kept beside its restatement.
 The same correction applies to the later sections that say "the published figure on the trailing
 ten seasons": those are the shape report's window, which is ten and is not the width fit's.
 `MARGIN_SD`'s own window is the eleven above.
+
+---
+
+# Pre-registered 2026-10-18: P(win | spread) fitted on wins, with σ allowed to depend on the total (#502)
+
+**Written and committed before any number in this section exists.** Rule 1: nothing below was
+computed on outcomes, simulated or real, before this commit. Issue #502 is a measurement: **no
+consumer is wired and no shipped price changes.** `hub.models.market` and `hub.models.margin`
+are in the weekly arm's pin (`weekly_forward.PINNED_ARM_MODULES`, #456), and `MARGIN_SD` is
+grandfathered for 2026 (*Decided 2026-09-16*, above), so the harness is a new module,
+`hub/models/total_sd.py`, which only *reads* the pinned modules. Every constant it declares is
+`not_an_input`, so `config_digest`, and through it every model version, does not move.
+
+## The question
+
+`MARGIN_SD = 12.741` was fitted to the dispersion of margins, but the product is `P(home win)`;
+and it is one number for every game, though a game expected to have more scoring should
+scatter further around its spread. Does a probit of `home_won` on the spread, with its σ fitted
+**on wins** and allowed to grow with the closing total, price held-out games better than the
+live mapping?
+
+**Disclosed before the design, because it bears on rule 1.** A constant σ fitted on wins has
+already been looked at, post hoc and outside a gate: #465's `scale_only` column (above,
+*Result: the gate ran once*) read about **+0.0006 nats a game, 14 of 22 seasons**, against the
+incumbent. The arm gated here nests that arm (it is the β = 0 case), so its reading is **not
+independent of that look**: a part of whatever it gains is already known. The new part, whether
+the total adds anything over a constant σ fitted on wins, has never been computed, and is
+reported beside the verdict as a descriptive increment (below), not as a second verdict.
+
+## The arms
+
+Both price the home win from the home-relative closing spread `s` (`spread_line`) and are
+scored on `home_won` (`margin.home_won`: unplayed games and ties dropped).
+
+* **Incumbent (the baseline), `Phi(s / MARGIN_SD)`**, `MARGIN_SD = 12.741`, exactly the live
+  mapping `MarketBaseline`, `survivor`, `quarterback` and `starter_change` compute. Held fixed
+  in every season and not refitted, as in #465 and `margin.walk_forward`; the constant was
+  fitted through 2025, which favours the incumbent, the conservative direction.
+* **Challenger, `Phi(s / σ(T))` with `σ(T) = σ0 · (T / 44) ^ β`**, `T` the closing total
+  (`total_line`). Two parameters, `σ0 > 0` and `β`, fitted **jointly by maximum likelihood on
+  `home_won`** (unpenalised: two parameters on about 2,700 games). The form is chosen now for
+  two reasons: it keeps σ positive at every total, and it **nests both forms the issue names**,
+  a constant σ fitted on wins at β = 0 and σ ∝ √T at β = ½, so the fit chooses between them
+  rather than this document choosing. `44` is a centring constant only (it reparametrises
+  `σ0`, the fitted price does not depend on it). The issue's other form, `a + b·T`, is not
+  fitted separately: over the range of NFL totals it is close to the power form, and a second
+  challenger would be a second test.
+* **Walk-forward, rule 2.** For held-out season `t` the challenger is fitted on the **trailing
+  ten seasons strictly before `t`** (`margin.TRAILING`), through `experiment.expanding_seasons`,
+  the one statement of the split. Spread and total are both the closing lines on the schedule:
+  known before kickoff, the same point-in-time standing as the incumbent's only input.
+* **Held-out seasons**, unchanged from #465: a season with at least **five** earlier seasons
+  of history (2004 at the earliest; data begin 1999) and at least **240 scored games**. So the
+  run scores **every** completed season from 2004 through 2025 (ADR-0019), and the 2026 season
+  in progress does not qualify.
+* **Pairing, rule 7.** A game enters a fit or a score only if it has a spread **and** a total;
+  both arms are scored on exactly the same games. A game dropped for a missing total is
+  dropped from the incumbent too.
+
+## The unit, the metric, the gate
+
+* **Unit: the season** (`SEASON_CLUSTER`), one row per held-out season; `within = ("season",)`,
+  the same declared no-op as `margin` and `favourite_longshot`.
+* **Metric: walk-forward log loss on game outcomes**, nats per game. The paired difference for
+  season `t` is `LL(incumbent) - LL(challenger)`, positive when the challenger is better.
+* **The rule is `hub.models.experiment.gate` unchanged** (ADR-0019 and its amendments,
+  #381 (C)): ADOPT needs a win in every resolved season and a t interval excluding zero from
+  above; REMOVE the mirror; NOT-RUNNABLE ahead of both when the MDE exceeds the ceiling. #375's
+  posterior is not landed; if it lands before this is decided, this reading is re-run through
+  it, and the gate printed here is what was pre-registered.
+* **One run, one ledger entry** (`Harness.run`, `arm_roots=("hub.models.total_sd",)`).
+* **One gated comparison.** The family is one (rule 14). Two more columns are printed beside it
+  and are **descriptive, outside the gate, never ranked on**: `scale_only` (the β = 0 fit, the
+  arm #465 already looked at), and `increment` (`LL(scale_only) - LL(challenger)`, what the
+  total adds over a constant σ fitted on wins), with its season-clustered mean and t interval.
+  The fitted β per season and the last fit's `(σ0, β)` are printed for orientation.
+
+## The ceiling arm
+
+*A perfect P(win | spread, total):* the favourite's realised win rate in cells of one-point
+buckets of `|s|` crossed with three total bands, **edges 41 and 47** (below 41, 41 to under 47,
+47 and over; fixed here from the usual range of NFL totals, without looking), fitted on **all
+held-out games pooled** and scored on each held-out season as `LL(incumbent) - LL(oracle)`. In
+sample, and so flattered, which is what a ceiling is for; pooled rather than per season for
+#465's reason (a per-season oracle inflates by about `cells / (2n)` and would make NOT-RUNNABLE
+unreachable). It has about three times #465's cells, so it is flattered more than #465's
+`0.00298`; that only makes NOT-RUNNABLE harder to reach, the permissive direction for the
+challenger, and it is said here so it cannot be argued after the run.
+
+## The action for each verdict
+
+| verdict | what it means here | what is done |
+|---|---|---|
+| **ADOPT** | the fitted σ(T) beat the live mapping in every resolved season and its interval excludes zero | the mapping becomes **eligible** to replace `Phi(s / MARGIN_SD)`, and **nothing is wired by this issue**. `hub.models.market` is pinned (#456) and `MARGIN_SD` grandfathered for 2026, so adoption is the maintainer's decision, for the offseason, under the forward-pin rule. |
+| **REMOVE** | worse in every resolved season, interval below zero | disclose here and on #502; no consumer on this evidence. |
+| **SHOW** | anything short of either | keep as a measurement, no consumer. ADR-0014 is not available (a gate ran and did not resolve it). |
+| **NOT-RUNNABLE** | MDE above the ceiling | record both; the mapping is ADR-0014-eligible on criterion 2 only, and nothing is wired. |
+| **VOID** | the schedules do not load, fewer than five held-out seasons score, or a held-out season loses more than **10%** of its spread-priced games to a missing total | repaired and re-run; nothing is concluded. |
+
+## Power and MDE before the run (rule 16): to be computed, and committed, before the run
+
+The MDE is `(t(0.975, k-1) + z(0.80)) * se` over `k` (about 22) held-out seasons. It is
+computed **before the real walk-forward is run**, by simulation on the real spreads and totals
+with outcomes drawn from a model (no real outcome read):
+
+* **Null truth:** `Bernoulli(Phi(s / 12.741))`. Gives the null size of every branch and the
+  null `se`, hence the MDE.
+* **Planted truth:** `Bernoulli(Phi(s / (12.741 · (T / 44) ^ 0.5)))`: variance proportional to
+  the total, the hypothesis at full strength, with the level held at the incumbent's so it
+  plants the total dependence alone. Gives the power of the rule to ADOPT it and its expected
+  gain.
+* 200 trials each, seeds `SeedSequence([502, trial])`, the ceiling computed inside each trial
+  by the same function as in the real run, 500 bootstrap draws (the real run uses 4,000).
+
+**Expected before it is run**, from #465's simulation on the same seasons and the same unit:
+an MDE near **0.0014 to 0.0022** nats a game. If the planted gain lands below the MDE, ADOPT
+is **not reachable** at the hypothesised effect and is named an exemption there (rule 16): the
+reachable readings are then SHOW and NOT-RUNNABLE, and a SHOW is not evidence of equivalence.
+The already-seen `scale_only` gain (+0.0006) is about a third of that MDE.
+
+## Controls (rule 18), all on fixtures, none on the real run
+
+1. **A planted strong total dependence ADOPTs.** Outcomes drawn with σ(T) at β well above ½
+   and a level far from 12.741, 22 seasons: the gate returns ADOPT.
+2. **A null does not.** Outcomes drawn from the incumbent: never ADOPT.
+3. **A ceiling below the MDE is NOT-RUNNABLE.** The null frame with a ceiling declared below
+   its MDE.
+4. **The walk-forward does not leak.** Flipping season `t`'s outcomes changes nothing scored
+   for season `t`'s fit, only the seasons after it.
+5. **The fit recovers what was planted** (rule 15: on a fixture that does not start at the
+   answer): a large fixture drawn at `σ0 ≠ 12.741`, `β ≠ 0` returns both within tolerance, and
+   at β = 0 returns β near zero.
+
+## What moves
+
+Nothing that prices a game. `MARGIN_SD`, `hub.models.margin` and `hub.models.market` are not
+edited; the new module is not imported by any pinned module, and `weekly_forward`'s pinned
+digest is checked unchanged after the change.
