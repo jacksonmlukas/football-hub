@@ -217,6 +217,8 @@ def test_native_readers_on_tmp_paths_and_non_data_literals_pass(tmp_path):
 # `module.attribute`, as the guard's `REDIRECTED_DEFAULTS` is; the value is the plant's import.
 _DEFAULTS = {
     "hub.publish.ROSTER_PARQUET": ("from hub import publish as m", "m.ROSTER_PARQUET"),
+    "hub.fetch.free_agents.FREE_AGENTS_PARQUET": (
+        "from hub.fetch import free_agents as m", "m.FREE_AGENTS_PARQUET"),
     "hub.inspect.DATA": ("from hub import inspect as m", "m.DATA"),
     "hub.inspect.RAW": ("from hub import inspect as m", "m.RAW"),
     "hub.draft.state.STATE": ("from hub.draft import state as m", "m.STATE"),

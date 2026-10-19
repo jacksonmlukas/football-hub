@@ -54,9 +54,15 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # The lineup each source (mu, weekly ECR, ESPN weekly) would set, and what each scored (#492).
 # Optional and idempotent per week: offline or already-journalled, it changes nothing.
 	-uv run python -m hub.season.lineup_journal --record --settle
+# The league's free agents, one bulk read, kept last-good (#493); the stream's availability and
+# the waiver ranking both read it, so it runs first. Optional like the roster.
+	-uv run python -m hub.fetch.free_agents
 # Which K and D/ST to start or pick up, by the market's implied totals (#494). A labelled
 # heuristic, journalled once per week so a gate can run on it later; offline it changes nothing.
 	-uv run python -m hub.season.stream --record
+# Which free agent beats the player he would replace: a provisional rule on ESPN's unshrunk
+# projection (ADR-0014), journalled once per week and scored once its next three weeks are final.
+	-uv run python -m hub.season.waiver --record --settle
 	uv run python -m hub.publish --all $(if $(strip $(WEEK)),--week $(WEEK))
 
 pool:           ## This week's survivor pick priced against the field, across the concentration axis

@@ -27,6 +27,9 @@ BOARD_PARQUET = PROCESSED / "draft_board.parquet"
 # reads it, and the reader had the path as a bare string literal in an argparse default -- so
 # moving the file would have left the reader looking at the old location in silence.
 ROSTER_PARQUET = PROCESSED / "roster.parquet"
+# The league's unrostered pool (#493): `hub.fetch.free_agents` writes it, the waiver ranker and
+# the K / D/ST availability flag read it, and the last good one is served when ESPN is down.
+FREE_AGENTS_PARQUET = PROCESSED / "free_agents.parquet"
 
 # Where published artifacts live. Here rather than in `hub.publish` because a second module
 # now reads them: `hub.draft.board` falls back to the published board where the parquet is

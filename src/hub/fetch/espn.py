@@ -533,6 +533,65 @@ def my_roster(year: int = SEASON_AHEAD) -> pl.DataFrame:  # pragma: no cover - n
     return roster_rows(my_team(league), week=getattr(league, "current_week", None))
 
 
+# --- the league's free agents (#493) ---------------------------------------
+#
+# The same vocabulary as the roster, one row per unrostered player, read from the same League
+# handle (same cookie path as `my_roster`). ONE bulk request: `League.free_agents` asks ESPN for
+# the pool once, ordered by percent owned, and the ranking filters locally. Never a request per
+# player, per position or per team.
+
+FREE_AGENT_SCHEMA: dict[str, Any] = {
+    **{k: v for k, v in ROSTER_SCHEMA.items() if k != "slot"},
+    # ESPN's own, -1 when it carries none. Shown beside a candidate and never ranked on.
+    "percent_owned": pl.Float64,
+}
+
+# How many of the pool one run asks for. A 12-team league holds hundreds of unrostered players
+# and ESPN returns them most-owned first, so a cap cuts the least-owned tail -- which is where
+# the unrostered kickers and defences with no owners sit. Large enough to take the pool whole in
+# a normal league; `fetch_free_agents` reports when the pool came back at the cap.
+FREE_AGENT_SIZE = 700
+
+
+def free_agent_rows(players: Sequence[Any], week: int | None = None) -> pl.DataFrame:
+    """One row per free agent, as data rather than as a vendor object.
+
+    The seven roster attributes (less the lineup slot, which a free agent does not have), the
+    weekly projection read by the same `weekly_projection`, and ESPN's percent owned. The
+    projections are ESPN's own and are unshrunk. A player ESPN did not project reads 0.0 in
+    `espn_avg`/`espn_total`, exactly as on the roster; the ranker treats that as no projection.
+    """
+    from hub.names import player_key
+    rows = []
+    for p in players:
+        name = str(getattr(p, "name", "") or "")
+        owned = getattr(p, "percent_owned", None)
+        rows.append({
+            "player": name,
+            "key": player_key(name),
+            "pos": str(getattr(p, "position", "") or ""),
+            "espn_id": int(getattr(p, "playerId", 0) or 0),
+            "nfl_team": str(getattr(p, "proTeam", "") or ""),
+            "injury_status": str(getattr(p, "injuryStatus", "") or ""),
+            "espn_avg": float(getattr(p, "projected_avg_points", 0.0) or 0.0),
+            "espn_total": float(getattr(p, "projected_total_points", 0.0) or 0.0),
+            "espn_week": week,
+            "espn_week_proj": weekly_projection(p, week),
+            "percent_owned": float(owned) if isinstance(owned, (int, float)) else -1.0,
+        })
+    return pl.DataFrame(rows, schema=FREE_AGENT_SCHEMA)
+
+
+def fetch_free_agents(year: int = SEASON_AHEAD, size: int = FREE_AGENT_SIZE,
+                      ) -> tuple[pl.DataFrame, bool]:  # pragma: no cover - network
+    """The league's free agents from one bulk request: `(validated frame, hit the cap)`."""
+    from hub.contracts import ESPN_FREE_AGENTS
+    league = league_settings(year).league
+    week = getattr(league, "current_week", None)
+    got = league.free_agents(week=week, size=size)
+    return ESPN_FREE_AGENTS.validate(free_agent_rows(got, week)), len(got) >= size
+
+
 # --- league transaction history -------------------------------------------
 #
 # `docs/championship-leverage.md` gates its trade evaluator on measuring whether this

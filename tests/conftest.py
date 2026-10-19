@@ -200,6 +200,7 @@ _QUOTED = re.compile(r"'((?:[^']|'')*/(?:[^']|'')*)'")
 # that reach the store's default name a base or a week instead.
 REDIRECTED_DEFAULTS = {
     "hub.publish.ROSTER_PARQUET": ("processed", "roster.parquet"),
+    "hub.fetch.free_agents.FREE_AGENTS_PARQUET": ("processed", "free_agents.parquet"),
     "hub.inspect.DATA": ("processed",),
     "hub.inspect.RAW": ("raw", "nflverse"),
     "hub.draft.state.STATE": ("processed", "draft_state.json"),
