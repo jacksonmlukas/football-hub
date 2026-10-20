@@ -1,13 +1,15 @@
 """Which source sets the published lineup this week: the model (`mu`) or weekly consensus (#492).
 
 **The decision.** Issue #492, adopted 2026-10-16: weekly expert consensus rank (FantasyPros ECR)
-sets the lineup as a **provisional rule** under ADR-0014 from **week 8 of 2026**, until a
-forward-gated model beats it. Week 7 and earlier keep the rule they were set by, `mu`
-(`hub.season.roster.lock`'s best lineup by summed `mu`). What reopens it is the forward
+sets the lineup as a **provisional rule** under ADR-0014 from **week 7 of 2026**, until a
+forward-gated model beats it. Week 6 and earlier keep the rule they were set by, `mu`
+(`hub.season.roster.lock`'s best lineup by summed `mu`). The 2026-10-16 text said "week 8"
+because it took Sunday 10-18 for week 7; the schedule has it as week 6 and Sunday 10-25 as week 7,
+and the maintainer restated the boundary to week 7 on 2026-10-20. What reopens it is the forward
 record `hub.season.lineup_journal` keeps.
 
 **Point in time.** The boundary is read off the roster's own scoring period (`espn_week`), never
-the calendar, so replaying a week-7 roster today sets the lineup it set then. The ECR read is the
+the calendar, so replaying a week-6 roster today sets the lineup it set then. The ECR read is the
 journal's: the newest capture taken before that week's deadline (`lineup_journal.ecr_ranks`).
 
 **Nothing in the model changes.** This module chooses which *source* the lineup is set by. `mu`,
@@ -45,7 +47,7 @@ from hub.season.roster import Lock, lock
 
 # The decided boundary (#492): the first week of each season whose lineup ECR sets. A season
 # absent here is set by `mu` throughout -- the rule was adopted for 2026 and says nothing else.
-ECR_FROM_WEEK: dict[int, int] = {2026: 8}
+ECR_FROM_WEEK: dict[int, int] = {2026: 7}
 
 MU, ECR = "mu", "ecr"
 PROVISIONAL = "provisional"
@@ -62,7 +64,7 @@ ECR_LINEUP_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the we
 MU_BASIS = ("the model's weekly mean (mu): the board's blend of ESPN's season average and "
             "last season's xFP per game; best legal lineup by summed mu")
 ECR_CAVEAT = ("provisional rule (ADR-0014), not a measured edge: no gate has run on it; it sets "
-              "the lineup from week 8 (#492) until a forward-gated model beats it, and every "
+              "the lineup from week 7 (#492) until a forward-gated model beats it, and every "
               "week is journalled so the forward record can reopen it")
 
 

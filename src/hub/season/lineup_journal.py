@@ -1,7 +1,7 @@
 """The lineup each source would set, week by week, and what each one scored (#492).
 
 **Why this exists.** ADR-0014 / issue #492: weekly consensus rank (ECR) is to set the lineup
-provisionally from week 8, "until a forward-gated model beats it", and "the journal's forward
+provisionally from week 7, "until a forward-gated model beats it", and "the journal's forward
 record" is what reopens that. So three sources are written down every week, side by side:
 
 - `mu`   -- the current rule: `hub.season.roster.lock`'s best lineup by mu.
@@ -10,7 +10,7 @@ record" is what reopens that. So three sources are written down every week, side
 - `espn` -- the best lineup by ESPN's own projection for the scoring period.
 
 Beside them, `rule` records what was actually published that week (`hub.season.lineup_rule`):
-`mu` through week 7, weekly ECR from week 8 as a provisional rule, the capture week it was set
+`mu` through week 6, weekly ECR from week 7 as a provisional rule, the capture week it was set
 on, and the reason whenever that was not the week's own ECR. Once scored, `realised.set` is
 that lineup's points.
 
