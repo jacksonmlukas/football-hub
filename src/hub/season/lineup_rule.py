@@ -15,6 +15,11 @@ journal's: the newest capture taken before that week's deadline (`lineup_journal
 ECR lineup is searched by the same `hub.season.lineup.best_by_points` over the same pool `lock`
 uses (projected, startable, not on bye, available), scored by rank instead of by `mu`.
 
+**A kicked-off game closes the call on both paths (#516).** `lock` pins a started starter into
+the lineup and drops a started bench player from the pool *before* the ranks are read, so a
+player missing from a lineup capture taken after Thursday's games is not treated as unranked:
+his call is decided, not open. The ranks only ever choose among the decisions still open.
+
 **It degrades, it never raises.** The week's strict capture first. If it is missing, the week's
 *lineup capture* (`hub.fetch.consensus --lineup`: the newest page dated after the previous week's
 last game and before the week's first Sunday, taken after Thursday's games because the archive

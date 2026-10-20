@@ -70,6 +70,9 @@ CONDITIONAL: dict[str, dict[str, str]] = {
         # published before it, and the page says nothing about the rule when it is absent.
         # Remove this entry once the committed file carries it.
         "lineup_rule": "written from the #492 rule switch on; the committed file predates it",
+        # #516: only while someone's game has kicked off, so that a week nobody has played yet
+        # publishes the bytes it did before; the page renders no lock note without it.
+        "locked": "written only once a rostered player's game has kicked off",
     },
 }
 

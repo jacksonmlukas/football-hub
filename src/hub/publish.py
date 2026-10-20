@@ -942,6 +942,10 @@ def _roster_waiver(df: pl.DataFrame) -> dict[str, Any]:
         return waiver_mod.unavailable(f"the ranking could not be built ({type(e).__name__})")
 
 
+# Why a locked player is neither started nor sat (#516), on the artifact and the panel.
+LOCKED_REASON = "locked: game started"
+
+
 def roster(out: Path | None = None,
            path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
@@ -1022,6 +1026,13 @@ def roster(out: Path | None = None,
             # His team has no game this week (#490): the mechanical half of `can_start`.
             "on_bye": r.get("on_bye", False),
         })
+    # Whose game has kicked off (#516): kept as set, never in `start`/`sit`, and said so on the
+    # row and beside the lists. Only when someone is locked, so a week nobody has played yet
+    # publishes byte-for-byte what it did before the lock existed.
+    if lk.locked:
+        shut = set(lk.locked)
+        for row in rows:
+            row["locked"] = row["player"] in shut
     held = set(lk.withheld)
     # Dated from the parquet, not from this run. The roster CLI serves last-good when ESPN is
     # unreachable and no longer rewrites the file, so this mtime is the last *successful*
@@ -1063,6 +1074,11 @@ def roster(out: Path | None = None,
                         # snap trend and weekly ECR shown beside and never sorted on. Last-good
                         # pool, labelled; a missing pool is `missing` with the command to run.
                         waiver=_roster_waiver(df))
+    if lk.locked:
+        # Appended after the envelope's fields, as keywords: `test_page_reads` finds a
+        # conditional field's producer by its keyword name.
+        payload.update(locked=list(lk.locked),
+                       locked_reasons=dict.fromkeys(lk.locked, LOCKED_REASON))
     # The new fields' own contract (#479): a malformed one is a stale call with the reason,
     # served as last-good, like every other call the lock cannot stand behind.
     from hub.contracts import ContractViolation, check_roster_artifact

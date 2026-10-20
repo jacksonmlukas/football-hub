@@ -121,8 +121,16 @@ export function lineupHeadline(ros, stale) {
          injury field does not carry suspensions; its games projection does, and these are short
          of a full slate. They are excluded from the lineup below.</p>`
     : "";
+  // Players whose game has kicked off (#516): the league will not move them, so the call keeps
+  // them as set and no swap names them. Absent until a kickoff, so a week nobody has played yet
+  // renders as it always did.
+  const lockedHtml = (ros?.locked ?? []).map(n => whoIs(n, byName)).join(", ");
+  const locks = lockedHtml
+    ? `<p class="legend lineup-locked">Locked, game started: ${lockedHtml}. Kept as set; no swap
+         below names them.</p>`
+    : "";
   if (gain == null) {
-    return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip + note;
+    return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip + locks + note;
   }
   const side = n => n == null ? "&mdash;" : whoIs(n, byName);
   const pairs = pairSwaps(ros.sit ?? [], ros.start ?? [], byName);
@@ -130,18 +138,18 @@ export function lineupHeadline(ros, stale) {
     .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
   if (byRank) {
     if (!pairs.length) {
-      return `<p class="lineup-call">The set lineup is already the consensus lineup.</p>` + changed + totals + chip + note;
+      return `<p class="lineup-call">The set lineup is already the consensus lineup.</p>` + changed + totals + chip + locks + note;
     }
     return `<p class="lineup-call">Consensus rank calls ${pairs.length} swap${pairs.length === 1 ? "" : "s"}.</p>`
-      + changed + totals + chip + `<ul class="swaps">${swaps}</ul>`
+      + changed + totals + chip + locks + `<ul class="swaps">${swaps}</ul>`
       + `<p class="legend">Consensus ranks are captured before the week's first game and do not know
          who is hurt since, so settle it at lock.</p>` + note;
   }
   if (!(gain > 0.05)) {
-    return `<p class="lineup-call">The set lineup is already the best available one.</p>` + changed + totals + chip + note;
+    return `<p class="lineup-call">The set lineup is already the best available one.</p>` + changed + totals + chip + locks + note;
   }
   return `<div class="lineup-gain">+${fmt(gain, 1)}<span class="unit"> pts a week</span></div>`
-    + changed + totals + chip + `<ul class="swaps">${swaps}</ul>`
+    + changed + totals + chip + locks + `<ul class="swaps">${swaps}</ul>`
     + `<p class="legend">These projections are season-long and do not know who is hurt this week,
          so settle it at lock.</p>` + note;
 }

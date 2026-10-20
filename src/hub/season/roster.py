@@ -67,10 +67,17 @@ class WeekGames(NamedTuple):
     still to be played from now (regular season only). Both are keyed by the schedule's own
     abbreviations (`playoff_sos.canon_team`'s vocabulary), so a roster row joins through the
     same canon `attach_bye` uses.
+
+    `started` are the teams whose game *in this week* has kicked off by the moment asked
+    (#516): Thursday night's two teams from Thursday's kickoff on. Their players' lineup calls
+    are closed -- the league will not move them -- so `lock` keeps a started starter where he is
+    and never starts a started bench player. Empty before the week's first kickoff, which is
+    what keeps a week nobody has played yet exactly as it was.
     """
     week: int
     bye: frozenset[str]
     remaining: Mapping[str, int]
+    started: frozenset[str] = frozenset()
 
 
 REGULAR_SEASON_WEEKS = 18
@@ -84,6 +91,11 @@ def week_games(games: pl.DataFrame, at: datetime | None = None) -> WeekGames | N
     plays Thursday or Monday is *in* the week -- a bye is a team absent from the week's
     fixtures, not a team without a game on Sunday. A game with no kickoff in the schedule
     counts as ahead while it has no result. After the regular season there is no bye to name.
+
+    The week's games that are *not* ahead are the ones that have kicked off (`started`): the
+    same test, read the other way, so no second clock and no second notion of "kicked off".
+    `kickoff` is naive UTC (`hub.schedule.kickoff_expr` does the Eastern, DST-aware conversion)
+    and `at` is naive UTC, so the comparison is like for like.
     """
     from hub.draft.playoff_sos import canon_team
     moment = at or datetime.now(UTC).replace(tzinfo=None)
@@ -93,7 +105,8 @@ def week_games(games: pl.DataFrame, at: datetime | None = None) -> WeekGames | N
     ahead_ko = (pl.col("kickoff") > pl.lit(moment)) if has_ko else pl.lit(False)
     no_ko = pl.col("kickoff").is_null() if has_ko else pl.lit(True)
     unplayed = pl.col("result").is_null() if has_res else pl.lit(True)
-    ahead = reg.filter(ahead_ko.fill_null(False) | (no_ko & unplayed))
+    is_ahead = ahead_ko.fill_null(False) | (no_ko & unplayed)
+    ahead = reg.filter(is_ahead)
     if ahead.is_empty():
         return None
     week = int(cast(int, ahead["week"].min()))
@@ -107,7 +120,8 @@ def week_games(games: pl.DataFrame, at: datetime | None = None) -> WeekGames | N
     remaining: dict[str, int] = dict.fromkeys(everyone, 0)
     for t in teams(ahead):
         remaining[t] += 1
-    return WeekGames(week, frozenset(everyone - playing), remaining)
+    started = set(teams(reg.filter((pl.col("week") == week) & ~is_ahead)))
+    return WeekGames(week, frozenset(everyone - playing), remaining, frozenset(started))
 
 
 def _standard(games: pl.Series) -> float | None:
@@ -271,6 +285,7 @@ def build(espn: pl.DataFrame, board: pl.DataFrame,
         # CONTEXT.md, which keeps them apart on purpose.
         (pl.col("slot") != INJURED_RESERVE).alias("can_start"),
         _on_bye(week),
+        _kicked_off(week),
     ).sort(["projected", "mu"], descending=[True, True], nulls_last=True)
 
 
@@ -282,6 +297,16 @@ def _on_bye(week: WeekGames | None) -> pl.Expr:
     from hub.draft.playoff_sos import canon_team
     return (pl.col("nfl_team").map_elements(canon_team, return_dtype=pl.Utf8)
               .is_in(sorted(week.bye)).fill_null(False).alias("on_bye"))
+
+
+def _kicked_off(week: WeekGames | None) -> pl.Expr:
+    """Whether the player's team's game in the lineup week has kicked off (#516). False where
+    the schedule is unknown or the team cannot be placed: a lock nobody can show is not one."""
+    if week is None:
+        return pl.lit(False).alias("kicked_off")
+    from hub.draft.playoff_sos import canon_team
+    return (pl.col("nfl_team").map_elements(canon_team, return_dtype=pl.Utf8)
+              .is_in(sorted(week.started)).fill_null(False).alias("kicked_off"))
 
 
 class Lock(NamedTuple):
@@ -307,6 +332,10 @@ class Lock(NamedTuple):
     start: list[str]                 # who should start, availability respected
     bench: list[str]                 # set starters who should not
     withheld: list[str]              # excluded as unavailable, whatever they project
+    # Projected players whose game has kicked off (#516): a started starter is kept in
+    # `best_lineup` as set, a started bench player is out of the pool, and neither is ever in
+    # `start` or `bench`. Empty -- and the Lock exactly what it was before -- until a kickoff.
+    locked: tuple[str, ...] = ()
 
 
 def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
@@ -324,10 +353,28 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
     Jacobs`: the headline argued for keeping him, which is the same defect this function
     exists to prevent, wearing the number instead of the caveat. A player who cannot play
     scores nothing, so the lineup as set is worth what the rest of it is worth.
+
+    **A game that has kicked off closes its players' calls (#516).** The Saturday publish runs
+    after Thursday night's game, and the week's schedule keeps Thursday's teams in the week, so
+    without this the lock could SIT a starter who has already played or START a bench player who
+    can no longer be moved. A started starter is pinned into the lineup as set -- whatever his
+    availability or rank, since nothing can be done about him -- and a started bench player
+    leaves the pool. Both sides of the comparison carry the pinned starters, so `gain` counts
+    only the decisions still open. Read off `kicked_off`, which `build` writes from the week's
+    schedule at the sync's own moment; absent on a parquet that predates it.
     """
     from hub.season.lineup import NoLegalLineup, TooManyLineups, best_by_points
 
     proj = df.filter(pl.col("projected"))
+    started: pl.Expr = pl.lit(False)
+    # GUARD lineup-respects-kickoff: a player whose game has kicked off is never moved
+    if "kicked_off" in proj.columns:
+        started = pl.col("kicked_off").fill_null(False)
+    # /GUARD
+    locked = tuple(sorted(proj.filter(started)["player"]))
+    pinned = proj.filter(started & pl.col("starting"))
+    if locked:
+        proj = proj.filter(~started)
     # Injured reserve first, and `include_unavailable` does not reach it: the override exists
     # to see a number you are declining, and there is no number to decline on a slot the
     # league will not start. Guarded on presence because `roster.parquet` on disk predates
@@ -342,27 +389,50 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
         else eligible.filter(pl.col("available"))
     withheld = ([] if pool.height == proj.height
                 else sorted(set(proj["player"]) - set(pool["player"])))
+    if not pinned.is_empty():
+        # Searched with a score no open player can reach, so every legal lineup the search
+        # prefers holds every pinned starter -- they were set legally, so one exists. Not
+        # through `_by_rank`: a started player missing from a ranking taken after his game is
+        # not unranked, he is decided.
+        search = pl.concat(
+            [pool if ranks is None else _by_rank(pool, ranks),
+             pinned.with_columns(((pl.col("mu") if ranks is None else pl.lit(0.0)) + PIN)
+                                 .alias("mu"))],
+            how="diagonal_relaxed")
+        pool = pl.concat([pool, pinned], how="diagonal_relaxed")
+    else:
+        search = pool if ranks is None else _by_rank(pool, ranks)
     if pool.is_empty():
-        return Lock(None, None, None, [], [], [], withheld)
+        return Lock(None, None, None, [], [], [], withheld, locked)
 
     try:
-        best = best_by_points(pool if ranks is None else _by_rank(pool, ranks))["starters"]
+        best = best_by_points(search)["starters"]
     except (NoLegalLineup, TooManyLineups):
         # Withholding can make a thin roster unfillable, and a lock that raises would take
         # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
         # withheld, which is the actionable half, and no comparison -- which means no lineup
         # either. Both are empty here so that a reader of either one sees the same refusal.
-        return Lock(None, None, None, [], [], [], withheld)
+        return Lock(None, None, None, [], [], [], withheld, locked)
     # Priced over `pool`, so both totals count the same players. A withheld starter drops out
     # of the set lineup's value rather than out of one side of a subtraction.
     set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
     # In `mu` whichever source chose the lineup: under ranks this is what the model says the
     # consensus lineup is worth, so `gain` may be negative, and it is the lineup that is the call.
-    best_total = float(best["mu"].sum() if ranks is None else
+    # Read back from `pool` whenever the search's `mu` is not the model's (ranks, or the pin).
+    best_total = float(best["mu"].sum() if ranks is None and pinned.is_empty() else
                        pool.filter(pl.col("player").is_in(best["player"].to_list()))["mu"].sum())
-    chosen, was = set(best["player"]), set(proj.filter(pl.col("starting"))["player"])
+    chosen = set(best["player"])
+    was = set(proj.filter(pl.col("starting"))["player"]) | set(pinned["player"])
     return Lock(set_total, best_total, best_total - set_total,
-                sorted(chosen), sorted(chosen - was), sorted(was - chosen), withheld)
+                sorted(chosen), sorted(chosen - was), sorted(was - chosen - set(locked)),
+                withheld, locked)
+
+
+# Added to a started starter's search score (#516) so that the best lineup always holds him. Any
+# value above the largest legal lineup's total gives the same lineup.
+PIN = not_an_input(
+    1_000_000.0, "an offset pinning a started starter into the lineup search; any value above "
+                 "a lineup's largest total gives the same lineup")
 
 
 # A rank is lower-is-better and the lineup search maximises a total, so it is handed a score that
@@ -528,6 +598,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
             print(f"    START  {p}")
         for p in lk.bench:
             print(f"    SIT    {p}")
+    if lk.locked:
+        print("\n  locked -- game started, kept as set:")
+        for pl_name in lk.locked:
+            print(f"    {pl_name}")
     if bad := degenerate(df, lk):
         print(f"\n  WARNING: not a lineup call -- {bad}", file=sys.stderr)
     if lk.withheld:
