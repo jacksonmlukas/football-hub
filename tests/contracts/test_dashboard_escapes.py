@@ -2031,6 +2031,22 @@ def test_a_lineup_not_set_by_the_weeks_own_consensus_says_why_in_the_unconfirmed
     assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no ECR at all.</p>' in out
 
 
+def test_a_lineup_set_on_the_lineup_capture_says_when_its_ranks_are_from(node):
+    """Ranks taken after Thursday's games set the lineup with the date beside the rule -- never
+    shown as a pre-kickoff capture -- and the provisional caveat stays."""
+    note = "consensus ranks as of Fri 2026-10-23, taken after Thursday's games"
+    late = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "scrape_date": "2026-10-23",
+                                       "note": note})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=late))
+    assert ("Lineup set by weekly consensus rank (ECR) (consensus ranks as of Fri 2026-10-23, "
+            "taken after Thursday&#39;s games):") in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    hostile = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "note": HOSTILE})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=hostile))
+    assert "<script>" not in out and "&lt;script&gt;" in out
+    assert "taken after" not in _headline(node, ECR_ROSTER), "a strict capture says nothing"
+
+
 def test_an_artifact_from_before_the_switch_says_nothing_about_the_rule(node):
     assert "lineup-rule" not in _headline(node, SWAP_ROSTER)
 
