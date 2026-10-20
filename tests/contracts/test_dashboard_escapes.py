@@ -2003,14 +2003,14 @@ def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_
     assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
 
 
-# --- what set the lineup: mu through week 7, weekly consensus rank from week 8 (#492) ----------
+# --- what set the lineup: mu through week 6, weekly consensus rank from week 7 (#492) ----------
 #
 # Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and is
 # negative whenever the model rates the consensus swap lower -- which is exactly the week the old
 # headline would have said "already the best available one" over a lineup it was changing.
 
-ECR_RULE = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 8,
-            "ecr_from_week": 8, "ecr_week": 8, "reason": None}
+ECR_RULE = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 7,
+            "ecr_from_week": 7, "ecr_week": 7, "reason": None}
 ECR_ROSTER = dict(SWAP_ROSTER, withheld=[], sit=["Weak RB"], start=["Strong RB"],
                   gain=-2.0, set_total=80.0, optimal_total=78.0, lineup_rule=ECR_RULE)
 
@@ -2033,10 +2033,10 @@ def test_a_consensus_lineup_is_labelled_a_provisional_rule_and_never_an_edge(nod
 
 
 def test_a_lineup_not_set_by_the_weeks_own_consensus_says_why_in_the_unconfirmed_state(node):
-    stale = dict(ECR_RULE, ecr_week=7, reason=f"no capture for week 8 {HOSTILE}")
+    stale = dict(ECR_RULE, ecr_week=6, reason=f"no capture for week 7 {HOSTILE}")
     out = _headline(node, dict(ECR_ROSTER, lineup_rule=stale))
-    assert "(week 7's capture)" in out
-    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no capture for week 8 &lt;script&gt;' in out
+    assert "(week 6's capture)" in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no capture for week 7 &lt;script&gt;' in out
     assert "<script>" not in out
     mu = dict(ECR_RULE, source="mu", label="model", ecr_week=None, reason="no ECR at all")
     out = _headline(node, dict(SWAP_ROSTER, lineup_rule=mu))
