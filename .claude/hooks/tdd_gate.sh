@@ -115,8 +115,17 @@ select_tests() {
   local mod=${1#src/}; mod=${mod%.py}; mod=${mod//\//.}
   # `test_*.py` only: `tests/` also holds helper modules -- coveragefloor, panelarchive, the
   # guard library -- which reference plenty of modules and contain no tests to run.
-  grep -rl --include='test_*.py' -e "$mod" -e "${mod##*.} import" tests/ 2>/dev/null \
-    | sort | head -20
+  #
+  # `from hub.season import roster` names neither the dotted path nor "roster import", and that
+  # is how most tests import their module: on 2026-10-20 an edit to roster.py selected seven
+  # files that mention it and not test_roster.py. The third pattern is that form; the module's
+  # own test_<leaf>*.py goes first so the head -20 cap can never be what drops it.
+  local leaf=${mod##*.} parent=${mod%.*} w='[^A-Za-z0-9_]'
+  {
+    ls tests/*/test_"$leaf".py tests/*/test_"$leaf"_*.py 2>/dev/null
+    grep -rlE --include='test_*.py' -e "$mod" -e "$leaf import" \
+      -e "from ${parent//./\\.} import ([^#]*$w)?$leaf($w|\$)" tests/ 2>/dev/null | sort
+  } | awk '!seen[$0]++' | head -20
 }
 
 # `mapfile` is bash 4; macOS ships 3.2, and a hook that only works on the maintainer's Linux

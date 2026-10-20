@@ -148,6 +148,20 @@ def test_the_table_escapes_every_cell_without_being_asked(node):
     assert "&lt;script&gt;" in out
 
 
+def test_a_naive_store_timestamp_is_read_as_utc_in_any_reader_timezone(node):
+    """`predicted_at` arrives naive UTC ("2026-10-17 16:58:09"). Read as local time, a reader in
+    Los Angeles saw "locked" off by their UTC offset (found 2026-10-20). Planted: without the
+    normalisation in `ago` this test fails."""
+    body = (f"import {{ ago }} from {_mod('format.js')};\n"
+            "const t = new Date(Date.now() - 2 * 3600e3).toISOString();\n"
+            "console.log(ago(t.slice(0, 19).replace('T', ' ')), ago(t.slice(0, 19)), ago(t));")
+    for tz in ("America/Los_Angeles", "Asia/Tokyo", "UTC"):
+        got = subprocess.run([node, "--input-type=module", "-e", body], capture_output=True,
+                             text=True, timeout=30, env={**os.environ, "TZ": tz})
+        assert got.returncode == 0, got.stderr
+        assert got.stdout.split() == ["2h", "ago"] * 3, f"{tz}: {got.stdout!r}"
+
+
 def test_a_missing_value_renders_as_nothing_not_as_undefined(node):
     assert _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
                       "console.log('[' + esc(null) + esc(undefined) + ']');") == "[]"
