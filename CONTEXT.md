@@ -21,6 +21,13 @@ FantasyPros' expert consensus ranking (ECR), a rank rather than a pick number. T
 signal available for past seasons, since ADP is published for the current season only.
 _Avoid_: the market, rankings.
 
+**Consensus capture**:
+One dated, kept copy of a week's **Consensus** page. It is **in time** for a player when it was
+taken before that player's own kickoff, and only for those players: a Friday capture is in time for
+Sunday's and Monday's players and for no one who played Thursday. Since 2026-10-20 (ADR-0027) this
+per-player test replaced "before the week's first game".
+_Avoid_: strict capture, pre-Thursday capture (the retired per-week test).
+
 **Betting market**:
 Sportsbook prices — closing spreads and player props. Treated as already-efficient: the repo
 backtests against it to audit itself, never to beat it.
