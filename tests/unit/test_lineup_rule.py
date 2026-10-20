@@ -356,3 +356,77 @@ def test_the_published_roster_shows_the_lineup_capture_and_its_ranks(_publishabl
     assert art["ecr_reason"] is None
     best = sorted(r["player"] for r in art["rows"] if r["best_start"])
     assert best == sorted([*CORE, MU_FLEX])
+
+
+
+# --- #516: a kicked-off game closes the call on the consensus path too ------------------------
+#
+# The lineup capture is taken after Thursday's games, so a Thursday player can be missing from
+# it. Ra One (a set starter) played Thursday and is not on the page; Wd Four (on the bench) also
+# played Thursday. An open search reads Ra One as unranked, SITs him, and STARTs Wd Four.
+
+THURSDAY = ("Ra One", "Wd Four")
+
+
+def _lineup_capture_without(base, drop: tuple[str, ...]) -> None:
+    keep = [p for p in PLAYERS if p[0] not in drop]
+    rows = pl.DataFrame({"player": [p[0] for p in keep], "pos": [p[1] for p in keep],
+                         "team": ["XXX"] * len(keep),
+                         "ecr": [LINEUP_FLIP.get(p[0], p[3]) for p in keep]})
+    doc = consensus.build_lineup(SEASON, 8, rows, date(2026, 10, 23), date(2026, 10, 20),
+                                 date(2026, 10, 22), date(2026, 10, 25), FRIDAY, "d")
+    atomic.write_text(consensus.lineup_path(SEASON, 8, FRIDAY, base),
+                      json.dumps(doc, sort_keys=True) + "\n")
+
+
+def _kicked_off(df: pl.DataFrame, who: tuple[str, ...] = THURSDAY) -> pl.DataFrame:
+    return df.with_columns(pl.col("player").is_in(list(who)).alias("kicked_off"))
+
+
+def test_a_started_player_missing_from_the_lineup_capture_is_not_treated_as_unranked(tmp_path):
+    _lineup_capture_without(tmp_path, ("Ra One",))
+    lk, rule = lineup_rule.decide(_kicked_off(_roster(8)), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_capture is not None
+    assert "Ra One" in lk.best_lineup, "kept as set, not dropped as unranked"
+    assert "Wd Four" not in lk.best_lineup, "started on the bench: never started"
+    assert lk.locked == THURSDAY
+    assert lk.start == [] and lk.bench == [] and lk.gain == pytest.approx(0.0)
+
+
+def test_the_same_capture_without_the_lock_makes_both_moves(tmp_path):
+    """The control: the same capture and roster, nothing kicked off -- Ra One is unranked and
+    sat, Wd Four is started. These are the moves the test above refuses."""
+    _lineup_capture_without(tmp_path, ("Ra One",))
+    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    assert rule.source == "ecr"
+    assert "Ra One" in lk.bench and "Wd Four" in lk.start
+
+
+def test_the_published_roster_says_who_is_locked_and_swaps_neither(_publishable):
+    tmp = _publishable
+    _lineup_capture_without(tmp / "cons", ("Ra One",))
+    art = _published(tmp, _kicked_off(_roster(8)))
+    assert art["locked"] == list(THURSDAY)
+    assert art["locked_reasons"] == dict.fromkeys(THURSDAY, "locked: game started")
+    assert {r["player"] for r in art["rows"] if r["locked"]} == set(THURSDAY)
+    named = {s[k] for s in art["swaps"] for k in ("out", "in")}
+    assert named.isdisjoint(THURSDAY) and not set(art["start"] + art["sit"]) & set(THURSDAY)
+    check_roster_artifact(art)
+
+
+def test_a_week_with_no_kickoff_publishes_byte_identical_json(_publishable):
+    """The column all false is the parquet before #516 (no column): the same bytes."""
+    tmp = _publishable
+    _capture(tmp / "cons", 8)
+    texts = []
+    for df in (_roster(8), _kicked_off(_roster(8), ())):
+        src = tmp / "roster.parquet"
+        df.write_parquet(src)
+        site = tmp / f"site{len(texts)}"
+        publish.roster(out=site, path=src)
+        texts.append((site / "roster.json").read_text())
+    old, new = (json.loads(t) for t in texts)
+    # `generated_at` is the parquet's mtime; everything the lock decided is what is compared.
+    old.pop("generated_at"), new.pop("generated_at")
+    assert json.dumps(old, sort_keys=True) == json.dumps(new, sort_keys=True)
+    assert "locked" not in new and all("locked" not in r for r in new["rows"])

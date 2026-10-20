@@ -16,9 +16,11 @@ export function rosterBody(rows) {
     { label: "espn wk", get: r => r.espn_week_proj == null ? "—" : fmt(r.espn_week_proj, 1) },
     { label: "best XI", get: r => r.best_start ? "\u2713" : "",
       cls: r => r.best_start && !r.starting ? "good" : "" },
+    // A game that has kicked off closes the call (#516); `locked` is on the row only then.
     { label: "status", get: r =>
-        r.available === false ? `out ${r.missing_games} gm`
+        r.locked === true ? "locked: game started"
+          : r.available === false ? `out ${r.missing_games} gm`
           : ["ACTIVE", "NORMAL", ""].includes(r.injury_status) ? "" : r.injury_status,
-      cls: r => r.available === false ? "bad" : "" },
+      cls: r => r.locked !== true && r.available === false ? "bad" : "" },
   ], rows);
 }

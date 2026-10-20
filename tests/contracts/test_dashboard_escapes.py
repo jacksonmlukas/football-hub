@@ -2680,3 +2680,33 @@ def test_a_page_that_ignores_the_manifests_weeks_turns_the_archive_red(node, tmp
     ]:
         got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+
+# --- #516: a player whose game has kicked off is shown as locked, never as a swap -----------
+
+def test_the_headline_names_the_locked_players_with_position_and_team(node):
+    ros = dict(SWAP_ROSTER, locked=["Thu QB"],
+               rows=[*SWAP_ROSTER["rows"], _row("Thu QB", "QB", "DAL", locked=True)])
+    out = _headline(node, ros)
+    note = out[out.index("Locked, game started: "):]
+    assert _who("Thu QB", "QB", "DAL") in note[:note.index("</p>")]
+    assert out.index("Locked, game started") < out.index('class="swaps"')
+
+
+def test_a_week_with_nobody_locked_renders_no_lock_note(node):
+    assert "Locked" not in _headline(node, SWAP_ROSTER)
+
+
+def test_a_hostile_locked_name_is_escaped(node):
+    out = _headline(node, dict(SWAP_ROSTER, locked=[HOSTILE],
+                               rows=[*SWAP_ROSTER["rows"], _row(HOSTILE, "QB", HOSTILE)]))
+    assert "<script>" not in out and out.count("&lt;script&gt;") >= 2
+
+
+def test_the_roster_table_says_locked_rather_than_out(node):
+    rows = [_row("Thu QB", "QB", "DAL", locked=True, available=False, missing_games=2),
+            _row("Hurt Back", "RB", "MIA", available=False, missing_games=3)]
+    out = _run(node, f"import {{ rosterBody }} from {_mod('panels/roster.js')};\n"
+                     f"console.log(rosterBody({json.dumps(rows)}));")
+    assert "locked: game started" in out and "out 3 gm" in out and "out 2 gm" not in out
