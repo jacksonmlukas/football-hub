@@ -974,6 +974,11 @@ def roster(out: Path | None = None,
     wk = lineup_journal.roster_week(df)
     ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
     lk, rule = lineup_rule.decide(df, SEASON_AHEAD, wk, ecr=ecr_by_key, ecr_reason=ecr_reason)
+    if rule.ecr_capture is not None and wk is not None:
+        # Set on the week's lineup capture (taken after Thursday): the `ecr` column shows the
+        # ranks that set it, and `lineup_rule.ecr_capture.note` says when they are from.
+        ecr_by_key, _ = lineup_rule.lineup_ecr(SEASON_AHEAD, wk)
+        ecr_reason = None
     # The lock's own lineup, read rather than rebuilt. This used to reconstruct it from the
     # two deltas -- the set starters, less those to sit, plus those to start -- which agrees
     # with the lock wherever it priced a comparison and says nothing at all where it did not.

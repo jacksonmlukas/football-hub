@@ -1170,6 +1170,13 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
         if (src != rule.get("rule") or stale_ecr) and not rule.get("reason"):
             problems.append("lineup_rule departs from the week's own rule with no reason")
         # /GUARD
+        late = rule.get("ecr_capture")
+        # GUARD lineup-capture-labelled [unit/test_lineup_rule.py]: a lineup capture says so
+        # Ranks taken after Thursday are shown with their date, never as a pre-kickoff capture.
+        if late is not None and not (isinstance(late, dict) and late.get("purpose") == "lineup"
+                                     and late.get("note") and late.get("scrape_date")):
+            problems.append("lineup_rule.ecr_capture is not a labelled lineup capture")
+        # /GUARD
     waiver = payload.get("waiver")
     if waiver is not None:
         # GUARD waiver-labelled [unit/test_waiver_roster.py]: a provisional rule on an unshrunk

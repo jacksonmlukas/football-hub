@@ -77,11 +77,15 @@ export function lineupChanges(ros, stale, byName) {
 // week 8 as a provisional rule (ADR-0014), which is labelled so wherever it is shown and never
 // called an edge. A reason -- the week's capture missing, served last-good, or a fall back to
 // `mu` -- renders in the unconfirmed state. An artifact from before the switch shipped carries
-// no `lineup_rule` and nothing is said.
+// no `lineup_rule` and nothing is said. Ranks from the week's lineup capture -- taken after
+// Thursday's games, because the archive publishes on Fridays -- carry `ecr_capture.note`, which
+// says so beside the rule; nothing calls them a pre-kickoff capture.
 export function ruleNote(rule) {
   if (!rule || typeof rule !== "object") return "";
+  const late = rule.ecr_capture && typeof rule.ecr_capture.note === "string"
+    ? ` (${esc(rule.ecr_capture.note)})` : "";
   const from = rule.ecr_week != null && rule.ecr_week !== rule.week
-    ? ` (week ${esc(String(rule.ecr_week))}'s capture)` : "";
+    ? ` (week ${esc(String(rule.ecr_week))}'s capture)` : late;
   const said = rule.source === "ecr"
     ? `Lineup set by weekly consensus rank (ECR)${from}: a provisional rule (ADR-0014) from week
          ${esc(String(rule.ecr_from_week ?? ""))}, not a measured edge; journalled so its forward
