@@ -111,3 +111,7 @@ def test_a_stalled_free_agent_read_serves_last_good_with_the_reason(
     assert "serving last-good" in line and "Timeout" in line
     assert df["player"].to_list() == ["Kept"]
     assert "Timeout" in FA.read_meta(parquet)["last_error"]
+
+
+def test_everything_but_get_passes_through_to_requests():
+    assert E._BoundedRequests().exceptions is requests.exceptions
