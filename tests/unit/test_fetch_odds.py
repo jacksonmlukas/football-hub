@@ -357,7 +357,6 @@ def test_it_writes_the_lines_table_the_asof_join_reads(transport, teams, schedul
     transport()
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
                   now=dt.datetime(2025, 9, 3, 12))
-    from hub import store
     got = store.sql("SELECT * FROM lines", base=paths["store"])
     assert {"game_id", "close_spread", "captured_at"} <= set(got.columns)
 
@@ -369,7 +368,6 @@ def test_repeated_snapshots_accumulate_rather_than_overwrite(transport, teams, s
     for hour in (9, 12, 15):
         odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
                       now=dt.datetime(2025, 9, 3, hour))
-    from hub import store
     assert store.sql("SELECT count(*) n FROM lines", base=paths["store"])["n"][0] == 3
 
 
@@ -422,7 +420,8 @@ def test_the_strict_zip_never_protected_against_this(monkeypatch):
 
 # --- whose failure was it (issue #119) ------------------------------------
 
-def test_the_betting_market_not_answering_is_reported_as_the_markets(monkeypatch, paths, capsys):
+def test_the_betting_market_not_answering_is_reported_as_the_markets(
+        teams, schedule, monkeypatch, paths, capsys):
     """The half that was always right, kept as the control. Without it the test below passes
     on a CLI that calls everything a repo-side defect, which is the same error inverted."""
     def _down(params, key):
@@ -436,7 +435,8 @@ def test_the_betting_market_not_answering_is_reported_as_the_markets(monkeypatch
     assert "ConnectionError" in err
 
 
-def test_the_api_key_never_reaches_stderr_when_the_transport_fails(monkeypatch, paths, capsys):
+def test_the_api_key_never_reaches_stderr_when_the_transport_fails(
+        teams, schedule, monkeypatch, paths, capsys):
     """The key travels as a query parameter, and `requests` quotes the full URL in its
     `HTTPError` and `ConnectionError` text -- so a transport failure printed as-is put the
     key on stderr, which on the Actions runner is the public job log. Scrubbed on the way
@@ -473,14 +473,56 @@ def test_a_failure_after_the_credit_is_spent_is_not_the_markets(
     that worked, and the retry spends another against a metered monthly quota.
     """
     transport()
+    monkeypatch.setattr(odds, "RAW", paths["store"].parent / "raw-odds")
+    monkeypatch.setattr(odds, "_schedule", lambda season: pl.DataFrame({
+        "game_id": [], "season": [], "week": [], "gameday": [], "home_team": [],
+        "away_team": []}))
+    monkeypatch.setattr(odds, "_with_staleness", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("archive unreadable")))
+
+    assert odds.main(["--snapshot", "--state-path", str(paths["state"])]) == 1
+    err = capsys.readouterr().err
+    assert "unavailable" not in err, "the market answered; it is not the thing that failed"
+    assert "a credit was spent" in err and "archive unreadable" in err
+    assert "not the betting market's" in err
+
+
+def test_a_schedule_outage_spends_no_credit(transport, teams, monkeypatch, paths, capsys):
+    """#518. The schedule is the free, fallible input, so it is resolved before the paid call:
+    an nflverse outage costs nothing, loses nothing, and the run says why."""
+    calls = transport()
     monkeypatch.setattr(odds, "_schedule", lambda season: (_ for _ in ()).throw(
         RuntimeError("nflverse schedules did not load")))
 
     assert odds.main(["--snapshot", "--state-path", str(paths["state"])]) == 1
     err = capsys.readouterr().err
-    assert "unavailable" not in err, "the market answered; it is not the thing that failed"
-    assert "a credit was spent" in err and "nflverse schedules did not load" in err
-    assert "not the betting market's" in err
+    assert calls == [], "no paid request may be formed when the schedule cannot be had"
+    assert not paths["state"].exists(), "no balance was read off a response that never came"
+    assert "no credit spent" in err and "nflverse schedules did not load" in err
+
+
+def test_a_paid_response_is_kept_when_a_later_step_fails(
+        transport, teams, schedule, monkeypatch, paths, capsys):
+    """#518. The credit is spent and the response is the only copy; a failure after it must
+    leave the payload on disk, outside the glob the readers take snapshots from."""
+    transport()
+    monkeypatch.setattr(odds, "_with_staleness", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("archive unreadable")))
+    when = dt.datetime(2025, 9, 1, 12, 0, 0)
+
+    with pytest.raises(odds.SnapshotIncomplete) as ei:
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"], now=when)
+    raw = paths["store"] / "_raw" / "odds" / "raw-20250901T120000.json"
+    assert raw.exists() and str(raw) in str(ei.value)
+    assert not raw.is_relative_to(store.snapshot_root(paths["store"])), \
+        "state/ is committed and holds no vendor payload; the kept response is raw data"
+    assert odds.RAW.is_relative_to(odds.ROOT / "data"), "the real location is under data/"
+    assert not odds.RAW.is_relative_to(odds.STATE_DIR)
+    doc = json.loads(raw.read_text())
+    assert doc["payload"][0]["home_team"] == "Philadelphia Eagles"
+    assert doc["headers"]["x-requests-remaining"] == "400"
+    assert not list(store.snapshot_root(paths["store"]).glob("*/wk*/snap-*.json"))
+    assert not list(raw.parent.glob("*.tmp*")), "written atomically; no partial left"
 
 
 def test_a_contract_failure_leaves_no_half_written_snapshot(
@@ -738,7 +780,6 @@ def test_a_snapshot_is_stamped_against_the_polls_already_stored(transport, teams
     for day in (1, 2, 3):
         odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"],
                       now=dt.datetime(2025, 9, day, 12))
-    from hub import store
     got = store.sql("SELECT polls_unmoved, unmoved_since FROM lines ORDER BY captured_at",
                     base=paths["store"])
     assert got["polls_unmoved"].to_list() == [1, 2, 3]
@@ -760,7 +801,6 @@ def test_the_archive_on_disk_is_not_rewritten_to_carry_the_columns(transport, te
                                                                    schedule, paths):
     """Immutability is the as-of guarantee. Older rows get the columns on read, from the
     same derivation, never from a backfill."""
-    from hub import store
     old = pl.DataFrame({"game_id": ["2025_01_DAL_PHI"], "close_spread": [8.0],
                         "captured_at": [dt.datetime(2025, 8, 30, 12)]})
     p = store.write(old, "lines", "nfl", 2025, 1, base=paths["store"], name="snap-old")
@@ -928,7 +968,6 @@ def test_a_floor_that_never_moved_is_zero_with_a_zero_interval():
 
 def _archive_of(store_dir, *snaps):
     """Write snapshots (captured_at, {game_id: spread}) as the poller would, weeks by id."""
-    from hub import store
     for when, spreads in snaps:
         rows = pl.DataFrame({"game_id": list(spreads), "close_spread": list(spreads.values()),
                              "captured_at": [when] * len(spreads)},
@@ -1336,3 +1375,18 @@ def test_the_moneyline_probability_reaches_the_stored_row(
     transport(events=[ev])
     df = odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
     assert df["ml_home_prob"].to_list() == [pytest.approx(0.6 / (0.6 + 100 / 230))]
+
+
+def test_a_raw_response_that_cannot_be_kept_does_not_mask_the_failure(
+        transport, teams, schedule, monkeypatch, paths):
+    """#518. Keeping the payload is best effort: if the write itself fails, the error the
+    operator sees is still the step that failed first."""
+    transport()
+    monkeypatch.setattr(odds, "_with_staleness", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("archive unreadable")))
+    paths["store"].mkdir()
+    (paths["store"] / "_raw").write_text("a file where the tree should be")
+
+    with pytest.raises(odds.SnapshotIncomplete, match="archive unreadable") as ei:
+        odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    assert "raw response is kept" not in str(ei.value)
