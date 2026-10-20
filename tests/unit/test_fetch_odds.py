@@ -473,6 +473,7 @@ def test_a_failure_after_the_credit_is_spent_is_not_the_markets(
     that worked, and the retry spends another against a metered monthly quota.
     """
     transport()
+    monkeypatch.setattr(odds, "RAW", paths["store"].parent / "raw-odds")
     monkeypatch.setattr(odds, "_schedule", lambda season: pl.DataFrame({
         "game_id": [], "season": [], "week": [], "gameday": [], "home_team": [],
         "away_team": []}))
@@ -511,8 +512,12 @@ def test_a_paid_response_is_kept_when_a_later_step_fails(
 
     with pytest.raises(odds.SnapshotIncomplete) as ei:
         odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"], now=when)
-    raw = store.snapshot_root(paths["store"]) / "raw" / "raw-20250901T120000.json"
+    raw = paths["store"] / "_raw" / "odds" / "raw-20250901T120000.json"
     assert raw.exists() and str(raw) in str(ei.value)
+    assert not raw.is_relative_to(store.snapshot_root(paths["store"])), \
+        "state/ is committed and holds no vendor payload; the kept response is raw data"
+    assert odds.RAW.is_relative_to(odds.ROOT / "data"), "the real location is under data/"
+    assert not odds.RAW.is_relative_to(odds.STATE_DIR)
     doc = json.loads(raw.read_text())
     assert doc["payload"][0]["home_team"] == "Philadelphia Eagles"
     assert doc["headers"]["x-requests-remaining"] == "400"
@@ -1380,7 +1385,7 @@ def test_a_raw_response_that_cannot_be_kept_does_not_mask_the_failure(
     monkeypatch.setattr(odds, "_with_staleness", lambda *a, **k: (_ for _ in ()).throw(
         RuntimeError("archive unreadable")))
     paths["store"].mkdir()
-    (paths["store"] / "_state").write_text("a file where the tree should be")
+    (paths["store"] / "_raw").write_text("a file where the tree should be")
 
     with pytest.raises(odds.SnapshotIncomplete, match="archive unreadable") as ei:
         odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])

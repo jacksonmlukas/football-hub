@@ -90,6 +90,10 @@ ROOT = Path(__file__).resolve().parents[3]
 # the header read back from each response was written to a file the next run could not see.
 # A guard that cannot fire reads as a guard.
 STATE = STATE_DIR / "odds.json"
+# Where a paid response is kept if recording it fails (#518). The gitignored raw-data area,
+# like `nflverse.RAW`: a vendor payload is not a small record, and `state/` is committed to
+# main and holds none (`test_the_state_directory_carries_no_third_party_payload`).
+RAW = ROOT / "data" / "raw" / "odds"
 
 BASE = "https://api.the-odds-api.com/v4"
 SPORT = "americanfootball_nfl"
@@ -1134,12 +1138,13 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
 
 def _keep_raw(payload: Any, headers: Mapping[str, str], when: datetime,
               base: Path | None) -> Path | None:
-    """Write a paid response that a later step failed to record, atomically, under the
-    committed odds tree (`state/odds/raw/`), where `commit-state.sh` picks it up. Outside the
-    `*/wk*/snap-*.json` glob, so no reader mistakes it for a stored poll. Never raises: the
+    """Write a paid response that a later step failed to record, atomically, under `RAW`
+    (`data/raw/odds/`, gitignored; `<base>/_raw/odds/` for a scratch store). Never under
+    `state/`, which is committed and carries no third-party payload. Never raises: the
     original failure is the one to report."""
     try:
-        p = store.snapshot_root(base) / "raw" / f"raw-{when:%Y%m%dT%H%M%S}.json"
+        root = RAW if base is None else Path(base) / "_raw" / "odds"
+        p = root / f"raw-{when:%Y%m%dT%H%M%S}.json"
         return atomic.write_text(p, json.dumps(
             {"captured_at": when.isoformat(), "headers": dict(headers), "payload": payload},
             indent=1, sort_keys=True) + "\n")
