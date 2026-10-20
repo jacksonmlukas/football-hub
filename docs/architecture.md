@@ -7,7 +7,7 @@ They were a single document until 2026-08-24. Splitting them made each one addre
 architecture review had cited "ADR-004 in `docs/architecture.md`" for want of a path — and let
 a superseded decision keep its original text instead of being edited in place.
 
-**There are twenty-six decision records in [`docs/adr/`](adr/).** That count is the
+**There are twenty-seven decision records in [`docs/adr/`](adr/).** That count is the
 directory's, and it is the only one that can be right; see
 [How many there are](#how-many-there-are) at the foot of this file for the three numbers this
 repo was carrying instead, and why they drifted.
@@ -48,6 +48,7 @@ in this index re-decides anything*.
 | [0024](adr/0024-a-modelling-decision-becomes-agent-work-when-its-alternatives-can-be-measured.md) | A modelling decision becomes agent work when its alternatives can be measured side by side | accepted | nine issues labelled `ready-for-agent` over bodies saying they were not |
 | [0025](adr/0025-systematic-bias-bounds-the-bottom-up-plan-and-seven-angles-are-declined.md) | Systematic bias bounds the bottom-up plan, and seven angles are declined | accepted | an arithmetic bound — a 3% bias in Usage is ≈0.75 points a team and ≈1.5 on the total, against a band of about one point — and seven declines, two of which (the offensive-line study, west-coast travel) are recorded thinner than the other five and say so |
 | [0026](adr/0026-self-hosted-fonts.md) | Self-hosted font files are allowed under K1 | accepted | K1's no-CDN clause exists so the page makes no request the repo cannot satisfy; same-origin WOFF2 (74.5 KB, SIL OFL, `font-display: swap`) keeps that, and the no-webfont clause had no reason beyond weight (**#477**) |
+| [0027](adr/0027-a-consensus-capture-is-in-time-per-player.md) | A consensus capture is in time per player, not per week | accepted | The archive publishes consensus only on Fridays, so the per-week pre-Thursday window could never be met; a capture now counts for players whose kickoff it precedes (**#515**) |
 
 ## Re-scored 2026-09-07
 
@@ -92,7 +93,7 @@ Three places in this repo gave three different answers, and none of them was twe
 | `README.md` | *"index of twelve decision records"* | No. It has never matched this file, which listed fourteen when the line was written |
 | `docs/method.md` | *"Fourteen decisions"*, linking `docs/adr/` | Right until ADR-0015 landed on 2026-08-27, then never re-derived |
 | This index | listed 0001–0014 | Right until 2026-08-27; nine ADRs have landed since |
-| `docs/adr/` | 26 files | Guarded by `test_no_document_states_a_count_that_contradicts_the_directory`, which is what caught this line drifting |
+| `docs/adr/` | 27 files | Guarded by `test_no_document_states_a_count_that_contradicts_the_directory`, which is what caught this line drifting |
 
 **The fourteen is a coincidence worth naming, because it is what made the drift invisible.**
 `docs/method.md` separately reports that *"Fourteen things have been measured properly"* — a

@@ -268,6 +268,10 @@ CHECKED: dict[str, Rule] = {
 }
 
 UNCHECKED: dict[str, str] = {
+    "strict capture": "the per-week capture ADR-0027 retired is still the code's name for it "
+                      "until #515 lands the per-player test; check it then",
+    "pre-thursday capture": "the same retired capture, named in comments and the consensus "
+                            "workflow until #515 lands; check it then",
     "tie": "a tied game (`DROP_TIES`, `n_tied`) and the Gate's `ties` counter are real and "
            "correctly named; the entry forbids the word only for a season's disposition",
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "
