@@ -73,8 +73,8 @@ export function lineupChanges(ros, stale, byName) {
   return wrap(cls, said + stamp);
 }
 
-// What set the lineup (#492): the model's `mu` through week 7, weekly consensus rank (ECR) from
-// week 8 as a provisional rule (ADR-0014), which is labelled so wherever it is shown and never
+// What set the lineup (#492): the model's `mu` through week 6, weekly consensus rank (ECR) from
+// week 7 as a provisional rule (ADR-0014), which is labelled so wherever it is shown and never
 // called an edge. A reason -- the week's capture missing, served last-good, or a fall back to
 // `mu` -- renders in the unconfirmed state. An artifact from before the switch shipped carries
 // no `lineup_rule` and nothing is said. Ranks from the week's lineup capture -- taken after

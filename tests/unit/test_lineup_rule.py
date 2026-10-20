@@ -1,4 +1,6 @@
-"""Which source sets the published lineup: `mu` through week 7, weekly ECR from week 8 (#492).
+"""Which source sets the published lineup: `mu` through week 6, weekly ECR from week 7 (#492).
+
+`FIRST` below is read off `ECR_FROM_WEEK`, so these tests move with the constant.
 
 The roster is built so the two sources differ in exactly one slot, the flex: `mu` starts the third
 back (Rc Three), consensus the fourth receiver (Wd Four). A switch that does not switch publishes
@@ -19,6 +21,8 @@ from hub.season.roster import lock
 
 SEASON = 2026
 EARLY = datetime(2026, 10, 10, 12, tzinfo=UTC)          # before every week used here starts
+FIRST = lineup_rule.ECR_FROM_WEEK[2026]    # the first ECR week of 2026; the week before is the old lock
+OLD = FIRST - 1
 
 # name, pos, mu, ecr
 PLAYERS = [
@@ -53,7 +57,7 @@ def _capture(base, week: int, drop=()) -> None:
     keep = [p for p in PLAYERS if p[0] not in drop]
     rows = pl.DataFrame({"player": [p[0] for p in keep], "pos": [p[1] for p in keep],
                          "team": ["XXX"] * len(keep), "ecr": [p[3] for p in keep]})
-    first = date(2026, 10, 18 + 7 * (week - 7))
+    first = date(2026, 10, 25 + 7 * (week - FIRST))
     doc = consensus.build(SEASON, week, rows, first, first, EARLY, "d")
     atomic.write_text(consensus.capture_path(SEASON, week, EARLY, base),
                       json.dumps(doc, sort_keys=True) + "\n")
@@ -65,27 +69,35 @@ def _flex(lineup) -> str:
 
 # --- the boundary -----------------------------------------------------------------------------
 
-def test_the_rule_is_mu_through_week_7_and_ecr_from_week_8():
-    assert [lineup_rule.rule_for(SEASON, w) for w in (1, 7, 8, 9, 17)] == \
+def test_the_decided_boundary_is_week_7_of_2026_by_the_schedule():
+    """The maintainer's 2026-10-20 restatement (#492), pinned as literals so a drift in the constant
+    is red here and not silently followed by every test that reads it: 10-15..10-19 is week 6, so
+    Sunday 10-25 (week 7) is the first ECR lineup."""
+    assert lineup_rule.ECR_FROM_WEEK == {2026: 7}
+    assert [lineup_rule.rule_for(2026, w) for w in (5, 6, 7, 8)] == ["mu", "mu", "ecr", "ecr"]
+
+
+def test_the_rule_is_mu_before_the_decided_week_and_ecr_from_it():
+    assert [lineup_rule.rule_for(SEASON, w) for w in (1, OLD, FIRST, FIRST + 1, 17)] == \
         ["mu", "mu", "ecr", "ecr", "ecr"]
     assert lineup_rule.rule_for(SEASON, None) == "mu"
     assert lineup_rule.rule_for(2025, 12) == "mu", "the decision was for 2026 only"
 
 
-def test_week_7_publishes_the_models_lineup_even_with_a_capture_in_hand(tmp_path):
-    """Replaying week 7 gives the lineup week 7 gave: the capture is there and is not used."""
-    _capture(tmp_path, 7)
-    df = _roster(7)
+def test_the_old_week_publishes_the_models_lineup_even_with_a_capture_in_hand(tmp_path):
+    """Replaying the old lock week gives the lineup it gave: the capture is there and is not used."""
+    _capture(tmp_path, OLD)
+    df = _roster(OLD)
     lk, rule = lineup_rule.decide(df, SEASON, captures=tmp_path)
     assert rule.source == "mu" and rule.rule == "mu" and rule.reason is None
-    assert lk == lock(df), "week 7 is the old lock, field for field"
+    assert lk == lock(df), "the week before the switch is the old lock, field for field"
     assert _flex(lk.best_lineup) == MU_FLEX
 
 
-def test_week_8_publishes_the_consensus_lineup(tmp_path):
-    _capture(tmp_path, 8)
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.source == "ecr" and rule.ecr_week == 8 and rule.reason is None
+def test_the_first_ecr_week_publishes_the_consensus_lineup(tmp_path):
+    _capture(tmp_path, FIRST)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == FIRST and rule.reason is None
     assert rule.label == "provisional"
     assert _flex(lk.best_lineup) == ECR_FLEX
     assert sorted(lk.best_lineup) == sorted([*CORE, ECR_FLEX])
@@ -95,24 +107,24 @@ def test_week_8_publishes_the_consensus_lineup(tmp_path):
 
 
 def test_consensus_never_starts_a_player_on_bye(tmp_path):
-    _capture(tmp_path, 8)
-    lk, rule = lineup_rule.decide(_roster(8, on_bye=("Wa One",)), SEASON, captures=tmp_path)
+    _capture(tmp_path, FIRST)
+    lk, rule = lineup_rule.decide(_roster(FIRST, on_bye=("Wa One",)), SEASON, captures=tmp_path)
     assert rule.source == "ecr" and "Wa One" not in lk.best_lineup
     assert "Wa One" in lk.withheld
 
 
 # --- graceful degradation ---------------------------------------------------------------------
 
-def test_a_missing_week_8_capture_serves_week_7s_and_says_so(tmp_path):
-    _capture(tmp_path, 7)
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.source == "ecr" and rule.ecr_week == 7
-    assert "week 8" in (rule.reason or "") and "last-good" in (rule.reason or "")
+def test_a_missing_first_week_capture_serves_the_previous_weeks_and_says_so(tmp_path):
+    _capture(tmp_path, OLD)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == OLD
+    assert f"week {FIRST}" in (rule.reason or "") and "last-good" in (rule.reason or "")
     assert _flex(lk.best_lineup) == ECR_FLEX
 
 
 def test_no_capture_at_all_serves_the_models_lineup_and_says_why(tmp_path):
-    df = _roster(8)
+    df = _roster(FIRST)
     lk, rule = lineup_rule.decide(df, SEASON, captures=tmp_path / "none")
     assert rule.source == "mu" and rule.rule == "ecr" and rule.label == "model"
     assert "no earlier capture" in (rule.reason or "")
@@ -121,27 +133,27 @@ def test_no_capture_at_all_serves_the_models_lineup_and_says_why(tmp_path):
 
 
 def test_an_unreadable_capture_degrades_rather_than_raising(tmp_path):
-    bad = consensus.capture_path(SEASON, 8, EARLY, tmp_path)
+    bad = consensus.capture_path(SEASON, FIRST, EARLY, tmp_path)
     bad.parent.mkdir(parents=True)
     bad.write_text("{not json")
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     assert rule.source == "mu" and rule.reason and "unreadable" in rule.reason
     assert lk.best_lineup
 
 
 def test_consensus_that_ranks_too_few_to_fill_a_lineup_falls_back_to_mu(tmp_path):
-    # Week 8 ranks no quarterback; week 7 (last-good) ranks no tight end.
-    _capture(tmp_path, 8, drop=("Qa One", "Qb Two"))
-    _capture(tmp_path, 7, drop=("Ta One", "Tb Two"))
-    df = _roster(8)
+    # The first ECR week ranks no quarterback; the week before (last-good) ranks no tight end.
+    _capture(tmp_path, FIRST, drop=("Qa One", "Qb Two"))
+    _capture(tmp_path, OLD, drop=("Ta One", "Tb Two"))
+    df = _roster(FIRST)
     lk, rule = lineup_rule.decide(df, SEASON, captures=tmp_path)
     assert rule.source == "mu"
-    assert "too few" in (rule.reason or "") and "week 7" in (rule.reason or "")
+    assert "too few" in (rule.reason or "") and f"week {OLD}" in (rule.reason or "")
     assert lk == lock(df)
 
 
 def test_a_roster_with_no_scoring_period_keeps_mu_and_says_the_switch_cannot_be_placed(tmp_path):
-    _capture(tmp_path, 8)
+    _capture(tmp_path, FIRST)
     _, rule = lineup_rule.decide(_roster(None), SEASON, captures=tmp_path)
     assert rule.source == "mu" and "cannot be placed" in (rule.reason or "")
 
@@ -149,23 +161,23 @@ def test_a_roster_with_no_scoring_period_keeps_mu_and_says_the_switch_cannot_be_
 # --- the label --------------------------------------------------------------------------------
 
 def test_the_ecr_rule_is_labelled_provisional_and_never_an_edge(tmp_path):
-    _capture(tmp_path, 8)
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    _capture(tmp_path, FIRST)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     d = rule.as_dict()
-    assert d["label"] == "provisional" and d["source"] == "ecr" and d["ecr_from_week"] == 8
+    assert d["label"] == "provisional" and d["source"] == "ecr" and d["ecr_from_week"] == FIRST
     assert "provisional rule (ADR-0014)" in d["caveat"] and "not a measured edge" in d["caveat"]
-    _, mu = lineup_rule.decide(_roster(7), SEASON, captures=tmp_path)
+    _, mu = lineup_rule.decide(_roster(OLD), SEASON, captures=tmp_path)
     assert mu.as_dict()["label"] == "model" and mu.as_dict()["caveat"] is None
 
 
 def test_the_contract_refuses_an_unlabelled_or_unexplained_rule():
-    ok = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 8, "ecr_week": 8,
+    ok = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": FIRST, "ecr_week": FIRST,
           "reason": None}
     check_roster_artifact({"rows": [], "lineup_rule": ok})
     # Each bad rule breaks exactly one check, so each check is the only thing that refuses it.
     for bad, said in (({**ok, "label": "model"}, "label"),
                       ({**ok, "source": "espn", "rule": "espn"}, "source"),
-                      ({**ok, "ecr_week": 7}, "no reason"),
+                      ({**ok, "ecr_week": OLD}, "no reason"),
                       ({**ok, "source": "mu", "label": "model"}, "no reason")):
         with pytest.raises(ContractViolation, match=said):
             check_roster_artifact({"rows": [], "lineup_rule": bad})
@@ -191,9 +203,9 @@ def _published(tmp_path, df) -> dict:
 
 def test_the_published_roster_carries_the_rule_and_its_lineup(_publishable):
     tmp = _publishable
-    _capture(tmp / "cons", 7)
-    _capture(tmp / "cons", 8)
-    for week, src, flex in ((7, "mu", MU_FLEX), (8, "ecr", ECR_FLEX)):
+    _capture(tmp / "cons", OLD)
+    _capture(tmp / "cons", FIRST)
+    for week, src, flex in ((OLD, "mu", MU_FLEX), (FIRST, "ecr", ECR_FLEX)):
         art = _published(tmp, _roster(week))
         assert art["lineup_rule"]["source"] == src and art["lineup_rule"]["week"] == week
         best = sorted(r["player"] for r in art["rows"] if r["best_start"])
@@ -203,25 +215,26 @@ def test_the_published_roster_carries_the_rule_and_its_lineup(_publishable):
 
 
 def test_the_journal_records_what_was_published_and_scores_it(tmp_path):
-    _capture(tmp_path / "cons", 8)
-    sched = pl.DataFrame({"game_id": ["8-0"], "season": [SEASON], "week": [8],
+    _capture(tmp_path / "cons", FIRST)
+    sched = pl.DataFrame({"game_id": [f"{FIRST}-0"], "season": [SEASON], "week": [FIRST],
                           "game_type": ["REG"], "home_team": ["A"], "away_team": ["B"],
                           "gameday": ["2026-10-25"], "home_score": [20], "away_score": [17]})
-    path, _ = lineup_journal.record(_roster(8), season=SEASON, base=tmp_path / "j",
+    path, _ = lineup_journal.record(_roster(FIRST), season=SEASON, base=tmp_path / "j",
                                     captures=tmp_path / "cons", now=EARLY, schedule=sched)
     assert path is not None
     doc = json.loads(path.read_text())
     assert doc["rule"]["source"] == "ecr" and doc["rule"]["label"] == "provisional"
     assert doc["rule"]["lineup"] == sorted([*CORE, ECR_FLEX])
     points = {player_key(n): 10.0 for n in CORE} | {player_key(ECR_FLEX): 3.0}
-    lineup_journal.settle(SEASON, 8, points, tmp_path / "j", schedule=sched)
+    lineup_journal.settle(SEASON, FIRST, points, tmp_path / "j", schedule=sched)
     doc = json.loads(path.read_text())
     assert doc["realised"]["set"] == {"points": 73.0, "n_no_row": 0}
 
 
 # --- the week's lineup capture: after the strict one, before last-good ------------------------
 #
-# Week 8 of 2026 for real: Thursday 10-22, Sunday 10-25, week 7's last game Monday 10-19. The
+# Week 7 of 2026 for real (10-15..10-19 is week 6): Thursday 10-22, Sunday 10-25, week 6's last
+# game Monday 10-19. The
 # archive publishes on Fridays, so the lineup capture is Friday 10-23's page. Its ranks swap the
 # two flex candidates, so a lineup set on it is visibly not one set on the strict capture.
 
@@ -229,7 +242,7 @@ LINEUP_FLIP = {MU_FLEX: 39.0, ECR_FLEX: 81.0}         # the lineup capture prefe
 FRIDAY = datetime(2026, 10, 23, 15, tzinfo=UTC)
 
 
-def _lineup_capture(base, week: int = 8, captured_at: datetime = FRIDAY,
+def _lineup_capture(base, week: int = FIRST, captured_at: datetime = FRIDAY,
                     scrape: date = date(2026, 10, 23)) -> None:
     rows = pl.DataFrame({"player": [p[0] for p in PLAYERS], "pos": [p[1] for p in PLAYERS],
                          "team": ["XXX"] * len(PLAYERS),
@@ -242,41 +255,41 @@ def _lineup_capture(base, week: int = 8, captured_at: datetime = FRIDAY,
 
 
 def test_the_weeks_strict_capture_is_preferred_to_its_lineup_capture(tmp_path):
-    _capture(tmp_path, 8)
+    _capture(tmp_path, FIRST)
     _lineup_capture(tmp_path)
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     assert rule.source == "ecr" and rule.ecr_capture is None and rule.reason is None
     assert _flex(lk.best_lineup) == ECR_FLEX
     assert "ecr_capture" not in rule.as_dict()
 
 
 def test_with_no_strict_capture_the_lineup_capture_sets_it_ahead_of_last_good(tmp_path):
-    _capture(tmp_path, 7)                               # last-good, which must not be used
+    _capture(tmp_path, OLD)                               # last-good, which must not be used
     _lineup_capture(tmp_path)
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.source == "ecr" and rule.ecr_week == 8 and rule.reason is None
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == FIRST and rule.reason is None
     assert _flex(lk.best_lineup) == MU_FLEX, "set on the lineup capture's ranks"
     assert rule.ecr_capture is not None and rule.ecr_capture["purpose"] == "lineup"
     assert rule.ecr_capture["scrape_date"] == "2026-10-23"
 
 
 def test_a_lineup_capture_that_cannot_fill_a_lineup_falls_through_to_last_good(tmp_path):
-    _capture(tmp_path, 7)
+    _capture(tmp_path, OLD)
     thin = consensus.build_lineup(
-        SEASON, 8, pl.DataFrame({"player": ["Ra One"], "pos": ["RB"], "team": ["XXX"],
+        SEASON, FIRST, pl.DataFrame({"player": ["Ra One"], "pos": ["RB"], "team": ["XXX"],
                                  "ecr": [1.0]}),
         date(2026, 10, 23), date(2026, 10, 20), date(2026, 10, 22), date(2026, 10, 25),
         FRIDAY, "d")
     consensus.write_lineup_capture(thin, tmp_path)
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.source == "ecr" and rule.ecr_week == 7 and rule.ecr_capture is None
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == OLD and rule.ecr_capture is None
     assert "last-good" in (rule.reason or "")
 
 
 def test_a_strict_capture_too_thin_to_fill_a_lineup_hands_over_to_the_lineup_capture(tmp_path):
-    _capture(tmp_path, 8, drop=("Qa One", "Qb Two"))
+    _capture(tmp_path, FIRST, drop=("Qa One", "Qb Two"))
     _lineup_capture(tmp_path)
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     assert rule.source == "ecr" and rule.ecr_capture is not None
     assert "too few" in (rule.reason or "") and "lineup capture" in (rule.reason or "")
 
@@ -284,30 +297,30 @@ def test_a_strict_capture_too_thin_to_fill_a_lineup_hands_over_to_the_lineup_cap
 def test_a_lineup_capture_taken_after_sunday_starts_is_never_served(tmp_path):
     """The plant at the read: a file that reached the tree with a capture time at Sunday's
     deadline (00:00 Eastern, 04:00 UTC) is dropped, and the week falls to last-good."""
-    _capture(tmp_path, 7)
+    _capture(tmp_path, OLD)
     _lineup_capture(tmp_path, captured_at=datetime(2026, 10, 25, 4, tzinfo=UTC))
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.ecr_capture is None and rule.ecr_week == 7
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.ecr_capture is None and rule.ecr_week == OLD
     _lineup_capture(tmp_path, captured_at=datetime(2026, 10, 25, 3, 59, tzinfo=UTC))
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     assert rule.ecr_capture is not None, "a minute earlier is in time"
 
 
 def test_an_unreadable_lineup_capture_degrades_to_last_good_rather_than_raising(tmp_path):
-    _capture(tmp_path, 7)
-    bad = consensus.lineup_path(SEASON, 8, FRIDAY, tmp_path)
+    _capture(tmp_path, OLD)
+    bad = consensus.lineup_path(SEASON, FIRST, FRIDAY, tmp_path)
     bad.parent.mkdir(parents=True)
     bad.write_text("{not json")
-    assert lineup_rule.lineup_ecr(SEASON, 8, tmp_path) == ({}, None)
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
-    assert rule.source == "ecr" and rule.ecr_week == 7 and rule.ecr_capture is None
+    assert lineup_rule.lineup_ecr(SEASON, FIRST, tmp_path) == ({}, None)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == OLD and rule.ecr_capture is None
 
 
-def test_replaying_week_7_is_unchanged_by_a_lineup_capture(tmp_path):
-    _capture(tmp_path, 7)
-    df = _roster(7)
+def test_replaying_the_old_lock_week_is_unchanged_by_a_lineup_capture(tmp_path):
+    _capture(tmp_path, OLD)
+    df = _roster(OLD)
     before = lineup_rule.decide(df, SEASON, captures=tmp_path)
-    _lineup_capture(tmp_path, week=7)
+    _lineup_capture(tmp_path, week=OLD)
     after = lineup_rule.decide(df, SEASON, captures=tmp_path)
     assert after == before and after[0] == lock(df)
     assert after[1].as_dict() == before[1].as_dict() and "ecr_capture" not in after[1].as_dict()
@@ -315,7 +328,7 @@ def test_replaying_week_7_is_unchanged_by_a_lineup_capture(tmp_path):
 
 def test_a_lineup_capture_is_labelled_as_one_and_keeps_the_provisional_caveat(tmp_path):
     _lineup_capture(tmp_path)
-    _, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     d = rule.as_dict()
     note = d["ecr_capture"]["note"]
     assert note == "consensus ranks as of Fri 2026-10-23, taken after Thursday's games"
@@ -326,7 +339,7 @@ def test_a_lineup_capture_is_labelled_as_one_and_keeps_the_provisional_caveat(tm
 
 
 def test_the_contract_refuses_a_lineup_capture_that_does_not_say_what_it_is():
-    ok = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 8, "ecr_week": 8,
+    ok = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": FIRST, "ecr_week": FIRST,
           "reason": None, "ecr_capture": {"purpose": "lineup", "scrape_date": "2026-10-23",
                                           "note": "consensus ranks as of Fri 2026-10-23"}}
     check_roster_artifact({"rows": [], "lineup_rule": ok})
@@ -339,15 +352,15 @@ def test_the_contract_refuses_a_lineup_capture_that_does_not_say_what_it_is():
 
 def test_the_journals_strict_read_never_sees_a_lineup_capture(tmp_path):
     _lineup_capture(tmp_path)
-    ranks, why = lineup_journal.ecr_ranks(SEASON, 8, tmp_path)
-    assert ranks == {} and "no pre-kickoff consensus capture for week 8" in (why or "")
+    ranks, why = lineup_journal.ecr_ranks(SEASON, FIRST, tmp_path)
+    assert ranks == {} and f"no pre-kickoff consensus capture for week {FIRST}" in (why or "")
     assert consensus.read_captures(SEASON, tmp_path) == []
 
 
 def test_the_published_roster_shows_the_lineup_capture_and_its_ranks(_publishable):
     tmp = _publishable
     _lineup_capture(tmp / "cons")
-    art = _published(tmp, _roster(8))
+    art = _published(tmp, _roster(FIRST))
     rule = art["lineup_rule"]
     assert rule["source"] == "ecr" and rule["ecr_capture"]["purpose"] == "lineup"
     assert "taken after Thursday's games" in rule["ecr_capture"]["note"]
@@ -373,9 +386,9 @@ def _lineup_capture_without(base, drop: tuple[str, ...]) -> None:
     rows = pl.DataFrame({"player": [p[0] for p in keep], "pos": [p[1] for p in keep],
                          "team": ["XXX"] * len(keep),
                          "ecr": [LINEUP_FLIP.get(p[0], p[3]) for p in keep]})
-    doc = consensus.build_lineup(SEASON, 8, rows, date(2026, 10, 23), date(2026, 10, 20),
+    doc = consensus.build_lineup(SEASON, FIRST, rows, date(2026, 10, 23), date(2026, 10, 20),
                                  date(2026, 10, 22), date(2026, 10, 25), FRIDAY, "d")
-    atomic.write_text(consensus.lineup_path(SEASON, 8, FRIDAY, base),
+    atomic.write_text(consensus.lineup_path(SEASON, FIRST, FRIDAY, base),
                       json.dumps(doc, sort_keys=True) + "\n")
 
 
@@ -385,7 +398,7 @@ def _kicked_off(df: pl.DataFrame, who: tuple[str, ...] = THURSDAY) -> pl.DataFra
 
 def test_a_started_player_missing_from_the_lineup_capture_is_not_treated_as_unranked(tmp_path):
     _lineup_capture_without(tmp_path, ("Ra One",))
-    lk, rule = lineup_rule.decide(_kicked_off(_roster(8)), SEASON, captures=tmp_path)
+    lk, rule = lineup_rule.decide(_kicked_off(_roster(FIRST)), SEASON, captures=tmp_path)
     assert rule.source == "ecr" and rule.ecr_capture is not None
     assert "Ra One" in lk.best_lineup, "kept as set, not dropped as unranked"
     assert "Wd Four" not in lk.best_lineup, "started on the bench: never started"
@@ -397,7 +410,7 @@ def test_the_same_capture_without_the_lock_makes_both_moves(tmp_path):
     """The control: the same capture and roster, nothing kicked off -- Ra One is unranked and
     sat, Wd Four is started. These are the moves the test above refuses."""
     _lineup_capture_without(tmp_path, ("Ra One",))
-    lk, rule = lineup_rule.decide(_roster(8), SEASON, captures=tmp_path)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
     assert rule.source == "ecr"
     assert "Ra One" in lk.bench and "Wd Four" in lk.start
 
@@ -405,7 +418,7 @@ def test_the_same_capture_without_the_lock_makes_both_moves(tmp_path):
 def test_the_published_roster_says_who_is_locked_and_swaps_neither(_publishable):
     tmp = _publishable
     _lineup_capture_without(tmp / "cons", ("Ra One",))
-    art = _published(tmp, _kicked_off(_roster(8)))
+    art = _published(tmp, _kicked_off(_roster(FIRST)))
     assert art["locked"] == list(THURSDAY)
     assert art["locked_reasons"] == dict.fromkeys(THURSDAY, "locked: game started")
     assert {r["player"] for r in art["rows"] if r["locked"]} == set(THURSDAY)
@@ -417,9 +430,9 @@ def test_the_published_roster_says_who_is_locked_and_swaps_neither(_publishable)
 def test_a_week_with_no_kickoff_publishes_byte_identical_json(_publishable):
     """The column all false is the parquet before #516 (no column): the same bytes."""
     tmp = _publishable
-    _capture(tmp / "cons", 8)
+    _capture(tmp / "cons", FIRST)
     texts = []
-    for df in (_roster(8), _kicked_off(_roster(8), ())):
+    for df in (_roster(FIRST), _kicked_off(_roster(FIRST), ())):
         src = tmp / "roster.parquet"
         df.write_parquet(src)
         site = tmp / f"site{len(texts)}"

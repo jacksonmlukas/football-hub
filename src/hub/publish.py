@@ -969,8 +969,8 @@ def roster(out: Path | None = None,
     # `test_publish.py` stay green. An empty frame falls through to `_publish`, which is the
     # one place this rule is meant to live; `hub.season.roster.write` refuses to create the
     # empty parquet in the first place.
-    # Which source sets the lineup this week (#492): `mu` through week 7, weekly consensus rank
-    # from week 8 as a provisional rule (ADR-0014), read off the roster's own scoring period so
+    # Which source sets the lineup this week (#492): `mu` through week 6, weekly consensus rank
+    # from week 7 as a provisional rule (ADR-0014), read off the roster's own scoring period so
     # a replayed week publishes the lineup it published then. Never raises: a missing capture
     # is served last-good, or falls back to `mu`, and `lineup_rule` says which and why.
     from hub.names import player_key

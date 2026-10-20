@@ -586,7 +586,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
                 else f"  MISSING {r['missing_games']} GAMES")
         print(f"  {flag} {r['pos']:<4} {r['player']:<24} {shown}{inj}{miss}")
 
-    # The published rule (#492): `mu` through week 7, weekly consensus rank from week 8.
+    # The published rule (#492): `mu` through week 6, weekly consensus rank from week 7.
     from hub.season.lineup_rule import decide
     lk, rule = decide(df)
     print(f"\n  lineup set by {rule.source} ({rule.label})"
