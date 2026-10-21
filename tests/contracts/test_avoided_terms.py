@@ -265,13 +265,17 @@ CHECKED: dict[str, Rule] = {
     "provenance alone": Rule("name", "the word names a published artifact key; anything "
                                      "else it names is a second meaning for one name",
                              owners=("src/hub/schedule.py",), pattern="provenance"),
+    # The per-week capture ADR-0027 retired (#515). The code now says *week capture* (in time
+    # for every player, before the first game day) and *Friday capture*, so both spellings of
+    # the retired one occur nowhere outside the glossary's own `_Avoid_` line, and any
+    # reappearance is the retired test coming back under its old name.
+    "strict capture": Rule("phrase", "the retired per-week capture; the code names the "
+                                     "per-player test's two captures week and Friday"),
+    "pre-thursday capture": Rule("phrase", "the same retired capture, spelled by its "
+                                           "deadline; it names nothing the code has now"),
 }
 
 UNCHECKED: dict[str, str] = {
-    "strict capture": "the per-week capture ADR-0027 retired is still the code's name for it "
-                      "until #515 lands the per-player test; check it then",
-    "pre-thursday capture": "the same retired capture, named in comments and the consensus "
-                            "workflow until #515 lands; check it then",
     "tie": "a tied game (`DROP_TIES`, `n_tied`) and the Gate's `ties` counter are real and "
            "correctly named; the entry forbids the word only for a season's disposition",
     "frozen capture": "Replay's own predecessor used the phrase in comments, and 'capture' is "

@@ -22,14 +22,19 @@ the lineup and drops a started bench player from the pool *before* the ranks are
 player missing from a lineup capture taken after Thursday's games is not treated as unranked:
 his call is decided, not open. The ranks only ever choose among the decisions still open.
 
-**It degrades, it never raises.** The week's strict capture first. If it is missing, the week's
-*lineup capture* (`hub.fetch.consensus --lineup`: the newest page dated after the previous week's
-last game and before the week's first Sunday, taken after Thursday's games because the archive
-publishes on Fridays) -- labelled as such on the artifact and the page, never as a pre-kickoff
-capture. If that is missing too, the newest earlier pre-deadline strict capture of the season
-(last-good ECR), saying which week that was; if there is none, or ECR ranks too few of the pool to
-fill a legal lineup, the model's lineup is served and says why. The reason travels on the
-artifact, the journal and the page.
+**It degrades, it never raises.** The order is by how many of the week's players a capture is in
+time for (ADR-0027: in time for a player means taken before his own kickoff). First the week
+capture, taken before the week's first game day and so in time for every player. If it is
+missing, the week's *Friday capture* (`hub.fetch.consensus --lineup`, filed as a lineup capture:
+the newest page dated after the previous week's last game and before the week's first Sunday,
+taken after Thursday's games because the archive publishes on Fridays). Since 2026-10-20 that is
+the week's in-time capture for Sunday's and Monday's players, and in practice the one that sets
+the lineup; it is labelled with its date and as taken after Thursday's games on the artifact and
+the page, and it costs nothing for Thursday's players, whose calls `lock` has already closed. If
+that is missing too, the newest earlier week capture of the season (last-good ECR), saying which
+week that was; if there is none, or ECR ranks too few of the pool to fill a legal lineup, the
+model's lineup is served and says why. The reason travels on the artifact, the journal and the
+page.
 
 **Wording (ADR-0014).** The ECR rule is labelled `provisional` everywhere it is shown and is never
 described as validated or as an edge.
@@ -56,10 +61,11 @@ MODEL = "model"
 ECR_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the newest capture taken "
              "before the week's first game day; best legal lineup by rank among projected, "
              "startable, available players not on bye")
-ECR_LINEUP_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the week's lineup "
+ECR_LINEUP_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the week's Friday "
                     "capture: the newest page dated after the previous week's last game and "
-                    "before the week's first Sunday, taken after Thursday's games and so not a "
-                    "pre-kickoff capture; best legal lineup by rank among projected, startable, "
+                    "before the week's first Sunday, taken after Thursday's games and so in time "
+                    "only for players whose game had not started (ADR-0027), Thursday's being "
+                    "already locked; best legal lineup by rank among projected, startable, "
                     "available players not on bye")
 MU_BASIS = ("the model's weekly mean (mu): the board's blend of ESPN's season average and "
             "last season's xFP per game; best legal lineup by summed mu")
@@ -77,7 +83,7 @@ class Decision(NamedTuple):
     ecr_week: int | None             # the capture's week when ECR set it (last-good if != week)
     reason: str | None               # why `source` is not the week's own ECR, when it is not
     # Set only when the week's *lineup* capture set it: `{purpose, scrape_date, captured_at,
-    # note}`. Absent from `as_dict` otherwise, so every artifact a strict capture, last-good or
+    # note}`. Absent from `as_dict` otherwise, so every artifact a week capture, last-good or
     # `mu` set is byte-for-byte what it was before the lineup capture existed.
     ecr_capture: dict[str, str] | None = None
 
@@ -112,7 +118,7 @@ def rule_for(season: int, week: int | None) -> str:
 
 def last_good_ecr(season: int, week: int,
                   base: Path | None = None) -> tuple[dict[str, float], int | None]:
-    """`{player_key: ecr}` from the newest pre-deadline capture of an *earlier* week, or `({},
+    """`{player_key: ecr}` from the newest week capture of an *earlier* week, or `({},
     None)`. Each such capture was taken before its own week began, so before this one."""
     from hub.fetch import consensus
     from hub.names import player_key
@@ -189,9 +195,10 @@ def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None
         reasons.append(f"week {wk}'s consensus ranks too few of the pool to fill a legal lineup")
     else:
         reasons.append(ecr_reason or f"no consensus ranks for week {wk}")
-    # The week's lineup capture, after its strict one and before last-good. It is this week's
-    # page, so it is no departure and carries no reason unless a strict capture existed and
-    # could not fill a lineup; its label (`ecr_capture.note`) says it was taken after Thursday.
+    # The week's Friday capture, after its week capture and before last-good. It is this week's
+    # page and in time for every call still open (ADR-0027), so it is no departure and carries
+    # no reason unless a week capture existed and could not fill a lineup; its label
+    # (`ecr_capture.note`) says it was taken after Thursday.
     late, label = lineup_ecr(season, wk, captures)
     if late:
         got = lock(df, ranks=late)
