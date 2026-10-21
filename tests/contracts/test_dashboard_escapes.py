@@ -1890,12 +1890,13 @@ SWAP_ROSTER = {
 
 
 def _roster_with_gain() -> dict:
-    """The committed roster mutated to a known positive gain: its own rows, one swap between
-    two of them. The committed call is whatever this week's optimiser said -- once the set
-    lineup is already optimal there is no gain and no swap to render -- so a test of the
+    """A roster at a known positive gain, built here: SWAP_ROSTER's rows with one swap between
+    two available ones. Nothing is read off the committed roster -- whether it has two available
+    rows, or any gain at all, is whatever this week's optimiser said, and a test of the
     positive-gain panel cannot lean on it."""
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    ros = json.loads(json.dumps(SWAP_ROSTER))
     out, inn = [r["player"] for r in ros["rows"] if r.get("available", True)][:2]
+    assert (out, inn) == ("Slow WR", "Fast WR"), "the fixture must offer two available rows"
     ros.update(gain=11.5, set_total=80.0, optimal_total=91.5, sit=[out], start=[inn])
     return ros
 
@@ -2459,14 +2460,27 @@ def test_the_page_renders_the_statement_once_under_the_header_before_every_zone(
     assert len([i for i in layout if i.startswith("st-")]) == 1
 
 
-def test_the_committed_record_renders_a_frozen_statement_of_both_counts(node):
-    """The committed artifact carries a pre-registered count above zero (#422), so the live
-    page is on the far side of the flip. Its figures are read back off the file."""
+def test_a_record_with_preregistered_predictions_renders_a_frozen_statement_of_both_counts(node):
+    """#422 made `n_preregistered` a computed count, so the page has a far side of the flip.
+    The record is built here with a count above zero rather than read off the committed file,
+    which sits on whichever side the season's git history puts it."""
+    tr = _tr(n_scored=80, n_preregistered=64)
+    got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
+    assert STATE_CLASSES["frozen"] in got["cls"].split()
+    assert "64 pre-registered, 80 scored" in got["body"]
+
+
+def test_the_committed_record_renders_the_statement_its_own_counts_call_for(node):
+    """Holds for every valid committed state: frozen once any prediction is pre-registered,
+    unconfirmed while none is, and either way the figures are the file's own."""
     tr = _fresh_record()
     got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
-    assert tr["n_preregistered"] > 0
-    assert STATE_CLASSES["frozen"] in got["cls"].split()
-    assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    if tr["n_preregistered"] > 0:
+        assert STATE_CLASSES["frozen"] in got["cls"].split()
+        assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    else:
+        assert STATE_CLASSES["unconfirmed"] in got["cls"].split()
+        assert f"{tr['n_scored']} predictions scored retrospectively, 0 pre-registered" in got["body"]
 
 
 def test_the_rendered_statement_is_unconfirmed_while_nothing_is_preregistered(node):
