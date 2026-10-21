@@ -1031,3 +1031,38 @@ constant reproduces both prior values). That is the model version's label and th
 **The row now pinned.** `hub.models.components` `d42ac69f7717` (was `75740834610f`); the other 28
 rows are as in the latest table above. Closure digest **`69a09cab8e72c77d`** (was
 `a2a3e8720e86c13b`).
+
+## Amended 2026-10-20: `hub.models.margin` and `hub.models.market` re-pinned for #523's provenance correction (prior text kept)
+
+Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
+when it was written; the `hub.models.margin` and `hub.models.market` rows of the latest are
+superseded.
+
+**What changed.** #523 corrects the declared provenance of `MARGIN_SD` (12.741, n=3018) from
+"trailing ten seasons" to the eleven seasons it was fitted on (2015-2025), with a dated
+restatement beside the old text (`docs/margin-sd.md`). In `hub.models.market` that is a comment
+only. In `hub.models.margin` it is comments, the new names `FITTED_WINDOW_RESTATED`,
+`FITTED_WINDOW_FIRST`/`FITTED_WINDOW_LAST`, `ADOPTED_SEASONS`, `window_start` and
+`adoption_window`, and the three places that filtered a trailing window now read `window_start`:
+the gated `trailing10` candidate in `walk_forward`, `_report_shape`, and `--fit`'s "Value to
+adopt". The closure's set is unchanged -- 29 modules, the same names.
+
+**Why the arm's figures are unchanged.** `MARGIN_SD = fitted(12.741)` is untouched (value and
+declaration). The three filters are the same predicate as before, rewritten through one helper:
+`season >= yr - 10` is `season >= window_start(yr - 1, 10)`; `season > latest - 10` is
+`season >= window_start(latest, 10)`; `season >= max - 10` is `adoption_window` (eleven seasons).
+None of the three is called from the forward arm: the closure takes `home_win_prob` and `home_won`
+from `margin` and nothing else, and neither moved. #430's identity test
+(`tests/unit/test_weekly_projection_move.py`) passes on this tree.
+
+**What did not move:** `config_digest` and `fitted_digest` (no constant's value or declaration
+changed; `tests/unit/test_config.py` holds them).
+
+| module | was | now |
+|---|---|---|
+| `hub.models.margin` | `e22ed895d1ee` | `3852336394ee` |
+| `hub.models.market` | `098baf487556` | `9059bc8092ed` |
+
+**The rows now pinned.** `hub.models.margin` `3852336394ee`, `hub.models.market` `9059bc8092ed`;
+the other 27 rows are as in the latest table above. Closure digest **`d52b01c1b3ffa8fd`** (was
+`69a09cab8e72c77d`).

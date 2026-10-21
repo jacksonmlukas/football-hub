@@ -562,3 +562,34 @@ entry's **-0.00038** (printed -0.0004, `m` = 62) is the per-season gain: the poo
 games. Its **lo/hi [-0.00095, 0.0]** are the percentile bootstrap over the same 4 week
 clusters (printed [-0.0010, +0.0000]), not the t interval. Same data, two aggregations and two
 interval methods; the numbers above stand as written.
+
+## Restated 2026-10-20 (#523): the adopted fit's window is eleven seasons, not ten
+
+Prior text kept. The sections above call 12.741 the "trailing 10" fit. That label is the gated
+candidate's. Two windows were in play and they were not the same length:
+
+| | window | seasons |
+|---|---|---|
+| gated candidate `trailing10` (`walk_forward`, `_report_shape`) | `yr-10 .. yr-1` | ten |
+| adoption path (`--fit`, "Value to adopt") | `season >= latest - 10` | **eleven: 2015-2025** |
+
+The adopted 12.741 +/- 0.164 is the **eleven-season** fit, n=3018. n says so: a season holds at
+most 272 regular-season and 13 playoff games, so ten seasons cannot reach 3018 (the ceiling is
+2850) and eleven can (`tests/unit/test_margin.py::test_fitted_n_needs_eleven_seasons_not_ten`).
+The row labelled "trailing 10" in the table under *What it is* is that eleven-season fit.
+
+**Decided (maintainer, 2026-10-20, #523): option (a).** The declared provenance is corrected to
+the eleven seasons actually fitted; no output changes. Whether to refit on ten and re-gate is an
+off-season decision, taken with the 2026-09-16 grandfathering decision above.
+
+**In the code.** The window is one function, `margin.window_start(latest, seasons)`, and the two
+lengths are two named numbers rather than one: `TRAILING = 10` (the gate's candidate and the
+shape report) and `ADOPTED_SEASONS = TRAILING + 1` (the adoption path, via `adoption_window`).
+One definition could not serve both without changing the gate's history or the adopted value.
+Tests pin each, and tie the adoption window's seasons to the declared `FITTED_WINDOW_RESTATED`
+("trailing 11 seasons (2015-2025), as of 2025"), so they cannot drift apart again. `FITTED_WINDOW`
+still reads "trailing 10 seasons, as of 2025", kept beside its restatement.
+
+The same correction applies to the later sections that say "the published figure on the trailing
+ten seasons": those are the shape report's window, which is ten and is not the width fit's.
+`MARGIN_SD`'s own window is the eleven above.
