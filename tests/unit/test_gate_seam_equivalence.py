@@ -233,7 +233,7 @@ def _coverage_stats():
 def _coverage_gate_run():
     from hub.models import coverage
     run, _, _ = coverage.shape_law(_coverage_stats(),
-                                   ledger=Ledger(Path("/nonexistent/control.json")))
+                                   ledger=Ledger(Path("/nonexistent/control.json"), write=False))
     return run
 
 
