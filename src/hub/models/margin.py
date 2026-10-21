@@ -72,6 +72,14 @@ FITTED_SE = not_an_input(
     "in hub.models.market: an assertion about a prediction, not an input to one")
 FITTED_N = 3018
 FITTED_WINDOW = "trailing 10 seasons, as of 2025"
+# **Restated 2026-10-20 (#523); the line above kept.** "Trailing 10 seasons" was never what the
+# adopted value was fitted on. The adoption path kept every season `>= latest - 10` -- eleven,
+# 2015-2025 inclusive, which is what n=3018 is (ten seasons hold at most 10 * (272 + 13) = 2850
+# games). The gated `trailing10` candidate that won the gate was fit on ten, the seasons
+# `yr-10..yr-1`. The adopted 12.741 is the eleven-season fit; refitting it on ten and re-gating
+# is an off-season decision (#523), and nothing here changes its value.
+FITTED_WINDOW_RESTATED = "trailing 11 seasons (2015-2025), as of 2025"
+FITTED_WINDOW_FIRST, FITTED_WINDOW_LAST = 2015, 2025
 
 # Candidate windows, named before the numbers.
 #
@@ -81,6 +89,29 @@ FITTED_WINDOW = "trailing 10 seasons, as of 2025"
 # churn in a constant that is hashed into every model version.
 CANDIDATES = ("incumbent", "all", "trailing10")
 TRAILING = 10
+
+
+def window_start(latest: int, seasons: int) -> int:
+    """First season of the `seasons` seasons that end at `latest`, inclusive (#523).
+
+    The one definition of "the last N seasons" the gate's candidate, the shape report and the
+    adoption path all read. They differ in N and in nothing else: the gated `trailing10`
+    candidate and the report count `TRAILING` (10) seasons; the adoption path counts
+    `ADOPTED_SEASONS` (11), which reproduces the window the adopted 12.741 was fitted on."""
+    return latest - seasons + 1
+
+
+# What the adoption path fits on: one season more than the gated candidate, because that is
+# what the adopted value was fitted on (see `FITTED_WINDOW_RESTATED`). Two named numbers on
+# purpose, pinned by tests; collapsing them either changes the gate's history or the adopted
+# value, and both are off-season decisions (#523).
+ADOPTED_SEASONS = TRAILING + 1
+
+
+def adoption_window(resid: pl.DataFrame, trailing: int = TRAILING) -> pl.DataFrame:
+    """The residuals `--fit` prints "Value to adopt" from: `trailing + 1` seasons to the latest."""
+    latest = int(resid["season"].to_numpy().max())
+    return resid.filter(pl.col("season") >= window_start(latest, trailing + 1))
 
 # The width gate's declared ceiling arm (#363, S6), named the way `coverage.CEILING_ARM` and
 # `lineup_gate.DECLARED_CEILING_ARM` are: a module constant beside the function that plays it,
@@ -515,7 +546,8 @@ def walk_forward(resid: pl.DataFrame, *, trailing: int = TRAILING) -> pl.DataFra
         sds = {
             "incumbent": MARGIN_SD,
             "all": fit(past)["sd"],
-            "trailing10": fit(past.filter(pl.col("season") >= yr - trailing))["sd"],
+            "trailing10": fit(
+                past.filter(pl.col("season") >= window_start(yr - 1, trailing)))["sd"],
         }
         spread = now["spread_line"].to_numpy().astype(float)
         # Off the column `residuals` built, not re-derived here. This read `result > 0`, a
@@ -605,7 +637,7 @@ def verdict(wf: pl.DataFrame) -> tuple[str, str]:
 def _report_shape(resid: pl.DataFrame, *, trailing: int = TRAILING) -> None:
     """Print the shape measurement in the order rule 8 requires: the ceiling first."""
     latest = int(resid["season"].to_numpy().max()) if resid.height else 0
-    window = resid.filter(pl.col("season") > latest - trailing)
+    window = resid.filter(pl.col("season") >= window_start(latest, trailing))
     top = ceiling(window)
     print(f"\n  Ceiling, in sample over {int(top['n'])} games from the trailing {trailing} "
           f"seasons: a perfect P(win | spread) scores {top['ll_oracle']:.5f} against "
@@ -686,8 +718,7 @@ def main(argv: Sequence[str] | None = None, *,
     winner, sentence = verdict(wf)
     print(f"\n  {sentence}")
     if winner != "incumbent":
-        final = fit(resid if winner == "all" else
-                    resid.filter(pl.col("season") >= resid["season"].max() - a.trailing))
+        final = fit(resid if winner == "all" else adoption_window(resid, a.trailing))
         print(f"  Value to adopt: {final['sd']:.3f} +/-{final['se']:.3f} (n={int(final['n'])})")
     if a.out:
         atomic.write_parquet(wf, Path(a.out))

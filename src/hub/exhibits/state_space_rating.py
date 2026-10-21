@@ -28,8 +28,9 @@ predicted from weeks `< w`. Flipping a later season's results therefore moves no
 
 **What it records.** Per season, the walk-forward log-loss of the close minus the rating's, in
 nats per game, with no verdict word. `gap_trailing` repeats it with the close's sigma taken from
-the strictly earlier ten seasons, because the shipped `MARGIN_SD` was fitted on 2016-2025 and so
-has seen the seasons it scores (a disclosure beside the pre-registered column, deciding nothing).
+the strictly earlier ten seasons, because the shipped `MARGIN_SD` was fitted on 2015-2025
+(eleven seasons, #523) and so has seen the seasons it scores (a disclosure beside the
+pre-registered column, deciding nothing).
 
 **The gate** is declared (`HARNESS`) and, run on this archive, prints NOT-RUNNABLE: its ceiling
 is the betting market's last pre-kickoff poll and the snapshot archive holds one season (#383),
