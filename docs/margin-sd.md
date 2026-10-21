@@ -477,6 +477,8 @@ No arm, rule or number was touched between the two.
 | seasons | won 14, lost 8, 22 resolved, 0 abstained |
 | P(location-shifted price better) | 47.7% |
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Favourite-longshot at k=22 (x1.0235): MDE +0.00184 → **+0.00188** against +0.00298; **SHOW holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 **It could run, and it did not resolve a gain.** The MDE (0.00184) is below the ceiling
 (0.00298), so NOT-RUNNABLE did not fire and this is a verdict, not an exemption. The interval
 excludes any gain above about 0.0011 nats a game, which is about 36% of the ceiling. The rule-16
@@ -549,6 +551,8 @@ separate from 12.741. `MARGIN_SD` stays, `hub.models.market` and the survivor gr
 untouched, and the survivor consumer (the wider survival product printed beside the old figure,
 live rows byte-identical) is **held** while #379 is dormant. The forward pin
 (`PINNED_ARM_MODULES`) is unmoved. #249 is advanced, not closed.
+
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Lookahead at 4 week clusters (x1.1547): t [−0.0012, +0.0003] → **[−0.0013, +0.0004]**, MDE 0.0009 → **0.0010**; **SHOW holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
 
 *2026-10-14, wording (review of #249): which figure is which.* The restatement's **-0.0005**
 is the gate's cluster aggregate: the mean of the 4 week-cluster means (`summarise`,

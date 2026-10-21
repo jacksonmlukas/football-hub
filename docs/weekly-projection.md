@@ -153,7 +153,16 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > within-week noise. What changes is what the number is: "+5.3 se" was never a t on three
 > degrees of freedom, and reading it as a significance level was on the wrong basis, even
 > though the right basis lands on the same side. **The rebuild's t is +5.0 where the page said
-> +5.3, and it is p = 0.015 rather than "more than five sigma".** Two cautions travel with it.
+> +5.3, and it is p = 0.015 rather than "more than five sigma".**
+>
+> > **Restated 2026-10-20 (#520).** `paired_gain`'s SE is now the bootstrap SD times
+> > `sqrt(k/(k-1))` (1.1547 at four seasons), the SE a t on 3 df assumes. On the same draws:
+> > the week **se 0.0022, t = +4.78 (p 0.017)**; the rebuild **se 0.0149, t = +4.33 (p 0.023)**
+> > — the closed-form figure the caution below already gave; both together **se 0.0140, t =
+> > +5.35 (p 0.013)**. Each still exceeds 3.18; no verdict or count moves. See `gate-power.md`,
+> > *Restated 2026-10-20 (#520)*.
+>
+> Two cautions travel with it.
 > *The bootstrap is the more generous of the two readings at four seasons:* the closed-form
 > `sd(means)/sqrt(4)` gives t = +4.29 (p 0.023) on the same gains, because a percentile
 > bootstrap of four units under-covers (`experiment.SMALL_CLUSTERS`); both clear p < 0.05.
