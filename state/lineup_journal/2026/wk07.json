@@ -1,0 +1,41 @@
+{
+ "disagree": false,
+ "realised": {
+  "ecr": null,
+  "espn": null,
+  "mu": null
+ },
+ "recorded_at": "2026-10-21T15:49:28.958618+00:00",
+ "rule": {
+  "basis": "the model's weekly mean (mu): the board's blend of ESPN's season average and last season's xFP per game; best legal lineup by summed mu",
+  "caveat": null,
+  "ecr_from_week": 7,
+  "ecr_week": null,
+  "label": "model",
+  "lineup": null,
+  "reason": "no pre-kickoff consensus capture for week 7; no earlier capture to serve as last-good; the model's lineup (mu) is served instead",
+  "rule": "ecr",
+  "source": "mu",
+  "week": 7
+ },
+ "scored": false,
+ "season": 2026,
+ "sources": {
+  "ecr": {
+   "lineup": null,
+   "n_unranked": 10,
+   "reason": "no pre-kickoff consensus capture for week 7"
+  },
+  "espn": {
+   "lineup": null,
+   "n_unranked": 0,
+   "reason": "ESPN's weekly projection ranks 10 of 10 candidates, too few to fill a legal lineup"
+  },
+  "mu": {
+   "lineup": null,
+   "n_unranked": 0,
+   "reason": "the current rule could not fill a legal lineup"
+  }
+ },
+ "week": 7
+}
