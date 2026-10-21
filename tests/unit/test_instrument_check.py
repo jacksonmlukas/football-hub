@@ -246,6 +246,26 @@ def test_the_ledger_compares_within_the_digest_pair_and_never_across_it(tmp_path
     assert "2026-10-02" not in got.detail
 
 
+def test_the_ledger_criterion_fails_when_the_comparison_crossed_the_digest_pair(
+        tmp_path, monkeypatch):
+    """#524: the FAIL branch is reachable. The check asks the ledger what the run compared
+    against; re-applying `comparable()` (which requires equal digests) could never disagree
+    with itself, so a ledger whose comparison crossed the pair passed unnoticed."""
+    path = tmp_path / "gate-width.json"
+    led = Ledger(path)
+    led.record(_entry(cfg="OTHER", width=9.0, ts="2026-10-01T00:00:00"))
+    led.record(_entry(width=0.9, ts="2026-10-03T00:00:00"))
+    assert ic.ledger(_paired(), "weekly", path).status == ic.PASS      # the honest rule
+    real = Ledger.record
+
+    def crossing(self, entry):                       # a comparison that reached across the pair
+        return real(self, entry)._replace(previous=self._read()[0])
+
+    monkeypatch.setattr(Ledger, "record", crossing)
+    got = ic.ledger(_paired(), "weekly", path)
+    assert got.status == ic.FAIL and "another digest pair" in got.detail
+
+
 def test_the_ledger_on_disk_and_unreadable_is_a_fail_not_a_pass(tmp_path):
     path = tmp_path / "gate-width.json"
     path.write_text("{not json")

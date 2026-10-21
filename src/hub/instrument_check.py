@@ -50,7 +50,7 @@ import polars as pl
 
 from hub.config import SEASON_AHEAD
 from hub.fetch.odds import POLL_SCHEDULE
-from hub.ledger import WIDTH_STATE, Ledger, WidthEntry
+from hub.ledger import WIDTH_STATE, Ledger
 from hub.paths import ROOT
 
 PASS, FAIL, NOT_YET = "PASS", "FAIL", "NOT-YET"
@@ -277,9 +277,10 @@ def pipeline(paired: pl.DataFrame | None, season: int) -> Criterion:
 def ledger(paired: pl.DataFrame | None, gate: str, path: Path | None = None) -> Criterion:
     """Criterion 3: the run is in the ledger, and its comparison partner shares its digest pair.
 
-    The partner is the newest *earlier* entry of the gate that `WidthEntry.comparable` accepts --
-    the ledger's own rule, not a second one -- and the check asserts that partner's digests equal
-    the run's. `review_width` comparing across a pair is the defect of 2026-09-21 this guards.
+    The partner is the entry `Ledger.record` names as `previous` for the run over the entries
+    before it -- the comparison the run actually made, not a second selection rule -- and the
+    check asserts that partner's digests equal the run's. `review_width` comparing across a
+    pair is the defect of 2026-09-21 this guards.
     """
     if paired is None:
         return Criterion("ledger", NOT_YET, "no paired run was supplied, so there is no digest "
@@ -296,10 +297,17 @@ def ledger(paired: pl.DataFrame | None, gate: str, path: Path | None = None) -> 
                          f"was not recorded", {"entries": len(entries)})
     latest = mine[-1]
     earlier = entries[:len(entries) - 1 - entries[::-1].index(latest)]
-    partner: WidthEntry | None = next((e for e in reversed(earlier) if e.name == gate
-                                       and e.comparable(latest)), None)
+    # What the run compared against is what `Ledger.record` names as `previous` when the run is
+    # recorded over the entries before it -- asked of the ledger itself, not re-derived with
+    # `comparable()`, which requires equal keys and so could never disagree with this check (#524).
+    replay = Ledger(None, write=False)
+    replay._entries = list(earlier)
+    partner = replay.record(latest).previous
     if partner is not None and (partner.config_digest, partner.data_digest) != (cfg, data):
-        return Criterion("ledger", FAIL, "the comparison partner has another digest pair")
+        return Criterion("ledger", FAIL, f"the comparison partner (the entry of "
+                         f"{partner.timestamp}) has another digest pair: cfg_digest "
+                         f"{partner.config_digest}, data_digest {partner.data_digest}",
+                         {"partner_timestamp": partner.timestamp})
     said = (f"compared against the entry of {partner.timestamp} at the same digest pair"
             if partner else "no earlier entry at this digest pair, so nothing was compared")
     return Criterion("ledger", PASS, f"recorded ({len(mine)} at this digest pair); {said}",
