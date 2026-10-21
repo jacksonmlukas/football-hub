@@ -942,6 +942,20 @@ def _roster_waiver(df: pl.DataFrame) -> dict[str, Any]:
         return waiver_mod.unavailable(f"the ranking could not be built ({type(e).__name__})")
 
 
+def _roster_journal(week: int | None, lk: Any, rule: Any) -> str:
+    """Write the decision this roster publish made into the week's lineup journal entry, as
+    its `published` block (#517); a seam for tests, which must not reach the schedule's network
+    source or write the committed journal. Never raises: the publish has already landed, and a
+    journal that cannot be written says why."""
+    from hub.season import lineup_journal
+    try:
+        return lineup_journal.record_published(
+            SEASON_AHEAD, week, lk, rule, schedule=lineup_journal._schedule(SEASON_AHEAD),
+            now=lineup_journal._now())[1]
+    except Exception as e:  # unattended: say which failure, never raise
+        return f"the published decision was not journalled ({type(e).__name__})"
+
+
 # Why a locked player is neither started nor sat (#516), on the artifact and the panel.
 LOCKED_REASON = "locked: game started"
 
@@ -1097,7 +1111,16 @@ def roster(out: Path | None = None,
             return kept
         _publish(dest, "roster", payload)
         return Kept(f"{bad}; published once so the page has a file to read")
-    return _publish(out or SITE, "roster", payload)
+    dest = out or SITE
+    got = _publish(dest, "roster", payload)
+    # What this publish set, journalled as the week's `published` decision (#517): the Friday
+    # lineup capture lands after the Wednesday entry is frozen, so the entry's own `rule` block
+    # is not what the Saturday publish decided. Only a call that reached the site's own
+    # directory is the site's decision -- a publish into a scratch `out` is not -- and only one
+    # that published; refused from the week's first Sunday inside `record_published`.
+    if dest == SITE and not isinstance(got, Kept):
+        print(f"  lineup journal: {_roster_journal(wk, lk, rule)}", flush=True)
+    return got
 
 
 # --- everything, plus a manifest -----------------------------------------
