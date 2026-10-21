@@ -178,6 +178,27 @@ def test_a_width_state_that_cannot_be_written_does_not_take_the_gate_down(tmp_pa
         d.chmod(0o700)
 
 
+def test_a_run_whose_ledger_write_fails_says_it_is_not_recorded(tmp_path):
+    """#524: the gate keeps its verdict, but a report that is silent about a lost record hides
+    that the next run will have nothing to compare against."""
+    d = tmp_path / "ro"
+    d.mkdir()
+    path = d / "gate-width.json"
+    d.chmod(0o500)
+    try:
+        got = Ledger(path).record(_entry(width=1.0, lo=-2.0, hi=-1.0))
+        assert not path.exists(), "the fixture did not actually make the write fail"
+        assert any("could not be written" in ln and "not recorded" in ln for ln in got.lines)
+    finally:
+        d.chmod(0o700)
+
+
+def test_a_write_false_ledger_does_not_claim_a_failed_write(tmp_path):
+    got = Ledger(tmp_path / "gate-width.json", write=False).record(
+        _entry(width=1.0, lo=-2.0, hi=-1.0))
+    assert not any("not recorded" in ln for ln in got.lines)
+
+
 # --- #382: the ledger's `seasons` field ---------------------------------------------------
 
 _SEASONS_RECORDS = [
