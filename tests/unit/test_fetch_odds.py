@@ -1390,3 +1390,36 @@ def test_a_raw_response_that_cannot_be_kept_does_not_mask_the_failure(
     with pytest.raises(odds.SnapshotIncomplete, match="archive unreadable") as ei:
         odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
     assert "raw response is kept" not in str(ei.value)
+
+
+# --- #527: the golden suite's live odds check is opt-in and records its spend ---------------
+
+def test_live_check_skips_with_a_key_and_no_flag_naming_the_flag():
+    reason = odds.live_check_skip_reason({"ODDS_API_KEY": "k"})
+    assert reason is not None and odds.LIVE_CHECK_FLAG in reason
+    assert odds.live_check_skip_reason({"ODDS_API_KEY": "k", odds.LIVE_CHECK_FLAG: "0"})
+
+
+def test_live_check_gate_reads_the_process_environment(monkeypatch):
+    monkeypatch.delenv(odds.LIVE_CHECK_FLAG, raising=False)
+    assert odds.live_check_skip_reason() is not None
+    monkeypatch.setenv(odds.LIVE_CHECK_FLAG, "1")
+    assert odds.live_check_skip_reason() is None
+
+
+def test_live_check_fetch_records_its_spend_in_the_fetchers_state(tmp_path, monkeypatch):
+    state = tmp_path / "odds.json"
+    odds._write_state(state, 100, dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+    calls = []
+
+    def fake(params, key):
+        calls.append((dict(params), key))
+        return [{"id": "e"}], {"x-requests-remaining": "99"}
+
+    monkeypatch.setattr(odds, "_http_get", fake)
+    payload = odds.live_check_fetch("k", state_path=state,
+                                    when=dt.datetime(2026, 10, 2, tzinfo=dt.UTC))
+    assert payload == [{"id": "e"}] and len(calls) == 1
+    saved = json.loads(state.read_text())
+    assert saved["remaining"] == 99 and saved["last_cost"] == 1
+    assert odds.credits_remaining(state) == 99

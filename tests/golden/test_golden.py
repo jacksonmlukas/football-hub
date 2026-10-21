@@ -9,6 +9,8 @@ third-party outage must never block a docs commit. Run deliberately:
     uv run pytest -m golden
 
 Sources without a key on this machine (CFBD, The Odds API) are skipped rather than failed.
+The Odds API check also needs GOLDEN_SPEND_ODDS_CREDIT=1: it spends a paid credit, which it
+records in state/odds.json like any poll (#527).
 A skip is honest; a pass would claim verification that did not happen.
 """
 import json
@@ -149,8 +151,10 @@ def test_live_odds_matches_its_fixture_shape():
     key = odds._api_key()
     if key is None:
         pytest.skip("no ODDS_API_KEY: this source is unverified against reality")
-    payload, _ = odds._http_get(
-        {"markets": odds.MARKET, "regions": odds.REGION}, key)
+    reason = odds.live_check_skip_reason()
+    if reason:
+        pytest.skip(reason)
+    payload = odds.live_check_fetch(key)
     if not payload:
         pytest.skip("no events on the board right now")
     missing = fixture_columns("odds_spreads.synthetic.json") - set(payload[0])

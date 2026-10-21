@@ -362,6 +362,37 @@ def _http_get(params: Mapping[str, Any], key: str) -> tuple[Any, Mapping[str, st
     return r.json(), r.headers
 
 
+# The golden suite's one paid call (#527). A golden run is part of the local gate list and
+# `.worktreeinclude` carries `.env` into every agent worktree, so "a key is on the machine"
+# is true of every lane; keying the paid call on the key alone spent credits nobody recorded.
+# It now takes an explicit flag, and when it runs its spend lands in `STATE` like any poll's.
+LIVE_CHECK_FLAG = "GOLDEN_SPEND_ODDS_CREDIT"
+
+
+def live_check_skip_reason(env: Mapping[str, str] | None = None) -> str | None:
+    """Why the golden live odds check must not spend a credit, or None if it may."""
+    e = os.environ if env is None else env
+    if e.get(LIVE_CHECK_FLAG) == "1":
+        return None
+    return (f"the live odds check spends a paid credit; set {LIVE_CHECK_FLAG}=1 to opt in "
+            f"(off by default so a local or lane golden run cannot spend one unrecorded)")
+
+
+def live_check_fetch(key: str, *, state_path: Path | None = None,
+                     when: datetime | None = None) -> Any:
+    """One paid poll for the golden shape check, its spend recorded where `snapshot` records."""
+    before = credits_remaining(state_path)
+    payload, headers = _http_get({"markets": MARKET, "regions": REGION}, key)
+    hdr = headers.get("x-requests-remaining")
+    remaining = int(float(hdr)) if hdr is not None else None
+    cost = (before - remaining
+            if before is not None and remaining is not None and before >= remaining else None)
+    _write_state(state_path, remaining, when or datetime.now(UTC), cost=cost,
+                 declared=len(MARKET.split(",")) * len(REGION.split(",")),
+                 asked=f"golden live check: {MARKET} x {REGION}")
+    return payload
+
+
 def _game_date(commence_time: str) -> str:
     """The date the game is *played on*, which is not the date its kickoff falls on in UTC.
 
