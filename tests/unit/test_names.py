@@ -98,7 +98,10 @@ def test_paths_agrees_with_the_declarations_it_replaces():
     from hub.store import DATA
     assert ROOT == board_root
     assert BOARD_PARQUET == board_parquet
-    assert (ROOT / "data") == DATA.parent if DATA.name == "processed" else True
+    if DATA.name != "processed":
+        pytest.skip(f"hub.store.DATA is {DATA}, not the default data/processed; "
+                    "the ROOT/data == DATA.parent link is only defined for the default")
+    assert (ROOT / "data") == DATA.parent
 
 
 def test_adp_history_does_not_import_a_board_builder_at_module_scope():
