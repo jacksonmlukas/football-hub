@@ -1073,8 +1073,9 @@ Friday captures stay refused exactly as before
 **What it costs.** About two of fourteen games a week (Thursday's) leave the comparison, and the
 most weeks the measurement can now admit is **8** (weeks 7-14), against the 10 or 9 the power table
 above was computed for. `MIN_WEEKS` stays 6 and is not moved by this. The power at 8 clusters is
-the table's own row for that count (P(ADOPT) 0.6172 at +2.0 points a team-week), lower than at 9
-or 10, and the decision rule's SHOW branch, already the likely one, is likelier. The table was
+the table's own row for that count (P(ADOPT) 0.6172 at +2.0 points a team-week as printed, which
+#520's amendment above marks stale and lower once re-run), lower than at 9 or 10, and the decision rule's SHOW
+branch, already the likely one, is likelier. The table was
 simulated on whole weeks; leaving Thursday's players out moves each week's lineups a little and
 is not in it.
 
