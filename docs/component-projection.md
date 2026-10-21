@@ -286,6 +286,8 @@ components has to beat a measured null rather than an intuition.
 > > one. Re-run `--run`, figures identical to the digit (MDE +0.170 against +0.019). Ledger:
 > > `component_calibration`, 2026-10-06, `resolved: 0, abstained: 3`.
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). At k=3 (x1.2247): MDE +0.170 → **+0.208** against +0.019; **NOT-RUNNABLE holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 ### What this does and does not license
 
 It does **not** license another run at a volume model. That was screened above and came back

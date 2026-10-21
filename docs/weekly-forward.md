@@ -245,6 +245,16 @@ REMOVEs 2000 of 2000.
 | 14 P(ADOPT) | 0.0000 | 0.0004 | 0.0087 | 0.0242 | 0.0703 | 0.1202 | 0.3518 | 0.6509 | 0.8833 |
 | 14 P(REMOVE) | 0.6615 | 0.2612 | 0.0679 | 0.0254 | 0.0081 | 0.0036 | 0.0002 | 0.0000 | 0.0000 |
 
+> **Amended 2026-10-20 (#520), before any 2026 outcome is read.** This table was simulated on
+> the shipped `experiment.gate` while its SE was the bootstrap draws' raw SD, biased low by
+> `sqrt((W-1)/W)` over *W* week clusters; the shipped gate now rescales it by `sqrt(W/(W-1))`
+> (1.0954 at 6 weeks, 1.0541 at 10, 1.0377 at 14). The rule is the same named function and is
+> applied as it ships at the read, so the design does not change; **this table is stale until
+> `scripts/weekly_forward_power.py` is re-run**, and will read lower null rates and lower power
+> than printed. Not re-run here. The MDE above moves by the same factor (≈2.2 → ≈2.3 at 10
+> weeks; stage 2 still passes against +10.80). The arm pin does not move:
+> `hub.models.experiment` is closure-exempt. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 (The 14-week row is not on the table's horizon: it is what counting weeks 1-4 would have
 bought, and is there so the cost of the weeks-1-5 decision is read off numbers.) The week
 component is the one fitted constant, and its sensitivity at 10 weeks (week variance 0 / **2.00** /

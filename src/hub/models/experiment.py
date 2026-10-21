@@ -394,7 +394,9 @@ def minimum_detectable_effect(se: float, clusters: int) -> float:
     `(t(0.975, k-1) + z(0.80)) * se`, where `k` is the number of clusters and `se` is the
     standard deviation of the bootstrap draws that produced the interval -- the same
     bootstrap, not a second one that happens to agree. That half of the rule is
-    `docs/gate-power.md`'s and has not moved.
+    `docs/gate-power.md`'s and has not moved. *(Since #520, 2026-10-20, that SD is rescaled by
+    `sqrt(k/(k-1))` before it arrives here -- `_t_reference_se` -- so `se` is the SE the t
+    reference assumes rather than the plug-in one; the same draws.)*
 
     **The quantile is a t and this is a correction, dated 2026-09-07.** The criterion first
     written for #45 said "not a t approximation", against the failure mode of a second
@@ -566,6 +568,25 @@ class Gain(NamedTuple):
     losses: int = 0
 
 
+def _t_reference_se(draw_sd: float, clusters: int) -> float:
+    """The standard error a t on `clusters - 1` degrees of freedom is paired with, from the
+    standard deviation of a nonparametric bootstrap's resampled means over `clusters` units.
+
+    **#520, ADOPTED (a) 2026-10-20.** The bootstrap SD of a mean of `k` units estimates the
+    *plug-in* SE, `sqrt((k-1)/k) * s / sqrt(k)` with `s` the units' `ddof=1` sd: biased low by
+    `sqrt((k-1)/k)`, which at four seasons is 0.866 and put a nominal-95% t interval at ~92.5%
+    coverage. The t reference assumes `s / sqrt(k)`, so the draws' SD is rescaled by
+    `sqrt(k/(k-1))` here rather than replaced by `units.std(ddof=1) / sqrt(k)`, for two reasons:
+    the bootstrap stays the one mechanism every clustered SE in this module comes from (#311's
+    option (a)), and the restatement is exact -- every SE, MDE and t half-width published on the
+    same draws moves by precisely `sqrt(k/(k-1))`, with no Monte Carlo noise from swapping the
+    estimator, so rule 13's restatement is arithmetic on a re-run of the same seed rather than
+    an argument. Below two clusters there is no `k - 1` to rescale by, and the draws' SD is
+    returned as it was (every reader is NaN there anyway).
+    """
+    return draw_sd * math.sqrt(clusters / (clusters - 1)) if clusters >= 2 else draw_sd
+
+
 def _bootstrap_se(units: npt.NDArray[np.float64], *, bootstrap: int, seed: int) -> float:
     """The nonparametric percentile bootstrap's own by-product: the standard deviation of the
     resampled means of `units`. NaN below two units -- no spread to resample a shape from.
@@ -621,6 +642,12 @@ def _disposition(gain: float, se: float, m: int) -> str:
     for a bootstrap SE to mean anything, `m` included -- **the test falls back to the sign
     alone**: win if strictly positive, loss if strictly negative, tie at exactly zero (the
     same three-way split, read off the sign rather than the bootstrap).
+
+    **`se` is the raw bootstrap SD, deliberately, after #520.** It is low by `sqrt((m-1)/m)`
+    the way `summarise`'s was, but the `2` is a chosen bar rather than a quantile with a stated
+    coverage, and it reads an SE only at `m >= TIE_MIN_CLUSTERS` (factor <= 1.0445). Rescaling
+    it would move dispositions in every gate -- a rule change for the maintainer, named in
+    `docs/gate-power.md`'s #520 restatement, not part of that correction.
     """
     # `se <= 0` joins the fallback (review of 2026-09-21; ADOPTED on #335 the same day): a
     # season whose paired diffs are all identical has a bootstrap SE of exactly zero, and
@@ -679,7 +706,10 @@ def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
     d = np.asarray(base_err, dtype=float) - np.asarray(arm_err, dtype=float)
     units = _cluster_units(d, np.asarray(cluster))
     mean = float(units.mean()) if len(units) else 0.0
-    se = _bootstrap_se(units, bootstrap=bootstrap, seed=seed)
+    # #520: the pooled `t` is read on `k - 1` degrees of freedom (`weekly_projection._contrast`
+    # prints it against t(0.975, k-1)), so its SE is rescaled exactly as `summarise`'s is.
+    # The per-season tie test below keeps the raw bootstrap SE: see `_disposition`.
+    se = _t_reference_se(_bootstrap_se(units, bootstrap=bootstrap, seed=seed), len(units))
     if not (math.isfinite(se) and se > 0.0):
         se, t = 0.0, 0.0
     else:
@@ -985,7 +1015,10 @@ def summarise(paired: pl.DataFrame, *, cluster: Sequence[str] | None = None,
     # and `mde` is a quantile pair times it -- so the standard error under the MDE is by
     # construction the one the interval above it was drawn from, which is the half of
     # `docs/gate-power.md`'s rule that a second bootstrap agreeing by luck would fake.
-    se = float(draws.std(ddof=1)) if len(draws) > 1 else float("nan")
+    # #520: rescaled by `sqrt(k/(k-1))` before the t reads it (`_t_reference_se`); the
+    # percentile `lo`/`hi` below stay on the raw draws, unchanged.
+    se = (_t_reference_se(float(draws.std(ddof=1)), len(units)) if len(draws) > 1
+          else float("nan"))
     mean = float(units.mean())
     t_lo, t_hi = t_interval(mean, se, len(units))
     return {"n": float(paired.height), "clusters": float(len(units)),

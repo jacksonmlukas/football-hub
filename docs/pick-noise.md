@@ -273,6 +273,8 @@ power, and the ceiling is the perfect-foresight arm played in the same room.
 > (4 of 4 resolved); see `docs/gate-power.md`, *Amended 2026-10-09 (#467)*. The 0.5 and 1.5 rows
 > were not re-run.
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). At k=4 (x1.1547): t [−21.32, −5.67] → **[−22.53, −4.46]**, MDE 9.90 → **11.43**, ceiling/MDE 2.21 → 1.92; **REMOVE holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 **What it says.** The 1.0 row reproduces the figure `docs/gate-power.md` restated on 2026-10-06
 (−11.02 [−14.84, −7.20], MDE 7.84, ceiling +21.90), to the digit. The optimizer loses to the market
 at every scale and every interval excludes zero on the losing side, so the verdict does not depend
