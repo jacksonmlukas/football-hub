@@ -79,6 +79,27 @@ def test_no_key_value_is_written_in_the_file():
             assert "${{ secrets." in line, line
 
 
+def test_the_run_step_maps_each_provider_secret_by_its_exact_name():
+    from hub.forecasters import providers
+    env = _steps()["Forecast the day's games"]["env"]
+    for name in (*providers.KEY_ENV.values(), providers.TAVILY_KEY_ENV, "ODDS_API_KEY"):
+        assert env[name] == f"${{{{ secrets.{name} }}}}", name
+    assert "added here at v0" not in WF                     # the placeholder comment is gone
+
+
+def test_no_other_step_sees_a_provider_key():
+    from hub.forecasters import providers
+    for name, step in _steps().items():
+        if name != "Forecast the day's games":
+            assert not set(step.get("env") or {}) & set(providers.KEY_ENV.values()), name
+
+
+def test_wiring_the_keys_did_not_switch_the_job_on():
+    import yaml
+    job = yaml.safe_load(WF)["jobs"]["forecast"]
+    assert job["if"] == "vars.LLM_FORECASTS_ENABLED == 'true'"
+
+
 def _steps() -> dict[str, dict]:
     import yaml
     jobs = yaml.safe_load(WF)["jobs"]

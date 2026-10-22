@@ -65,7 +65,13 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          # The four model providers' keys are added here at v0, each as `${{ secrets.NAME }}`.
+          # One repository secret per provider (`hub.forecasters.providers.KEY_ENV`), never in
+          # `.env`, so an agent lane cannot spend. TAVILY_API_KEY is reserved for #511's
+          # retrieval arm and read by nothing yet.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: uv run python -m hub.forecasters.cli run --out forecasts-branch --day "${{ steps.gate.outputs.day }}"
 
