@@ -66,8 +66,9 @@ jobs:
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           # One repository secret per provider (`hub.forecasters.providers.KEY_ENV`), never in
-          # `.env`, so an agent lane cannot spend. TAVILY_API_KEY is reserved for #511's
-          # retrieval arm and read by nothing yet.
+          # `.env`, so an agent lane cannot spend. TAVILY_API_KEY is the paired retrieval
+          # arm's news search (#511, `hub.fetch.tavily`); a run whose config names the arm
+          # refuses without it, before the market snapshot.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

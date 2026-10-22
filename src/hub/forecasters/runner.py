@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from hub import atomic
-from hub.forecasters import prompt
+from hub.fetch import tavily
+from hub.forecasters import prompt, retrieval
 from hub.forecasters.config import UNSET, LlmSpec, StudyConfig
 from hub.forecasters.packet import Condition, MarketBlock, Packet, packet_hash
 
@@ -97,8 +98,24 @@ def call_settings(spec: LlmSpec) -> dict[str, Any]:
     return out
 
 
+def paired_spec(config: StudyConfig) -> LlmSpec | None:
+    """The bare LLM the retrieval arm pairs with, or None when there is no arm (or the config
+    names a model it does not have, which `require_pinned` refuses)."""
+    if config.retrieval is None:
+        return None
+    return next((m for m in config.llms if m.name == config.retrieval.paired_with), None)
+
+
+def retrieval_contestant(config: StudyConfig) -> str | None:
+    """`<model>+retrieval:line_aware`: the paired twin of `<model>:line_aware` (#511)."""
+    spec = paired_spec(config)
+    return None if spec is None else f"{spec.name}+{retrieval.ARM}:{Condition.LINE_AWARE}"
+
+
 def contestants(config: StudyConfig) -> list[str]:
-    return ([f"{m.name}:{c}" for m in config.llms for c in Condition] + [HUB, HOME, COIN])
+    paired = retrieval_contestant(config)
+    return ([f"{m.name}:{c}" for m in config.llms for c in Condition]
+            + ([paired] if paired else []) + [HUB, HOME, COIN])
 
 
 def require_pinned(config: StudyConfig) -> None:
@@ -112,6 +129,14 @@ def require_pinned(config: StudyConfig) -> None:
         gaps.append("study.home_rate")
     if len(config.llms) != 4:
         gaps.append(f"study.llms ({len(config.llms)}, the prereg fixes four)")
+    r = config.retrieval
+    if r is not None:
+        if paired_spec(config) is None:
+            gaps.append(f"retrieval.paired_with ({r.paired_with!r} is not a configured llm)")
+        if r.season_credit_cap <= 0:
+            gaps.append("retrieval.season_credit_cap")
+        if r.usd_per_credit < 0:
+            gaps.append("retrieval.usd_per_credit")
     if gaps:
         raise NotPinned("conf/forecasters.toml is not pinned: " + ", ".join(gaps))
 
@@ -176,7 +201,19 @@ class LlmForecast:
 def forecast_llm(client: Client, spec: LlmSpec, packet: Packet, config: StudyConfig) -> LlmForecast:
     """`config.samples` samples, each retried up to `max_parse_retries` times on a parse failure;
     the mean of the valid ones, or no forecast with fewer than `min_valid`."""
-    system, user = prompt.SYSTEM[Condition(packet.condition)], prompt.render(packet)
+    return _draw(client, spec, prompt.SYSTEM[Condition(packet.condition)], prompt.render(packet),
+                 config)
+
+
+def forecast_retrieved(client: Client, spec: LlmSpec, rp: retrieval.RetrievedPacket,
+                       config: StudyConfig) -> LlmForecast:
+    """The retrieval arm: the same sampling rule as its bare twin, on the retrieval prompt."""
+    return _draw(client, spec, prompt.RETRIEVAL_SYSTEM,
+                 prompt.render_retrieved(rp.base, rp.retrieval.items), config)
+
+
+def _draw(client: Client, spec: LlmSpec, system: str, user: str,
+          config: StudyConfig) -> LlmForecast:
     kept: list[Sample] = []
     failures: list[str] = []
     cost = 0.0
@@ -197,15 +234,23 @@ def forecast_llm(client: Client, spec: LlmSpec, packet: Packet, config: StudyCon
 
 
 def max_run_cost(config: StudyConfig, *, pending_llm_forecasts: int,
-                 spec: LlmSpec | None = None) -> float:
+                 spec: LlmSpec | None = None, pending_retrieval: int = 0) -> float:
     """The worst case: every sample retried to the limit, every call at the output ceiling.
-    Priced at the dearest model unless `spec` is given."""
+    Priced at the dearest model unless `spec` is given. A pending retrieval forecast is its
+    paired model's calls on a prompt longer by the news block's ceiling, plus every search a
+    game may make priced at `usd_per_credit`."""
     calls = config.samples * (config.max_parse_retries + 1)
-    def per_call(m: LlmSpec) -> float:
-        return (config.est_input_tokens * m.usd_per_mtok_in
+    def per_call(m: LlmSpec, extra: int = 0) -> float:
+        return ((config.est_input_tokens + extra) * m.usd_per_mtok_in
                 + m.max_output_tokens * m.usd_per_mtok_out) / 1e6
     worst = per_call(spec) if spec else max((per_call(m) for m in config.llms), default=0.0)
-    return pending_llm_forecasts * calls * worst
+    total = pending_llm_forecasts * calls * worst
+    paired = paired_spec(config)
+    if pending_retrieval and paired is not None and config.retrieval is not None:
+        searches = retrieval.SEARCHES_PER_GAME * tavily.CREDITS_PER_SEARCH
+        total += pending_retrieval * (calls * per_call(paired, retrieval.PROMPT_EXTRA_TOKENS)
+                                      + searches * config.retrieval.usd_per_credit)
+    return total
 
 
 # --- the log ------------------------------------------------------------------------------
@@ -279,8 +324,12 @@ def _lock(out_dir: Path) -> Iterator[None]:
 
 def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyConfig,
         client: Client, hub: HubModel, out_dir: Path, run_start: datetime, run_id: str,
-        clock: Callable[[], datetime]) -> Path:
-    """Forecast every unwritten (game, contestant) and append it to this run's file."""
+        clock: Callable[[], datetime], retriever: retrieval.Retriever | None = None) -> Path:
+    """Forecast every unwritten (game, contestant) and append it to this run's file.
+
+    The retrieval arm searches lazily -- after the lock, the idempotency check and the spending
+    guard, and only for a game whose paired record is still unwritten -- so a second process, a
+    rerun or a refused budget spends no Tavily credit either."""
     path = out_dir / f"{run_start:%Y}" / f"{run_start:%Y-%m-%d}.jsonl"
     with _lock(out_dir):
         seen, spent = _written(out_dir)
@@ -292,8 +341,12 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyCo
         pending = sum(1 for g in games if g.refusal is None for m in config.llms for c in Condition
                       if (g.blind if c is Condition.BLIND else g.line_aware) is not None
                       and todo(g.game_id, f"{m.name}:{c}"))
-        worst = max_run_cost(config, pending_llm_forecasts=pending)
-        if pending and config.season_cap_usd - spent < worst:
+        rname, paired = retrieval_contestant(config), paired_spec(config)
+        pending_r = sum(1 for g in games if retriever is not None and rname is not None
+                        and g.refusal is None and g.line_aware is not None
+                        and todo(g.game_id, rname))
+        worst = max_run_cost(config, pending_llm_forecasts=pending, pending_retrieval=pending_r)
+        if (pending or pending_r) and config.season_cap_usd - spent < worst:
             raise BudgetExhausted(f"cap ${config.season_cap_usd:.2f} - spent ${spent:.4f} is below "
                                   f"this run's worst case ${worst:.4f}; no model called")
 
@@ -308,15 +361,18 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyCo
 
             def write(name: str, *, condition: str | None, model_version: str | None,
                       p: float | None, packet: Packet | None, game: GameInputs = g,
+                      prompt_digest: str | None = None, packet_digest: str | None = None,
                       **extra: Any) -> None:
                 finished = clock()
                 lead = (game.kickoff - finished).total_seconds() / 60
+                if prompt_digest is None and condition in tuple(Condition):
+                    prompt_digest = prompt.prompt_hash(Condition(condition))
+                if packet_digest is None and packet is not None:
+                    packet_digest = packet_hash(packet)
                 _append(path, {
                     "game_id": game.game_id, "contestant": name, "condition": condition,
-                    "model_version": model_version,
-                    "prompt_hash": prompt.prompt_hash(Condition(condition))
-                    if condition in tuple(Condition) else None,
-                    "packet_hash": packet_hash(packet) if packet is not None else None,
+                    "model_version": model_version, "prompt_hash": prompt_digest,
+                    "packet_hash": packet_digest,
                     "market_snapshot_id": snapshot_id, "p": p,
                     "run_start": run_start, "finished_at": finished, "workflow_run_id": run_id,
                     "excluded": "finished_within_60min_of_kickoff"
@@ -336,6 +392,11 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyCo
                           parse_failures=list(f.raw_failures),
                           settings=call_settings(m), training_cutoff=m.training_cutoff)
 
+            if (retriever is not None and rname is not None and paired is not None
+                    and g.line_aware is not None and todo(g.game_id, rname)):
+                _retrieval_record(write, g.line_aware, rname, paired, config, client, retriever,
+                                  snapshot_id)
+
             market = g.line_aware.market if g.line_aware is not None else None
             if market is not None and todo(g.game_id, HUB):
                 raw = hub.predict(g.game_id, market)
@@ -348,3 +409,33 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyCo
                 write(COIN, condition=None, model_version=None, p=clip(0.5, config), packet=None,
                       mean=0.5)
     return path
+
+
+def _retrieval_record(write: Callable[..., None], base: Packet, name: str, spec: LlmSpec,
+                      config: StudyConfig, client: Client, retriever: retrieval.Retriever,
+                      snapshot_id: str | None) -> None:
+    """One game's paired retrieval forecast. The record names its twin (`paired_with`) and the
+    twin's packet hash (`base_packet_hash`), so scoring differences the pair on games both
+    have and can check they saw the same packet. A failed search is a lost forecast, logged
+    with its reason and the credits it spent; an exhausted credit cap writes nothing."""
+    usd = config.retrieval.usd_per_credit if config.retrieval is not None else 0.0
+    common: dict[str, Any] = {
+        "condition": str(Condition.LINE_AWARE), "model_version": spec.model_version,
+        "packet": None, "prompt_digest": prompt.retrieval_prompt_hash(), "arm": retrieval.ARM,
+        "paired_with": f"{spec.name}:{Condition.LINE_AWARE}",
+        "base_packet_hash": packet_hash(base), "settings": call_settings(spec),
+        "training_cutoff": spec.training_cutoff}
+    try:
+        rp = retriever.retrieve(base, snapshot_id=snapshot_id)
+    except retrieval.CreditsExhausted:
+        return
+    except retrieval.RetrievalFailed as exc:
+        write(name, p=None, cost_usd=exc.credits * usd, search_credits=exc.credits,
+              retrieval_failure=str(exc), **common)
+        return
+    f = forecast_retrieved(client, spec, rp, config)
+    write(name, p=f.p, packet_digest=retrieval.retrieved_hash(rp), mean=f.mean,
+          cost_usd=f.cost_usd + rp.retrieval.credits * usd, lost=f.lost,
+          samples=[asdict(s) for s in f.samples], parse_failures=list(f.raw_failures),
+          search_credits=rp.retrieval.credits, retrieval=retrieval.plain_block(rp.retrieval),
+          **common)
