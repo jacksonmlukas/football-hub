@@ -72,6 +72,33 @@ No model gets web search, tools, or retrieval. A model deprecated mid-season sto
 > - **Spend.** Tavily credits are counted separately from dollars, in the study's own state file, against a season cap of 1,500 credits checked before each game's searches. They are also priced into the cost log at a per-credit price pinned at v0 (0 while the promo's credits are free), so the season dollar cap and the spending guard include retrieval.
 > - **Failures.** A failed search means that game has no retrieval forecast, logged with the reason and the credits spent (the "contestant has no forecast" row under Exclusions). When the credit cap is reached the arm stops and the other eleven continue. Resuming it is a logged deviation.
 
+> **Models pinned 2026-10-22 (#448; the maintainer's 2026-10-21 rule: the newest flagship from Anthropic, OpenAI and Google plus one cheaper fourth). Recorded under method rule 13; nothing above is changed.** Every value is read from the provider's own docs on 2026-10-22 and is what `conf/forecasters.toml` carries.
+>
+> | Name | Provider | API model id | Stated cutoff | Temperature | Reasoning effort | Max output | USD / MTok in / out | Source (accessed 2026-10-22) |
+> | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+> | llm1 | Anthropic | `claude-opus-5-5` | Jun 2026 (reliable knowledge and training data) | none (sampling parameters return 400) | `low` (`output_config.effort`; thinking always on) | 1,000 | 4.00 / 20.00 | platform.claude.com/docs/en/about-claude/models/overview; …/models/opus-5-5/overview; …/models/opus-5-5/migration-guide; …/about-claude/pricing |
+> | llm2 | OpenAI | `gpt-6.1-sol` | Apr 30, 2026 | none (removed unless effort is `none`, which this model rejects) | `low` (`reasoning.effort`) | 1,000 | 2.00 / 10.00 | developers.openai.com/api/docs/models/gpt-6.1-sol; …/guides/latest-model; …/guides/reasoning; …/changelog |
+> | llm3 | Google | `gemini-4-argon` | not published | none (ignored on Gemini 4; Google says remove it) | `low` (`thinkingConfig.thinkingLevel`; thinking can't be disabled) | 1,000 | 4.00 / 20.00 (2.00 / 10.00 through 2026-11-30) | ai.google.dev/gemini-api/docs/models/gemini-4-argon; …/generate-content/latest-model; …/generate-content/thinking; …/pricing |
+> | llm4 (cheaper) | OpenAI | `gpt-6-luna` | May 18, 2026 | none (as llm2) | `low` (`reasoning.effort`) | 1,000 | 0.10 / 0.50 | developers.openai.com/api/docs/models/gpt-6-luna; …/guides/reasoning; …/changelog |
+>
+> - **Which model is the flagship.** Each provider also sells a premium tier above these: Anthropic's Claude Fable 5.1 and OpenAI's GPT-6 Astra, both $10 / $50. They are excluded. Anthropic's docs label Opus 5.5 "Latest" (released 2026-09-22) and name it the model to start with. GPT-6.1 Sol (released 2026-09-29) is the newest model in OpenAI's "Flagship models" list. Google calls Gemini 4 Argon its "flagship reasoning model". Two premium models at their own ceiling would cost about $196 over the season, more than the $150 cap on their own.
+> - **Ids.** Anthropic says every Claude id from the 4.6 generation on, dateless ones included, is a pinned snapshot. OpenAI lists one snapshot for each model, the dateless id, and publishes no dated one. Google lists `gemini-4-argon` as Stable ("Stable models usually don't change") and publishes no dated version. None of these is a moving alias.
+> - **Settings.** All four reason. Opus 5.5 and Gemini 4 Argon can't turn thinking off, GPT-6.1 Sol rejects `none`, and Luna is held to the same rule. So effort is `low`, the lowest level all four accept, and temperature is none on all four. The config spells "none" as "send no parameter", so it cannot ask Luna for effort `none`.
+> - **Why 1,000 output tokens, not 400.** In all three APIs thinking counts toward the cap. A cap hit while the model is still thinking returns no answer but is billed (OpenAI: status `incomplete`; Google: `MAX_TOKENS`). The answer itself is about 150 tokens (JSON plus a rationale of at most 60 words). A cap of 400 leaves about 250 tokens for thinking; 1,000 leaves about 850. The live dry run measures real output tokens. A change to the cap after v0 goes in the deviations log.
+> - **Gemini's price.** Google's pricing page shows $2 / $10 through 2026-11-30 and $4 / $20 from 2026-12-01. The study window (weeks 9–18) covers both. The pin uses the higher price, so the cost log and the spending guard overstate November and never understate December.
+> - **The fourth model and the retrieval pairing.** It is the cheapest model by cost per call at 2,000 input + 400 output tokens:
+>
+>   | Model | 2,000 × in + 400 × out | Per call |
+>   | --- | --- | --- |
+>   | llm1 `claude-opus-5-5` | 2,000 × $4 + 400 × $20 = $0.0080 + $0.0080 | $0.0160 |
+>   | llm2 `gpt-6.1-sol` | 2,000 × $2 + 400 × $10 = $0.0040 + $0.0040 | $0.0080 |
+>   | llm3 `gemini-4-argon` | 2,000 × $4 + 400 × $20 = $0.0080 + $0.0080 | $0.0160 |
+>   | llm4 `gpt-6-luna` | 2,000 × $0.10 + 400 × $0.50 = $0.0002 + $0.0002 | **$0.0004** |
+>
+>   The order is the same at 1,000 output tokens. `[retrieval].paired_with = "llm4"`. Claude Haiku 5.5 has the same list price as Luna ($0.10 / $0.50 for prompts up to 100k tokens). Luna gets the tie: Anthropic's docs say its current tokenizer fits about 555k words in 1M tokens against about 750k before, so the same packet is likely billed as more Claude tokens. Either choice leaves three providers.
+> - **Tavily.** `[retrieval].usd_per_credit = 0.008`, the pay-as-you-go price on tavily.com/pricing (read 2026-10-22). It counts the arm's searches against the dollar cap even while they fall inside the 1,000 free monthly credits.
+> - **Season cost.** 14 games a week × weeks 9–18 (10 weeks) = 140 games. Each game has twelve records, and nine of them call a model: four models × two conditions × 5 samples, plus the paired arm's 5 samples on a prompt up to 2,500 tokens longer, plus 4 Tavily credits. The hub, home and coin records cost nothing. With every call at the 1,000-token ceiling and no retries, a game costs $0.28 (llm1) + $0.14 (llm2) + $0.28 (llm3) + $0.007 (llm4) + $0.004 (the arm's calls) + $0.032 (searches) = $0.744. The season is **$104**, under the $150 cap. At 400 output tokens a call it is $61.50. Parse retries add up to twice a sample's calls. The spending guard covers them: before each run it refuses when the remaining budget is below that run's worst case, which is about $44 for a 13-game Sunday at these settings.
+
 ## Information packet
 
 Every LLM sees the same frozen packet for a game, and no field may carry information timestamped after the forecast run starts. The packet is stored verbatim and hashed.

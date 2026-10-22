@@ -344,13 +344,22 @@ def test_an_unpinned_retrieval_arm_is_refused(kw, gap):
         runner.require_pinned(_config(**kw))
 
 
-def test_the_committed_config_carries_the_arm_and_refuses_it_until_pinned():
+def test_the_committed_arm_pairs_with_the_cheapest_model_and_is_pinned():
+    """#448, 2026-10-22: the arm pairs with the cheapest of the four at 2,000 input + 400 output
+    tokens a call, and Tavily's credits are priced at its pay-as-you-go rate."""
     cfg = study_config.load()
-    assert cfg.retrieval is not None and cfg.retrieval.paired_with == study_config.UNSET
-    with pytest.raises(runner.NotPinned) as exc:
+    assert cfg.retrieval is not None and cfg.retrieval.usd_per_credit == 0.008
+
+    def per_call(m):
+        return 2000 * m.usd_per_mtok_in + 400 * m.usd_per_mtok_out
+
+    cheapest = min(cfg.llms, key=per_call)
+    assert runner.paired_spec(cfg) == cheapest
+    assert sorted(per_call(m) for m in cfg.llms)[1] > per_call(cheapest)   # no tie
+    try:
         runner.require_pinned(cfg)
-    assert "retrieval.paired_with" in str(exc.value)
-    assert "retrieval.usd_per_credit" in str(exc.value)
+    except runner.NotPinned as exc:
+        assert "retrieval." not in str(exc)
 
 
 def test_the_worst_case_prices_the_arm_and_its_searches():
