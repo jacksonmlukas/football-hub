@@ -22,6 +22,7 @@ Any change to prompts, settings, or models after the burn-in either reruns the b
 - [ ] The H1 estimability threshold: the minimum standard deviation of a model's log-odds deviations from the market
 - [ ] The Parity version or commit that runs H2
 - [ ] A spending cap with each provider that offers one, and the season cap the code enforces
+- [ ] The retrieval arm (added 2026-10-22, #511): which LLM it pairs with, and Tavily's per-credit price and the promo's expiry
 
 **Before v1 (after the burn-in):**
 
@@ -57,6 +58,19 @@ Eleven forecasters are scored against one benchmark: four LLMs in two conditions
 Models with later training cutoffs know more about the 2026 season before the packet adds anything. Cutoffs are recorded and reported next to every blind result, so differences between models aren't read as pure skill.
 
 No model gets web search, tools, or retrieval. A model deprecated mid-season stops; no substitute counts toward the confirmatory tests.
+
+> **Restated 2026-10-22 (#511; adopted 2026-10-20 as its option 1, before `prereg-llm-v0`). Under method rule 13 the text above stands as first written: "eleven forecasters" and "no model gets ... retrieval" are the prior values.** There are **twelve** forecasters. The twelfth is **LLM + retrieval**, a contestant *paired* with one bare arm, so the paired difference isolates retrieval:
+>
+> | Contestant | What it is | Fixed at v0 |
+> | --- | --- | --- |
+> | LLM + retrieval (paired, exploratory) | One of the four LLMs, same version string and settings, shown its own line-aware packet unchanged plus news search results retrieved for the game before the run started | Which LLM it pairs with, the queries, the search cap, the lookback, the snippet budget, the prompt hash, the credit cap |
+>
+> - **Pairing.** It pairs with `<model>:line_aware` and is recorded as `<model>+retrieval:line_aware`. Each record carries `paired_with` (the twin's contestant name) and `base_packet_hash` (the twin's packet hash, which must equal the twin's own `packet_hash`). The quantity reported is retrieval minus bare, game by game, on games both have, averaged within week and then across weeks as for H2, with a 95% t-interval on the weekly values. It is exploratory: no test, and H1 and H2 stay four models.
+> - **Searches.** Four a game, fixed: `"<team> injury report"` and `"<team> inactives"` for the home team, then the away team, through Tavily's news search (basic depth, one credit each, last 7 days, 5 results each). A longer query list is refused before any search.
+> - **As-of rule for retrieved items.** Each item is judged by its own published date. It is kept only if that date is strictly before the run start and no more than 7 days earlier. An item with no usable date is dropped; fetch time never stands in. Every dropped item is logged with its URL, title, raw date and reason, and counted. The rule is written into the packet's retrieval block.
+> - **Budget and hash.** At most 10 items, newest first, each snippet cut to 600 characters. The packet hash covers the bare packet and the whole retrieval block (queries, items, drops, counts). The block, snippets included, is committed in the record.
+> - **Spend.** Tavily credits are counted separately from dollars, in the study's own state file, against a season cap of 1,500 credits checked before each game's searches. They are also priced into the cost log at a per-credit price pinned at v0 (0 while the promo's credits are free), so the season dollar cap and the spending guard include retrieval.
+> - **Failures.** A failed search means that game has no retrieval forecast, logged with the reason and the credits spent (the "contestant has no forecast" row under Exclusions). When the credit cap is reached the arm stops and the other eleven continue. Resuming it is a logged deviation.
 
 ## Information packet
 

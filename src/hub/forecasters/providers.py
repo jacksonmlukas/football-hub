@@ -4,9 +4,10 @@
 the newest flagship from Anthropic, OpenAI and Google plus one cheaper model (maintainer,
 2026-10-21, #448). Each adapter turns `(spec, system, user)` into one request, and the reply
 into a `runner.Completion`: the text, and the input and output tokens the cost log multiplies
-by the pinned prices. No tools, no web search, no retrieval -- the prereg forbids them, and
-`TAVILY_API_KEY` is reserved here only so its name is fixed beside the others for #511's
-retrieval arm, which is not built.
+by the pinned prices. No tools and no web search on the model's side: the one retrieval
+contestant (#511) searches *before* the call, through `hub.fetch.tavily`, and hands the model
+its results in the prompt (`hub.forecasters.retrieval`); `TAVILY_KEY_ENV` is that adapter's
+key name, restated here beside the others.
 
 **Plain HTTPS through `requests`, not the three official SDKs.** `requests` is already a
 dependency (`hub.fetch.odds`, `hub.fetch.espn`); `anthropic`, `openai` and `google-genai`
@@ -36,7 +37,7 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from hub.fetch import cached
+from hub.fetch import cached, tavily
 from hub.forecasters.config import LlmSpec, StudyConfig
 from hub.forecasters.runner import Completion, call_settings
 
@@ -45,7 +46,7 @@ ANTHROPIC, OPENAI, GOOGLE = "anthropic", "openai", "google"
 # The secret names, exactly as `.github/workflows/forecast.yml` maps them into the run step.
 KEY_ENV: dict[str, str] = {ANTHROPIC: "ANTHROPIC_API_KEY", OPENAI: "OPENAI_API_KEY",
                            GOOGLE: "GEMINI_API_KEY"}
-TAVILY_KEY_ENV = "TAVILY_API_KEY"          # reserved for #511's retrieval arm; nothing reads it
+TAVILY_KEY_ENV = tavily.KEY_ENV            # the retrieval arm's search key (#511)
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"

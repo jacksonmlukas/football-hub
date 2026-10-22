@@ -34,6 +34,17 @@ class LlmSpec:
 
 
 @dataclass(frozen=True)
+class RetrievalSpec:
+    """The paired retrieval arm (#511): `paired_with` names the bare LLM it pairs with (same
+    model, same settings, its line-aware packet plus news). Tavily credits are counted apart
+    from dollars against `season_credit_cap`, and priced at `usd_per_credit` into the cost log
+    (0 while the promo's credits are free)."""
+    paired_with: str
+    season_credit_cap: int
+    usd_per_credit: float
+
+
+@dataclass(frozen=True)
 class StudyConfig:
     llms: tuple[LlmSpec, ...]
     season_cap_usd: float
@@ -46,6 +57,7 @@ class StudyConfig:
     clip_lo: float = 0.01
     clip_hi: float = 0.99
     min_lead_minutes: int = 60      # a forecast finishing closer to kickoff is excluded
+    retrieval: RetrievalSpec | None = None   # the paired retrieval arm; None runs without it
 
 
 def _opt(v: Any) -> Any:
@@ -63,7 +75,11 @@ def load(path: Path | None = None) -> StudyConfig:
                          usd_per_mtok_out=float(m["usd_per_mtok_out"]))
                  for m in raw.get("llm", []))
     s = raw["study"]
+    r = raw.get("retrieval")
+    retrieval = None if r is None else RetrievalSpec(
+        paired_with=str(r["paired_with"]), season_credit_cap=int(r["season_credit_cap"]),
+        usd_per_credit=float(r["usd_per_credit"]))
     return StudyConfig(llms=llms, season_cap_usd=float(s["season_cap_usd"]),
                        home_rate=float(s["home_rate"]),
                        home_rate_seasons=str(s["home_rate_seasons"]),
-                       est_input_tokens=int(s["est_input_tokens"]))
+                       est_input_tokens=int(s["est_input_tokens"]), retrieval=retrieval)
