@@ -13,6 +13,13 @@ home_rate = 0.0               # TBD: historical P(home win)
 home_rate_seasons = "TBD"     # TBD: the seasons it comes from
 est_input_tokens = 2000       # upper estimate of one rendered prompt, for the guard
 
+# The analysis settings v0 fixes ("Before v0"; "Scoring and the confirmatory test").
+# `hub.forecasters.score.require_pinned` refuses to score while any is "TBD".
+[analysis]
+delta = "TBD"                 # H2's non-inferiority margin, nats of log loss per game
+h1_min_deviation_sd = "TBD"   # H1's threshold: min SD of a model's log-odds deviations
+parity_version = "TBD"        # the Parity version or commit that runs H2
+
 [[llm]]
 name = "llm1"
 provider = "TBD"

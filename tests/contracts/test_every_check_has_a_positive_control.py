@@ -204,6 +204,18 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_twelve_of_sixteen_meets_it",
         "test_eleven_of_sixteen_misses_it",
     )),
+    # #452: the LLM-forecaster study's two pre-registered decisions. H1 is planted both ways
+    # (an informed model detected through Holm, noisy ones not; a copier leaves the family);
+    # H2's intersection-union claim on four passes, one failure, and an empty family.
+    "hub.forecasters.score.h1_verdict": ("tests/unit/test_forecasters_score.py", (
+        "test_h1_detects_the_informed_model_after_holm_and_not_the_noisy_ones",
+        "test_a_model_that_copies_the_betting_market_leaves_h1_and_the_holm_family",
+        "test_noise_deviations_cover_zero_at_roughly_the_nominal_rate",
+    )),
+    "hub.forecasters.score.h2_verdict": ("tests/unit/test_forecasters_score.py", (
+        "test_h2_claims_only_when_every_model_rejects",
+        "test_non_inferiority_rejects_just_inside_the_bound_and_not_just_outside",
+    )),
 }
 
 # module.function -> the ticket that gives it a control. Nothing else belongs here.

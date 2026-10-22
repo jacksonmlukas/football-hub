@@ -58,7 +58,7 @@ CLI_MODULES = (
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.free_agents", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.forecasters.cli", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
+    "hub.fetch.pool", "hub.forecasters.cli", "hub.forecasters.score", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
     "hub.models.coverage",
@@ -276,6 +276,9 @@ ABSENT_INPUT = [
     # The LLM-forecaster run (#444): until v0 is pinned the config refuses before any model
     # or odds call, and says so. `--out` keeps it off any real forecasts checkout.
     ("hub.forecasters.cli", ["run", "--out", "{tmp}", "--day", "2026-10-25"]),
+    # The study's scoring (#452): until delta, the H1 threshold and the Parity version are
+    # pinned the committed config refuses in one sentence, before any input is read.
+    ("hub.forecasters.score", ["--forecasts", "{tmp}", "--games", "{tmp}/games.jsonl"]),
     ("hub.inspect", ["{tmp}/nope"]),
     # The two CI helpers (#391). `live_chain` meets an ESPN it cannot ask and says `unknown`;
     # `watchdog_gap` meets a workflow file that is not there and says it could not establish
