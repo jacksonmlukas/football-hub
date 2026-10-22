@@ -204,6 +204,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOSE_SYNC_REF: ${{ github.ref_name }}
           CYCLE_HOOK: .github/scripts/close-dispatch.sh gh workflow run odds-close.yml --repo ${{ github.repository }} --ref ${{ github.ref_name }}
+          # The LLM study's closing line (#450), off until the study is switched on: the hook
+          # exits at once unless LLM_FORECASTS_ENABLED is 'true', and dispatches
+          # `forecast-close.yml` only when an NFL kickoff is within 30 minutes with no study
+          # attempt in that window (read from the `forecasts` branch, which this job never writes).
+          LLM_FORECASTS_ENABLED: ${{ vars.LLM_FORECASTS_ENABLED }}
+          STUDY_SYNC_REF: forecasts
+          STUDY_CLOSE_HOOK: .github/scripts/study-close-dispatch.sh gh workflow run forecast-close.yml --repo ${{ github.repository }} --ref ${{ github.ref_name }}
         run: |
           .github/scripts/live-loop.sh \
             "$(( ${{ inputs.minutes || 115 }} * 60 ))" \
