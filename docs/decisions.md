@@ -1126,6 +1126,19 @@ pre-registered**: it asserts nothing and no verdict word is attached. Log loss a
 published beside the prediction's own on the same games. A prediction stamped after the capture
 it is compared with is dropped and counted.
 
+**The forecasters build lands on main, and its log is rewritten whole rather than appended
+(2026-10-21, #444).** Items 1-5 of the LLM-forecaster build (`src/hub/forecasters/`,
+`conf/forecasters.toml`, `.github/workflows/forecast.yml`) merge onto current main now the study
+runs this season (#448). The workflow stays off behind `vars.LLM_FORECASTS_ENABLED`, and no model
+is called until the v0 config is pinned. `runner._append` wrote each record with
+`open(path, "a")` and an fsync. That is durable, but a kill mid-line leaves a torn last line that
+`_written` cannot parse, so every later run would refuse until someone edited the log by hand,
+which is the operator CLAUDE.md rules out. It now rewrites the day's file through `hub.atomic`,
+a few hundred lines at most; a kill loses only the record in flight, which the next run
+re-forecasts. `tests/contracts/test_writers_are_crash_atomic.py` now also refuses `open` in a
+writing mode, so the next append is caught by the scan rather than by a reviewer. Its allowlist
+stays empty.
+
 ## Open questions
 
 1. **Pool configuration** — entries, payout, rebuys. Under ~20 entries play near max win
