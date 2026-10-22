@@ -2,6 +2,7 @@
 
 import { ago, esc, fmt } from "../format.js";
 import { STATE, staleNote } from "../state.js";
+import { table } from "../table.js";
 
 // Who a name is, where the reader cannot ask: the name with its position and NFL team beside
 // it (#352). A second reader has no league context to supply either, and a bare name is the
@@ -95,6 +96,41 @@ export function ruleNote(rule) {
   return `<p class="legend lineup-rule">${said}</p>` + why;
 }
 
+// A gap (#531): withholding left a slot nothing eligible can fill, so the publisher sent this
+// week's best partial lineup with the empty slots named, labelled incomplete -- never last
+// week's starters. The gap is the headline, then who fills the rest, the moves toward it, and
+// for each empty slot the best free agents not on bye, through the table helper (which escapes
+// every cell). A note on the free-agent pool (served last-good, or missing) renders unconfirmed.
+export function gapHeadline(ros, byName) {
+  const gap = ros.incomplete;
+  const empty = Array.isArray(gap.empty_slots) ? gap.empty_slots : [];
+  const said = typeof gap.headline === "string" && gap.headline
+    ? gap.headline : `No eligible player for ${empty.join(", ")}.`;
+  const lineup = (Array.isArray(gap.lineup) ? gap.lineup : []).map(n => whoIs(n, byName)).join(", ");
+  const side = n => n == null ? "&mdash;" : whoIs(n, byName);
+  const swaps = pairSwaps(ros.sit ?? [], ros.start ?? [], byName)
+    .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
+  const fas = gap.free_agents && typeof gap.free_agents === "object" ? gap.free_agents : {};
+  const pickups = [...new Set(empty)].map(slot => {
+    const rows = Array.isArray(fas[slot]) ? fas[slot] : [];
+    return rows.length
+      ? `<p class="legend">Free agents for ${esc(slot)}, not on bye this week:</p>` + table([
+          { label: "player", get: r => r.player ?? "" },
+          { label: "pos", get: r => r.pos ?? "" },
+          { label: "team", get: r => r.nfl_team ?? "" },
+          { label: "espn /g", get: r => r.proj_per_game == null ? "—" : fmt(r.proj_per_game, 1) },
+          { label: "owned", get: r => r.percent_owned == null ? "—" : `${fmt(r.percent_owned, 0)}%` },
+        ], rows)
+      : "";
+  }).join("");
+  const pool = gap.free_agents_note
+    ? `<p class="${STATE.unconfirmed}">${esc(gap.free_agents_note)}.</p>` : "";
+  return `<p class="lineup-call incomplete">Incomplete lineup &mdash; ${esc(said)}</p>`
+    + `<p class="lineup-totals">This week's best partial lineup: ${lineup || "nobody"}.</p>`
+    + (swaps ? `<ul class="swaps">${swaps}</ul>` : "")
+    + pickups + pool;
+}
+
 // The lineup call, kept apart from the DOM so a test can import it: the gain at display
 // size, the two totals under it, who was withheld, then the swaps and the caveat. A gain under
 // the threshold and a null gain each say so in the same slot -- the headline never blanks.
@@ -129,6 +165,15 @@ export function lineupHeadline(ros, stale) {
     ? `<p class="legend lineup-locked">Locked, game started: ${lockedHtml}. Kept as set; no swap
          below names them.</p>`
     : "";
+  // A gap is the headline whenever the publisher sent one (#531): `gain` is null there too, and
+  // "No lineup could be filled" would hide the slot to fill and who could fill it.
+  if (ros?.incomplete && typeof ros.incomplete === "object") {
+    // What set the partial lineup, which is not `decide`'s fallback: the rule's week and switch
+    // from `lineup_rule`, the source and its reason from the gap's own `lineup_source`.
+    const src = ros.incomplete.lineup_source;
+    const gapNote = src && typeof src === "object" ? ruleNote({ ...ros.lineup_rule, ...src }) : note;
+    return gapHeadline(ros, byName) + changed + chip + locks + gapNote;
+  }
   if (gain == null) {
     return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip + locks + note;
   }

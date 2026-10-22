@@ -48,7 +48,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub.config import SEASON_AHEAD
-from hub.season.roster import Lock, lock
+from hub.season.roster import Lock, Partial, lock, partial
 
 # The decided boundary (#492): the first week of each season whose lineup ECR sets. A season
 # absent here is set by `mu` throughout -- the rule was adopted for 2026 and says nothing else.
@@ -216,3 +216,57 @@ def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None
     else:
         reasons.append("no earlier capture to serve as last-good")
     return model("; ".join(reasons) + "; the model's lineup (mu) is served instead")
+
+
+class PartialCall(NamedTuple):
+    """The best partial lineup for a week whose roster cannot fill every slot (#531), and what
+    set it. The rule is `decide`'s: consensus rank from the switch week, `mu` before it."""
+    partial: Partial
+    source: str                      # "ecr" or "mu": what chose `partial.lineup`
+    ecr_week: int | None             # the capture's week when ECR chose it
+    reason: str | None               # why `source` is not the week's own rule, when it is not
+    ranks: dict[str, float]          # the ranks that chose it, `{}` under `mu`
+    ecr_capture: dict[str, str] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"source": self.source,
+                               "label": PROVISIONAL if self.source == ECR else MODEL,
+                               "ecr_week": self.ecr_week, "reason": self.reason}
+        if self.ecr_capture is not None:
+            out["ecr_capture"] = dict(self.ecr_capture)
+        return out
+
+
+def partial_call(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None,
+                 captures: Path | None = None, ecr: Mapping[str, float] | None = None,
+                 ecr_reason: str | None = None) -> PartialCall:
+    """`decide`'s source order, for a lineup that cannot be filled. Never raises.
+
+    `decide` falls back to `mu` whenever ranks fill no legal lineup, which on a roster with a
+    slot nothing can fill is every rank source -- so asking it would set the partial lineup by
+    `mu` in a week the rule sets by consensus. Here a rank source is taken when it leaves no more
+    slots empty than the roster itself does (`mu`'s partial): the gap is the roster's, not the
+    ranking's. Otherwise the next source, and `mu` last, saying why.
+    """
+    from hub.season import lineup_journal
+    base = partial(df)
+    if week is None or rule_for(season, week) == MU:
+        return PartialCall(base, MU, None, None, {})
+    if ecr is None:
+        ecr, ecr_reason = lineup_journal.ecr_ranks(season, week, captures)
+    tries: list[tuple[dict[str, float], int | None, str | None, dict[str, str] | None]] = []
+    if ecr:
+        tries.append((dict(ecr), week, None, None))
+    late, label = lineup_ecr(season, week, captures)
+    if late:
+        tries.append((late, week, None, label))
+    old, old_week = last_good_ecr(season, week, captures)
+    if old:
+        tries.append((old, old_week, f"set on week {old_week}'s capture (last-good)", None))
+    for ranks, wk, why, cap in tries:
+        got = partial(df, ranks=ranks)
+        if got.lineup and got.empty == base.empty:
+            return PartialCall(got, ECR, wk, why, ranks, cap)
+    why = (f"consensus ranks for week {week} leave more slots empty than the roster does"
+           if tries else (ecr_reason or f"no consensus ranks for week {week}"))
+    return PartialCall(base, MU, None, f"{why}; the model's partial lineup (mu) is served", {})

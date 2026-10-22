@@ -1958,6 +1958,48 @@ def test_a_null_gain_says_so_in_the_headline_slot_and_still_names_who_was_withhe
     assert _who("Hurt Back", "RB", "MIA") in out
 
 
+GAP_ROSTER = dict(
+    SWAP_ROSTER, gain=None, set_total=None, optimal_total=None, withheld=["Old TE"],
+    sit=["Old TE"], start=[],
+    lineup_rule={"source": "mu", "rule": "ecr", "label": "model", "week": 7,
+                 "ecr_from_week": 7, "ecr_week": None,
+                 "reason": "week 7's consensus ranks too few of the pool to fill a legal lineup"},
+    incomplete={"empty_slots": ["TE"], "lineup": ["Fast WR", "Strong RB"],
+                "lineup_source": {"source": "ecr", "label": "provisional", "ecr_week": 7,
+                                  "reason": None},
+                "headline": "TE: no eligible player; add one -- best free agents at TE not on "
+                            f"bye: {HOSTILE} (KC)",
+                "free_agents": {"TE": [{"player": HOSTILE, "pos": "TE", "nfl_team": "KC",
+                                        "proj_per_game": 8.04, "percent_owned": 12.5,
+                                        "injury_status": ""}]},
+                "free_agents_note": "the latest free-agent fetch failed; these are from the "
+                                    "last good pool",
+                "reason": "no lineup could be filled: 1 of 7 projected players withheld"})
+
+
+def test_a_gap_is_the_headline_and_never_says_no_lineup(node):
+    """#531: the empty slot and the action are the headline; the bare refusal is not shown."""
+    out = _headline(node, GAP_ROSTER)
+    assert out.startswith('<p class="lineup-call incomplete">Incomplete lineup &mdash; TE: no '
+                          'eligible player; add one')
+    assert "No lineup could be filled" not in out
+    assert "This week&#39;s best partial lineup" not in out  # prose is markup, not escaped text
+    assert "best partial lineup: " in out
+    for name in ("Fast WR", "Strong RB"):
+        row = next(r for r in SWAP_ROSTER["rows"] if r["player"] == name)
+        assert _who(name, row["pos"], row["nfl_team"]) in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">the latest free-agent fetch failed' in out
+    # What set the partial lineup is the gap's own source, not `decide`'s fallback to mu.
+    assert "consensus rank" in out and "model&#39;s projection" not in out
+
+
+def test_a_gaps_free_agents_render_escaped_through_the_table(node):
+    out = _headline(node, GAP_ROSTER)
+    assert "<script>" not in out
+    assert out.count("&lt;script&gt;alert(1)&lt;/script&gt;") == 2, "headline and table cell"
+    assert "<th>espn /g</th>" in out and ">8.0<" in out
+
+
 def test_a_name_the_rows_do_not_carry_shows_the_gap_rather_than_a_bare_name(node):
     out = _headline(node, dict(SWAP_ROSTER, start=["Ghost"], sit=["Slow WR"], rows=[]))
     assert _who("Ghost", "?", "?") in out
