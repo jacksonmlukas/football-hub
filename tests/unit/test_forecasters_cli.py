@@ -8,8 +8,10 @@ so the next trigger retries it and the runner's idempotency fills only the gaps.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 from hub.forecasters import cli
+from hub.forecasters import config as study_config
 
 
 def _gate(tmp_path, now: str) -> dict[str, str]:
@@ -44,6 +46,9 @@ def test_a_naive_now_is_refused(tmp_path):
 
 
 def test_run_refuses_while_the_config_is_unpinned(tmp_path):
-    """The committed config holds v0 placeholders, so `run` must stop before any model call."""
+    """A config with a v0 placeholder left makes `run` stop before any model call."""
+    p = tmp_path / "f.toml"
+    p.write_text(Path("conf/forecasters.toml").read_text()
+                 .replace('model_version = "claude-opus-5-5"', 'model_version = "TBD"', 1))
     assert cli.main(["run", "--out", str(tmp_path), "--day", "2026-10-10"],
-                    echo=lambda _: None) == 3
+                    echo=lambda _: None, config=study_config.load(p)) == 3

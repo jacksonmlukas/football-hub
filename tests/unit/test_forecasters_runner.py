@@ -360,9 +360,15 @@ def test_an_early_finish_is_not_excluded(tmp_path):
 
 # --- config -------------------------------------------------------------------------------
 
-def test_the_committed_config_refuses_to_run_until_v0_pins_the_models():
+def test_the_committed_config_is_pinned_for_v0_and_a_tbd_still_refuses(tmp_path):
+    """The four models, the study cap and the analysis were pinned 2026-10-22 (#448), so the
+    committed config runs; a single TBD put back still stops it before any call."""
+    runner.require_pinned(load())
+    p = tmp_path / "f.toml"
+    p.write_text(Path("conf/forecasters.toml").read_text()
+                 .replace('model_version = "claude-opus-5-5"', 'model_version = "TBD"', 1))
     with pytest.raises(runner.NotPinned):
-        runner.require_pinned(load())
+        runner.require_pinned(load(p))
 
 
 def test_a_pinned_config_passes():
