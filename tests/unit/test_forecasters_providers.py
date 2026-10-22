@@ -228,11 +228,44 @@ def test_the_default_transport_is_refused_under_pytest_before_anything_leaves():
 
 # --- the committed config ------------------------------------------------------------------
 
-def test_the_committed_model_fields_are_still_tbd_and_refused():
+def test_the_committed_models_are_pinned_and_no_llm_field_is_refused():
+    """The four [[llm]] tables are pinned (2026-10-22, #448): `require_pinned` may still refuse
+    the committed file, but never on a model's own field or its price."""
     cfg = study_config.load()
-    assert all(m.model_version == study_config.UNSET for m in cfg.llms)
-    with pytest.raises(runner.NotPinned) as exc:
+    assert len(cfg.llms) == 4 and len({m.provider for m in cfg.llms}) >= 3
+    assert all(study_config.UNSET not in (m.provider, m.model_version, m.training_cutoff)
+               for m in cfg.llms)
+    try:
         runner.require_pinned(cfg)
-    for m in cfg.llms:
-        assert f"{m.name}.model_version" in str(exc.value)
-        assert f"{m.name}.provider" in str(exc.value)
+    except runner.NotPinned as exc:
+        for m in cfg.llms:
+            assert f"{m.name}." not in str(exc)
+
+
+# What each pinned model's API takes, from the provider's docs on the pin date: no sampling
+# parameter on any of them while it reasons, and each provider's own spelling of effort.
+PINNED_BODY = {
+    "anthropic": lambda m: {"model": m.model_version, "max_tokens": m.max_output_tokens,
+                            "system": "S", "messages": [{"role": "user", "content": "U"}],
+                            "output_config": {"effort": "low"}},
+    "openai": lambda m: {"model": m.model_version, "instructions": "S", "input": "U",
+                         "max_output_tokens": m.max_output_tokens, "store": False,
+                         "reasoning": {"effort": "low"}},
+    "google": lambda m: {"systemInstruction": {"parts": [{"text": "S"}]},
+                         "contents": [{"role": "user", "parts": [{"text": "U"}]}],
+                         "generationConfig": {"maxOutputTokens": m.max_output_tokens,
+                                              "thinkingConfig": {"thinkingLevel": "low"}}},
+}
+
+
+@pytest.mark.parametrize("name", ["llm1", "llm2", "llm3", "llm4"])
+def test_each_pinned_model_gets_the_request_its_api_documents(name):
+    m = next(m for m in study_config.load().llms if m.name == name)
+    stub = Stub(REPLIES[m.provider])
+    c = providers.Router(study_config.load(), env=ENV, transport=stub).complete(m, "S", "U")
+    url, _, body = stub.calls[0]
+    assert body == PINNED_BODY[m.provider](m)
+    assert "temperature" not in repr(body)
+    if m.provider == "google":
+        assert url.endswith(f"/models/{m.model_version}:generateContent")
+    assert runner.parse_sample(c.text) is not None

@@ -26,49 +26,57 @@ h1_min_deviation_sd = 0.25    # H1's threshold: min SD of a model's log-odds dev
 # "hub.forecasters.score@<that commit>".
 h2_implementation = "TBD"
 
+# Pinned 2026-10-22 from each provider's own docs (docs/prereg/llm-forecasters.md, Contestants,
+# "Models pinned 2026-10-22": the ids, cutoffs, prices, sources and why each was chosen).
+# All four reason at effort "low" (the lowest level all four accept); temperature is "none"
+# because none of the four accepts a custom one while reasoning. max_output_tokens is 1,000,
+# not 400: in all three APIs thinking counts toward the cap, and a cap hit while thinking
+# returns no answer but bills the tokens -- 400 left ~250 thinking tokens after the ~150-token
+# answer.
+
 [[llm]]
 name = "llm1"
-provider = "TBD"
-model_version = "TBD"
-training_cutoff = "TBD"
-temperature = "none"
-reasoning_effort = "none"
-max_output_tokens = 400
-usd_per_mtok_in = 0.0
-usd_per_mtok_out = 0.0
+provider = "anthropic"
+model_version = "claude-opus-5-5"     # a pinned snapshot: Anthropic's dateless ids are, from 4.6 on
+training_cutoff = "2026-06"           # reliable knowledge and training data cutoff: Jun 2026
+temperature = "none"                  # sampling parameters return a 400 on Opus 5.5
+reasoning_effort = "low"              # output_config.effort; thinking is always on
+max_output_tokens = 1000
+usd_per_mtok_in = 4.0
+usd_per_mtok_out = 20.0
 
 [[llm]]
 name = "llm2"
-provider = "TBD"
-model_version = "TBD"
-training_cutoff = "TBD"
-temperature = "none"
-reasoning_effort = "none"
-max_output_tokens = 400
-usd_per_mtok_in = 0.0
-usd_per_mtok_out = 0.0
+provider = "openai"
+model_version = "gpt-6.1-sol"         # the only snapshot OpenAI lists; no dated id is published
+training_cutoff = "2026-04-30"
+temperature = "none"                  # removed whenever reasoning effort is not "none"
+reasoning_effort = "low"              # reasoning.effort; "none" is not supported on this model
+max_output_tokens = 1000
+usd_per_mtok_in = 2.0
+usd_per_mtok_out = 10.0
 
 [[llm]]
 name = "llm3"
-provider = "TBD"
-model_version = "TBD"
-training_cutoff = "TBD"
-temperature = "none"
-reasoning_effort = "none"
-max_output_tokens = 400
-usd_per_mtok_in = 0.0
-usd_per_mtok_out = 0.0
+provider = "google"
+model_version = "gemini-4-argon"      # Stable; Google publishes no dated version of it
+training_cutoff = "not published"     # no cutoff on ai.google.dev's model page or models list
+temperature = "none"                  # ignored on Gemini 4 (Google: remove sampling params)
+reasoning_effort = "low"              # thinkingConfig.thinkingLevel; thinking can't be disabled
+max_output_tokens = 1000
+usd_per_mtok_in = 4.0                 # the price from 2026-12-01 ($2 through 11-30): the dearer
+usd_per_mtok_out = 20.0               # of the two the window spans, so the guard never undercounts
 
 [[llm]]
 name = "llm4"
-provider = "TBD"
-model_version = "TBD"
-training_cutoff = "TBD"
-temperature = "none"
-reasoning_effort = "none"
-max_output_tokens = 400
-usd_per_mtok_in = 0.0
-usd_per_mtok_out = 0.0
+provider = "openai"
+model_version = "gpt-6-luna"          # the only snapshot OpenAI lists; no dated id is published
+training_cutoff = "2026-05-18"
+temperature = "none"                  # removed whenever reasoning effort is not "none"
+reasoning_effort = "low"
+max_output_tokens = 1000
+usd_per_mtok_in = 0.10
+usd_per_mtok_out = 0.50
 
 # The paired retrieval arm (#511; docs/prereg/llm-forecasters.md, Contestants, 2026-10-22):
 # the LLM named here, same settings, its own line-aware packet plus a Tavily news search per
@@ -78,6 +86,6 @@ usd_per_mtok_out = 0.0
 # usd_per_credit: what one credit costs, priced into the dollar cost log -- 0 while the promo's
 # credits are free, Tavily's published per-credit price once they are not.
 [retrieval]
-paired_with = "TBD"           # TBD: one of the [[llm]] names above
+paired_with = "llm4"          # the cheapest of the four per call (gpt-6-luna; prereg, 2026-10-22)
 season_credit_cap = 1500
-usd_per_credit = -1.0         # TBD: pinned from Tavily's pricing and the promo's terms
+usd_per_credit = 0.008        # Tavily pay-as-you-go, tavily.com/pricing read 2026-10-22
