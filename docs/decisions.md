@@ -236,7 +236,7 @@ own unless the thing is nearly free.
 The reader is **ML/DS hiring**, which is what the repo is already shaped for: the README leads
 with what was measured and then *removed*, and that is the pitch. The gap is that the method —
 pre-registration, screens versus gates, tripwires, what a provisional rule is — is scattered
-across `signal-screens.md`, `CONTEXT.md` and fourteen ADRs (twenty-five today, indexed in
+across `signal-screens.md`, `GLOSSARY.md` and fourteen ADRs (twenty-five today, indexed in
 [architecture.md](architecture.md)) with no single page stating it.
 
 Note the ordering that falls out of the calendar: **the third-ranked objective has the nearest

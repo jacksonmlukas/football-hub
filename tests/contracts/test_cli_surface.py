@@ -455,7 +455,7 @@ def test_no_private_name_crosses_a_module_line():
 
     `hub.draft.state._norm` was imported by ten modules across three packages -- two of them
     inside a function body, which is what a caller does when an import feels wrong. It is now
-    `hub.names.player_key`, with a term in CONTEXT.md. `market._norm_cdf` went public at the
+    `hub.names.player_key`, with a term in GLOSSARY.md. `market._norm_cdf` went public at the
     same time. Nothing should reintroduce the pattern.
     """
     import ast

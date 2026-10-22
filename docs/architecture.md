@@ -112,5 +112,5 @@ Related, and deliberately not ADRs:
 
 - [`decisions.md`](decisions.md) is the running journal — corrections issued during design,
   standing directions, open questions. Decisions of record are here; the working out is there.
-- [`CONTEXT.md`](../CONTEXT.md) is the glossary. An ADR says what was decided; the glossary
+- [`GLOSSARY.md`](../GLOSSARY.md) is the glossary. An ADR says what was decided; the glossary
   says what the words mean.

@@ -811,7 +811,7 @@ The most useful artifact in this repo is the record of what was measured and the
 
 | | |
 |---|---|
-| The two tests, defined | [`CONTEXT.md`](../CONTEXT.md) |
+| The two tests, defined | [`GLOSSARY.md`](../GLOSSARY.md) |
 | Six screens, five null | [signal-screens.md](signal-screens.md) |
 | The one positive screen | [snap-trend-signal.md](snap-trend-signal.md) |
 | The one adopted model | [weekly-injury.md](weekly-injury.md) |
