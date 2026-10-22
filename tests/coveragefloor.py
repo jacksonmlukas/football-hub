@@ -86,6 +86,7 @@ FLOOR: dict[str, int] = {
     "src/hub/fetch/replay.py": 2,
     "src/hub/forecasters/__init__.py": 0,
     "src/hub/forecasters/cli.py": 2,
+    "src/hub/forecasters/close_line.py": 1,
     "src/hub/forecasters/config.py": 0,
     "src/hub/forecasters/days.py": 0,
     "src/hub/forecasters/inputs.py": 0,
