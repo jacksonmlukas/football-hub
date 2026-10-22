@@ -1195,6 +1195,44 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
                 problems.append(f"waiver {r.get('player')}: recommended without a positive "
                                 f"value over a named replacement, or while blocked")
             # /GUARD
+    gap = payload.get("incomplete")
+    if gap is not None:
+        # A gap (#531): this week's partial lineup, the empty slots, and who could fill them.
+        g: dict[str, Any] = gap if isinstance(gap, dict) else {}
+        empty, lineup = g.get("empty_slots"), g.get("lineup")
+        shaped = (isinstance(empty, list) and bool(empty)
+                  and all(isinstance(s, str) for s in empty) and isinstance(lineup, list))
+        # GUARD gap-names-its-empty-slots [unit/test_roster_gap.py]: an incomplete call says
+        # which slots are empty and who fills the rest
+        if not shaped:
+            problems.append("incomplete carries no empty slots or no lineup")
+        # /GUARD
+        slots: list[str] = list(empty) if shaped and isinstance(empty, list) else []
+        filled: set[str] = set(lineup) if shaped and isinstance(lineup, list) else set()
+        barred = set(payload.get("withheld") or [])
+        # GUARD gap-lineup-starts-nobody-withheld [unit/test_roster_gap.py]: withholding is
+        # one-directional; a slot nobody can fill is named, never filled with a withheld player
+        # (a bye, injured reserve, short of a slate)
+        if barred & filled or not filled <= names:
+            problems.append("incomplete lineup names a withheld or unrostered player")
+        # /GUARD
+        said = g.get("headline")
+        # GUARD gap-headline-names-every-empty-slot [unit/test_roster_gap.py]: the headline is
+        # the panel's, and a gap it does not name is a gap the reader does not see
+        if not (isinstance(said, str) and all(f"{s}:" in said for s in slots)):
+            problems.append("incomplete headline does not name every empty slot")
+        # /GUARD
+        # GUARD gap-claims-no-gain [unit/test_roster_gap.py]: a partial lineup is not priced
+        # against the set one, so it never carries a full call's gain
+        if payload.get("gain") is not None:
+            problems.append("incomplete artifact claims a full lineup's gain")
+        # /GUARD
+        ticked = {r.get("player") for r in rows if r.get("best_start")}
+        # GUARD gap-ticks-are-the-partial-lineup [unit/test_roster_gap.py]: the table's best-XI
+        # ticks are this week's partial lineup, never last week's starters
+        if ticked != filled:
+            problems.append("incomplete lineup is not the rows' best-XI ticks")
+        # /GUARD
     # GUARD roster-problems-are-raised [unit/test_swaps.py]: collected problems are refused
     if problems:
         raise ContractViolation("; ".join(problems))
