@@ -121,7 +121,7 @@ def last_good_ecr(season: int, week: int,
     """`{player_key: ecr}` from the newest week capture of an *earlier* week, or `({},
     None)`. Each such capture was taken before its own week began, so before this one."""
     from hub.fetch import consensus
-    from hub.names import player_key
+    from hub.season.lineup_journal import ranks_of
     try:
         caps = consensus.read_captures(season, base)
     except Exception:                                # graceful degradation, per CLAUDE.md
@@ -131,11 +131,7 @@ def last_good_ecr(season: int, week: int,
     if not ok:
         return {}, None
     cap = max(ok, key=lambda c: (c.week, c.captured_at))
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, cap.week
+    return ranks_of(cap.rows), cap.week
 
 
 def lineup_ecr(season: int, week: int, base: Path | None = None
@@ -145,7 +141,7 @@ def lineup_ecr(season: int, week: int, base: Path | None = None
     `consensus.lineup_problem` are read (taken before the week's first Sunday, scrape in the
     window), so a late one is never served."""
     from hub.fetch import consensus
-    from hub.names import player_key
+    from hub.season.lineup_journal import ranks_of
     try:
         caps = [c for c in consensus.read_lineup_captures(season, base) if c.week == week]
     except Exception:                                # graceful degradation, per CLAUDE.md
@@ -153,12 +149,9 @@ def lineup_ecr(season: int, week: int, base: Path | None = None
     if not caps:
         return {}, None
     cap = caps[-1]                                   # earliest first
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, {"purpose": consensus.LINEUP, "scrape_date": cap.scrape_date.isoformat(),
-                 "captured_at": cap.captured_at.isoformat(), "note": cap.note()}
+    return ranks_of(cap.rows), {"purpose": consensus.LINEUP,
+                                "scrape_date": cap.scrape_date.isoformat(),
+                                "captured_at": cap.captured_at.isoformat(), "note": cap.note()}
 
 
 def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None,

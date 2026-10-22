@@ -101,6 +101,8 @@ TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA", "LV": "LV", "WSH": "WAS", "ARZ": "ARI
 
 EASTERN = ZoneInfo("America/New_York")
 CAPTURE_COLUMNS = ("player", "pos", "team", "ecr")
+# The rows' frame, as both readers build it: one schema so the week and lineup readers cannot drift.
+ROWS_SCHEMA = {"player": pl.Utf8, "pos": pl.Utf8, "team": pl.Utf8, "ecr": pl.Float64}
 _GLOB = "wk*/cap-*.json"
 
 # What a capture is. A week capture carries no `purpose` (`build` writes none) or `"week"`; a
@@ -279,6 +281,17 @@ def capture_path(season: int, week: int, when: datetime, base: Path | None = Non
             / f"cap-{when.astimezone(UTC):%Y%m%dT%H%M%S}.json")
 
 
+def _write_once(path: Path, doc: dict, other: str) -> Path:
+    """The append-only write both capture writers share: the same document again is a no-op,
+    a different one at the same path raises naming `other`."""
+    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
+    if path.exists():
+        if path.read_text(encoding="utf-8") == text:
+            return path
+        raise FileExistsError(f"{path} already holds {other}")
+    return atomic.write_text(path, text)
+
+
 @decision
 def write_capture(doc: dict, base: Path | None = None) -> Path:
     """Write one capture, or refuse. Refuses a late one (`LateCapture`) before touching disk.
@@ -295,14 +308,8 @@ def write_capture(doc: dict, base: Path | None = None) -> Path:
             f"{deadline_for(first).isoformat()} (the start of {first}, Eastern). A page "
             f"taken once games have started is not a lookahead ranking; nothing was written.")
     path = capture_path(doc["season"], doc["week"], when, base)
-    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    if path.exists():
-        if path.read_text(encoding="utf-8") == text:
-            return path
-        raise FileExistsError(
-            f"{path} already holds a different capture. Captures are append-only; a second "
-            f"look is a second file with its own timestamp.")
-    return atomic.write_text(path, text)
+    return _write_once(path, doc, "a different capture. Captures are append-only; a second "
+                                  "look is a second file with its own timestamp.")
 
 
 def read_capture(path: Path) -> Capture:
@@ -314,8 +321,7 @@ def read_capture(path: Path) -> Capture:
         first_game_day=date.fromisoformat(doc["first_game_day"]),
         deadline=datetime.fromisoformat(doc["deadline"]),
         scrape_date=date.fromisoformat(doc["scrape_date"]), digest=doc.get("digest"),
-        rows=pl.DataFrame(doc["rows"], schema={"player": pl.Utf8, "pos": pl.Utf8,
-                                               "team": pl.Utf8, "ecr": pl.Float64}),
+        rows=pl.DataFrame(doc["rows"], schema=ROWS_SCHEMA),
         path=path)
 
 
@@ -465,12 +471,7 @@ def write_lineup_capture(doc: dict, base: Path | None = None) -> Path:
                           "written.")
     path = lineup_path(doc["season"], doc["week"], datetime.fromisoformat(doc["captured_at"]),
                        base)
-    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    if path.exists():
-        if path.read_text(encoding="utf-8") == text:
-            return path
-        raise FileExistsError(f"{path} already holds a different lineup capture.")
-    return atomic.write_text(path, text)
+    return _write_once(path, doc, "a different lineup capture.")
 
 
 def read_lineup_captures(season: int, base: Path | None = None) -> list[LineupCapture]:
@@ -489,8 +490,7 @@ def read_lineup_captures(season: int, base: Path | None = None) -> list[LineupCa
             deadline=datetime.fromisoformat(doc["deadline"]),
             scrape_floor=date.fromisoformat(doc["scrape_floor"]),
             scrape_date=date.fromisoformat(doc["scrape_date"]), digest=doc.get("digest"),
-            rows=pl.DataFrame(doc["rows"], schema={"player": pl.Utf8, "pos": pl.Utf8,
-                                                   "team": pl.Utf8, "ecr": pl.Float64}),
+            rows=pl.DataFrame(doc["rows"], schema=ROWS_SCHEMA),
             path=p))
     return sorted(out, key=lambda c: c.captured_at)
 

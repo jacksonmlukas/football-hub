@@ -84,6 +84,16 @@ def journal_path(season: int, week: int, base: Path | None = None) -> Path:
 
 # --- the two weekly inputs, each with the reason it is absent -----------------
 
+def ranks_of(rows: pl.DataFrame) -> dict[str, float]:
+    """`{player_key: ecr}` from a capture's rows; the first row for a player wins and an unranked
+    row is skipped. The one reading of a capture's ranks, shared with the lineup rule."""
+    out: dict[str, float] = {}
+    for r in rows.iter_rows(named=True):
+        if r["ecr"] is not None:
+            out.setdefault(player_key(r["player"]), float(r["ecr"]))
+    return out
+
+
 def ecr_ranks(season: int, week: int | None,
               base: Path | None = None) -> tuple[dict[str, float], str | None]:
     """`{player_key: ecr}` from the newest pre-deadline capture for `week`, or `({}, reason)`."""
@@ -101,11 +111,7 @@ def ecr_ranks(season: int, week: int | None,
         return {}, (f"no pre-kickoff consensus capture for week {week}"
                     + (f" ({late} found, all at or after the deadline)" if late else ""))
     cap = ok[-1]                                     # read_captures sorts earliest first
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, None
+    return ranks_of(cap.rows), None
 
 
 def espn_weekly(df: pl.DataFrame) -> tuple[dict[str, float], str | None]:
