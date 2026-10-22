@@ -123,6 +123,11 @@ DATACLASS_DEFAULTS: dict[str, str] = {
                           ("EntryOutcome", "last_out"), ("EntryOutcome", "replans"),
                           ("EntryOutcome", "share_sd"), ("Weekly", "given_up_se"),
                           ("Weekly", "outlay"), ("_Week", "concentration"))},
+    # The LLM-forecaster study (#444): the bounds are the pre-registration's, not a setting.
+    **{f"forecasters/config.py:StudyConfig:{field}": "the prereg's clip, step 4 of the "
+       "Forecast procedure in docs/prereg/llm-forecasters.md; fixed by the prereg tag rather "
+       "than tuned, and the study is not part of the hub's product"
+       for field in ("clip_lo", "clip_hi")},
 }
 
 # The integers the scan's breadth cannot see and #201 and #271 established must be covered:
