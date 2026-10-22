@@ -217,7 +217,7 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
     # H2's intersection-union claim on four passes, one failure, and an empty family.
     "hub.forecasters.score.h1_verdict": ("tests/unit/test_forecasters_score.py", (
         "test_h1_detects_the_informed_model_after_holm_and_not_the_noisy_ones",
-        "test_a_model_that_copies_the_betting_market_leaves_h1_and_the_holm_family",
+        "test_a_model_the_burn_in_found_copying_leaves_h1_and_the_holm_family",
         "test_noise_deviations_cover_zero_at_roughly_the_nominal_rate",
     )),
     "hub.forecasters.score.h2_verdict": ("tests/unit/test_forecasters_score.py", (

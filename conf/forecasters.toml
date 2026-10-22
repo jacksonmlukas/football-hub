@@ -13,12 +13,18 @@ home_rate = 0.0               # TBD: historical P(home win)
 home_rate_seasons = "TBD"     # TBD: the seasons it comes from
 est_input_tokens = 2000       # upper estimate of one rendered prompt, for the guard
 
-# The analysis settings v0 fixes ("Before v0"; "Scoring and the confirmatory test").
-# `hub.forecasters.score.require_pinned` refuses to score while any is "TBD".
+# The analysis settings v0 fixes ("Before v0"; "Scoring and the confirmatory test"), as
+# adopted on #448 (2026-10-22) and restated in the prereg the same day.
+# `hub.forecasters.score.require_pinned` refuses to score while any is "TBD";
+# `hub.forecasters.runner.require_pinned` refuses to call a model while delta or the H1
+# threshold is.
 [analysis]
-delta = "TBD"                 # H2's non-inferiority margin, nats of log loss per game
-h1_min_deviation_sd = "TBD"   # H1's threshold: min SD of a model's log-odds deviations
-parity_version = "TBD"        # the Parity version or commit that runs H2
+delta = 0.02                  # H2's non-inferiority margin, nats of log loss per game
+h1_min_deviation_sd = 0.25    # H1's threshold: min SD of a model's log-odds deviations
+# H2 runs on hub.forecasters.score at a commit (it replaced "Parity", #448 item 1). TBD until
+# the merge commit of the lane that last changed score.py (#448's method lane) is on main:
+# "hub.forecasters.score@<that commit>".
+h2_implementation = "TBD"
 
 [[llm]]
 name = "llm1"
