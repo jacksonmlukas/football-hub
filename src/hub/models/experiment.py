@@ -63,6 +63,7 @@ from hub.ledger import (  # noqa: F401 -- re-exported; see below
     WidthEntry,
     code_digest,
 )
+from hub.models.posterior import GatePosterior, Prior, assess, posterior_report, prior_for
 from hub.names import player_key
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
@@ -1361,6 +1362,9 @@ class GateRun(NamedTuple):
     # seasons frame to count (`starter_change`'s degraded return); `gate` always sets both.
     resolved: int | None = None
     abstained: int | None = None
+    # #375: the posterior on the pooled effect, printed beside `verdict` and deciding nothing
+    # during the transition (`hub.models.posterior`). `None` when `gate` was given no prior.
+    posterior: GatePosterior | None = None
 
 
 def _resolved_and_abstained(seasons: pl.DataFrame) -> tuple[int, int]:
@@ -1372,7 +1376,7 @@ def _resolved_and_abstained(seasons: pl.DataFrame) -> tuple[int, int]:
 
 def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
         ceiling: Ceiling | None, actions: Actions, void: str | None = None,
-        seed: int = 0, bootstrap: int = BOOTSTRAP) -> GateRun:
+        seed: int = 0, bootstrap: int = BOOTSTRAP, prior: Prior | None = None) -> GateRun:
     """Did this beat the simplest thing that already works? A paired frame in, a verdict out.
 
     **#386: the one seam.** Consolidation moves where the rule lives; it does not move what
@@ -1402,13 +1406,20 @@ def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequenc
     **The rule itself, and every branch VOID/NOT-RUNNABLE/ADOPT/REMOVE/SHOW decides, is
     `_verdict`'s docstring**, unchanged by this move: read it there rather than restated here,
     which is the whole point of a rule that has one home.
+
+    **`prior` (#375)** is the gate's pre-registered prior (`hub.models.posterior.prior_for`).
+    Given one, the returned `GateRun.posterior` holds the posterior on the pooled effect, read
+    off the same `seasons` frame's `gain` and `se`, and its expected-utility action -- beside
+    the verdict word, which it does not change. `None`, the default, assesses nothing.
     """
     top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
     summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
     seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
     verdict = _verdict(summary, seasons, actions, void=void)
     resolved, abstained = _resolved_and_abstained(seasons)
-    return GateRun(summary, seasons, verdict, [], paired, resolved, abstained)
+    posterior = None if prior is None else assess(
+        seasons["gain"].to_list(), seasons["se"].to_list(), prior, verdict[0])
+    return GateRun(summary, seasons, verdict, [], paired, resolved, abstained, posterior)
 
 
 def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]:
@@ -1568,14 +1579,17 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     means one wiring, and it is the lineup gate's. No published weekly verdict was reached
     with a ceiling in hand, so none moves.
 
-    The report is the block, the per-season table (#382), the small-sample lines, the width
-    review, the ceiling check and the stamp -- in that order for every gate, so a reader of one
-    gate's output can read another's. The stamp is said on every run and not only when a frame
-    is written, for the reason `stamped_for_publication` gives: the reader deciding whether two
-    runs compare is at the terminal.
+    The report is the block, the per-season table (#382), the posterior block (#375), the
+    small-sample lines, the width review, the ceiling check and the stamp -- in that order for
+    every gate, so a reader of one gate's output can read another's. The stamp is said on every
+    run and not only when a frame is written, for the reason `stamped_for_publication` gives:
+    the reader deciding whether two runs compare is at the terminal.
     """
+    prior = prior_for(name)
     core = gate(paired, cluster=cluster, within=within, ceiling=ceiling, actions=actions,
-               void=void, seed=seed, bootstrap=bootstrap)
+               void=void, seed=seed, bootstrap=bootstrap, prior=prior)
+    if core.posterior is None:   # no S_REF for `name`: say so rather than print nothing
+        core = core._replace(posterior=assess([], [], None, core.verdict[0]))
     summary, seasons, verdict = core.summary, core.seasons, core.verdict
     stamped, stamp = stamped_for_publication(paired, boards)
     # The ledger's own digests come off the same stamp every other row in `stamped` carries,
@@ -1606,13 +1620,15 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
                        show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
         *per_season_report(seasons, places=places),
+        *posterior_report(core.posterior, verdict[0], unit=unit, places=places),
         *small_sample_report(summary, seasons, unit=unit, places=places),
         *comparison.lines,
         *ceiling_check(summary, places=places),
         "",
         *stamp.split("\n"),
     ]
-    return GateRun(summary, seasons, verdict, lines, stamped, core.resolved, core.abstained)
+    return GateRun(summary, seasons, verdict, lines, stamped, core.resolved, core.abstained,
+                   core.posterior)
 
 
 # --- one declaration per gate (#387) -----------------------------------------------------
@@ -1736,4 +1752,5 @@ class Harness(NamedTuple):
         return gate(paired, cluster=SEASON_CLUSTER, within=self.within,
                    ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
                    actions=self.actions, void=void, seed=seed,
-                   bootstrap=self.bootstrap if bootstrap is None else bootstrap)
+                   bootstrap=self.bootstrap if bootstrap is None else bootstrap,
+                   prior=prior_for(self.name))
