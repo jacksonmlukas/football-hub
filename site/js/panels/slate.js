@@ -147,7 +147,8 @@ export async function renderSlate(man) {
               : "No slate: the manifest names no published week.",
     html: "",
   };
-  panel("p-slate", { age: shown.age, warn: shown.warn, html: shown.html + also });
+  panel("p-slate", { age: shown.age, stale: shown.stale, warn: shown.warn,
+                     html: shown.html + also });
 }
 
 

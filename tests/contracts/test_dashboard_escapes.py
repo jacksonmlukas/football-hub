@@ -148,6 +148,20 @@ def test_the_table_escapes_every_cell_without_being_asked(node):
     assert "&lt;script&gt;" in out
 
 
+def test_a_naive_store_timestamp_is_read_as_utc_in_any_reader_timezone(node):
+    """`predicted_at` arrives naive UTC ("2026-10-17 16:58:09"). Read as local time, a reader in
+    Los Angeles saw "locked" off by their UTC offset (found 2026-10-20). Planted: without the
+    normalisation in `ago` this test fails."""
+    body = (f"import {{ ago }} from {_mod('format.js')};\n"
+            "const t = new Date(Date.now() - 2 * 3600e3).toISOString();\n"
+            "console.log(ago(t.slice(0, 19).replace('T', ' ')), ago(t.slice(0, 19)), ago(t));")
+    for tz in ("America/Los_Angeles", "Asia/Tokyo", "UTC"):
+        got = subprocess.run([node, "--input-type=module", "-e", body], capture_output=True,
+                             text=True, timeout=30, env={**os.environ, "TZ": tz})
+        assert got.returncode == 0, got.stderr
+        assert got.stdout.split() == ["2h", "ago"] * 3, f"{tz}: {got.stdout!r}"
+
+
 def test_a_missing_value_renders_as_nothing_not_as_undefined(node):
     assert _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
                       "console.log('[' + esc(null) + esc(undefined) + ']');") == "[]"
@@ -1673,16 +1687,30 @@ def test_the_status_records_name_every_manifest_artifact_with_its_age(node):
         assert r["fetched"] is False and r["reason"], "an absent file is a named non-fetch"
 
 
+def _never_fetched(man: dict, *names: str) -> dict:
+    """The manifest with each named source in the state `publish.side_record` writes for one
+    never got: `fetched` false, so not fresh, with a standing reason. Built here because the
+    committed sources move with the capture jobs (cfbd went live 2026-10-17); the footer's
+    never-fetched wording is held against this state, not against whatever is committed."""
+    for a in man["artifacts"]:
+        if a["name"] in names:
+            a.update(fetched=False, stale=True, reason=f"nothing was fetched for {a['name']}")
+    return man
+
+
 def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one_line(node):
-    got = _render(node)["footer"]
+    man = _never_fetched(_committed_manifest(), "bigten", "cfbd")
+    got = _render(node, {"manifest": man})["footer"]
     names = _footer_names(got)
     for name in MANIFEST_NAMES:
         assert name in names, f"{name} is missing from the footer: {names}"
     assert got.count("<p") == 1 and "<br" not in got and "\n" not in got
-    cfbd = json.loads((SITE / "data" / "cfbd.json").read_text())
-    assert cfbd["fetched"] is False
-    assert "nothing was fetched" in got, "cfbd's own reason is not on the line"
+    for name in ("bigten", "cfbd"):
+        assert f"not fetched: nothing was fetched for {name}" in got, f"{name}'s reason is missing"
     assert " ago" in got, "no ages on the line"
+    # Whichever state the committed files are in, the footer still names every artifact once.
+    live = _render(node)["footer"]
+    assert sorted(_footer_names(live)) == sorted(names) and live.count("<p") == 1
 
 
 def test_a_healthy_artifact_adds_no_reason_to_the_line(node):
@@ -1736,7 +1764,7 @@ def test_stale_live_scores_are_reported_at_the_slate(node):
 def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node):
     """What `publish` writes for a side file that is not there: present false, a standing
     reason. The footer says so from the manifest alone."""
-    man = _with_artifact("bigten", present=False, stale=True, generated_at=None,
+    man = _with_artifact("bigten", present=False, fetched=False, stale=True, generated_at=None,
                          reason="no bigten.json has been published")
     got = _render(node, {"manifest": man, "bigten": None})["footer"]
     assert "bigten never" in got and "not fetched" in got
@@ -1748,16 +1776,26 @@ def test_an_absent_bigten_is_a_named_non_fetch_and_the_footer_still_renders(node
 
 def test_a_never_fetched_source_reads_not_fetched_and_a_stale_one_reads_stale(node):
     """#351's `fetched` is not #347's `stale`: cfbd with `fetched: false` was never got and
-    says "not fetched"; bigten fetched and gone stale says "stale". Planted from the committed
-    manifest, whose cfbd is the real never-fetched case."""
-    man = _committed_manifest()
-    cfbd = next(a for a in man["artifacts"] if a["name"] == "cfbd")
-    assert cfbd["fetched"] is False and cfbd["reason"], "the committed cfbd entry lost `fetched`"
+    says "not fetched"; bigten fetched and gone stale says "stale". Both states are planted,
+    because the committed manifest's are not stable: cfbd was never fetched until 2026-10-17,
+    and bigten's stale reason changes with each capture."""
+    man = _never_fetched(_committed_manifest(), "cfbd")
+    bigten = next(a for a in man["artifacts"] if a["name"] == "bigten")
+    bigten.update(present=True, fetched=True, stale=True, reason="the page linked no reports")
     got = _render(node, {"manifest": man})["footer"]
-    assert "not fetched: nothing was fetched" in got
-    assert "stale: the page" in got
+    assert "not fetched: nothing was fetched for cfbd" in got
+    assert "stale: the page linked no reports" in got
     cfbd_span = re.search(r"<span class=\"[^\"]*\">cfbd [^<]*</span>", got)
     assert cfbd_span and "&mdash; stale" not in cfbd_span.group(0)
+    bigten_span = re.search(r"<span class=\"[^\"]*\">bigten [^<]*</span>", got)
+    assert bigten_span and "not fetched" not in bigten_span.group(0)
+    # The committed manifest, whatever its state: the key is there, and the wording follows it.
+    live = _render(node)["footer"]
+    for a in _committed_manifest()["artifacts"]:
+        if a["name"] in ("bigten", "cfbd"):
+            assert isinstance(a["fetched"], bool), f"{a['name']} lost `fetched`"
+            span = re.search(rf"<span class=\"[^\"]*\">{a['name']} [^<]*</span>", live)
+            assert span and ("not fetched" in span.group(0)) == (not a["fetched"]), span
 
 
 def test_the_committed_manifests_source_entries_are_what_the_publisher_writes():
@@ -1873,6 +1911,18 @@ SWAP_ROSTER = {
 }
 
 
+def _roster_with_gain() -> dict:
+    """A roster at a known positive gain, built here: SWAP_ROSTER's rows with one swap between
+    two available ones. Nothing is read off the committed roster -- whether it has two available
+    rows, or any gain at all, is whatever this week's optimiser said, and a test of the
+    positive-gain panel cannot lean on it."""
+    ros = json.loads(json.dumps(SWAP_ROSTER))
+    out, inn = [r["player"] for r in ros["rows"] if r.get("available", True)][:2]
+    assert (out, inn) == ("Slow WR", "Fast WR"), "the fixture must offer two available rows"
+    ros.update(gain=11.5, set_total=80.0, optimal_total=91.5, sit=[out], start=[inn])
+    return ros
+
+
 def _headline(node: str, ros: dict) -> str:
     return _run(node, f"import {{ lineupHeadline }} from {_mod('panels/lineup.js')};\n"
                       f"console.log(lineupHeadline({json.dumps(ros)}));")
@@ -1943,13 +1993,99 @@ def test_a_hostile_name_in_the_headline_is_escaped(node):
     assert "<script>" not in out and out.count("&lt;script&gt;") >= 5
 
 
-def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
-    body = _render(node)["panels"]["p-lineup"]["body"]
-    assert body.startswith('<div class="lineup-gain">+'), body[:120]
+def _call_first_with_names(body: str, ros: dict) -> None:
     for name in ros["start"] + ros["sit"] + ros["withheld"]:
         row = next(r for r in ros["rows"] if r["player"] == name)
         assert _who(name.replace("'", "&#39;"), row["pos"], row["nfl_team"]) in body
+
+
+def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
+    """Either valid branch of the committed call, whichever this week's optimiser landed on."""
+    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    body = _render(node)["panels"]["p-lineup"]["body"]
+    by_rank = (ros.get("lineup_rule") or {}).get("source") == "ecr"
+    if by_rank and ros["gain"] is not None and (ros["start"] or ros["sit"]):
+        assert body.startswith('<p class="lineup-call">Consensus rank calls'), body[:120]
+        _call_first_with_names(body, ros)
+    elif not by_rank and ros["gain"] is not None and ros["gain"] > 0.05:
+        assert body.startswith('<div class="lineup-gain">+'), body[:120]
+        _call_first_with_names(body, ros)
+    else:
+        assert body.startswith('<p class="lineup-call'), body[:120]
+        assert "lineup-gain" not in body and '<ul class="swaps">' not in body
+        _call_first_with_names(body, dict(ros, start=[], sit=[]))
+
+
+def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_name(node):
+    ros = _roster_with_gain()
+    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    assert body.startswith('<div class="lineup-gain">+11.5'), body[:120]
+    _call_first_with_names(body, ros)
+    assert '<ul class="swaps">' in body
+    flat = _render(node, {"roster": dict(ros, gain=0.0)})["panels"]["p-lineup"]["body"]
+    assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
+
+
+# --- what set the lineup: mu through week 6, weekly consensus rank from week 7 (#492) ----------
+#
+# Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and is
+# negative whenever the model rates the consensus swap lower -- which is exactly the week the old
+# headline would have said "already the best available one" over a lineup it was changing.
+
+ECR_RULE = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 7,
+            "ecr_from_week": 7, "ecr_week": 7, "reason": None}
+ECR_ROSTER = dict(SWAP_ROSTER, withheld=[], sit=["Weak RB"], start=["Strong RB"],
+                  gain=-2.0, set_total=80.0, optimal_total=78.0, lineup_rule=ECR_RULE)
+
+
+def test_a_consensus_lineup_calls_its_swaps_even_when_mu_rates_them_lower(node):
+    out = _headline(node, ECR_ROSTER)
+    assert out.startswith('<p class="lineup-call">Consensus rank calls 1 swap.</p>'), out[:120]
+    assert "lineup-gain" not in out and "already the best" not in out
+    assert out.count("<li>") == 1 and _who("Strong RB", "RB", "SF") in out
+    assert "mu projects set lineup 80.0 &rarr; consensus lineup 78.0" in out
+
+
+def test_a_consensus_lineup_is_labelled_a_provisional_rule_and_never_an_edge(node):
+    out = _headline(node, ECR_ROSTER)
+    assert '<p class="legend lineup-rule">Lineup set by weekly consensus rank (ECR):' in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    flat = _headline(node, dict(ECR_ROSTER, sit=[], start=[]))
+    assert flat.startswith('<p class="lineup-call">The set lineup is already the consensus lineup.')
+    assert "a provisional rule (ADR-0014)" in flat
+
+
+def test_a_lineup_not_set_by_the_weeks_own_consensus_says_why_in_the_unconfirmed_state(node):
+    stale = dict(ECR_RULE, ecr_week=6, reason=f"no capture for week 7 {HOSTILE}")
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=stale))
+    assert "(week 6's capture)" in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no capture for week 7 &lt;script&gt;' in out
+    assert "<script>" not in out
+    mu = dict(ECR_RULE, source="mu", label="model", ecr_week=None, reason="no ECR at all")
+    out = _headline(node, dict(SWAP_ROSTER, lineup_rule=mu))
+    assert out.startswith('<div class="lineup-gain">+11.5'), "mu keeps the gain headline"
+    assert "Lineup set by the model's projection (mu)." in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no ECR at all.</p>' in out
+
+
+def test_a_lineup_set_on_the_lineup_capture_says_when_its_ranks_are_from(node):
+    """Ranks taken after Thursday's games set the lineup with the date beside the rule -- never
+    shown as a pre-kickoff capture -- and the provisional caveat stays."""
+    note = "consensus ranks as of Fri 2026-10-23, taken after Thursday's games"
+    late = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "scrape_date": "2026-10-23",
+                                       "note": note})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=late))
+    assert ("Lineup set by weekly consensus rank (ECR) (consensus ranks as of Fri 2026-10-23, "
+            "taken after Thursday&#39;s games):") in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    hostile = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "note": HOSTILE})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=hostile))
+    assert "<script>" not in out and "&lt;script&gt;" in out
+    assert "taken after" not in _headline(node, ECR_ROSTER), "a strict capture says nothing"
+
+
+def test_an_artifact_from_before_the_switch_says_nothing_about_the_rule(node):
+    assert "lineup-rule" not in _headline(node, SWAP_ROSTER)
 
 
 def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else():
@@ -2136,7 +2272,7 @@ def test_the_line_sits_directly_under_the_call_and_a_missing_prior_never_costs_t
 
 
 def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(node):
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    ros = _roster_with_gain()
     ros["previous"] = {"generated_at": "2000-01-01T00:00:00+00:00",
                        "start": [], "sit": [], "withheld": []}
     body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
@@ -2182,7 +2318,7 @@ def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
     """Planted: a `reason` whose `String()` throws. `statusLine` escapes it, and nothing else on
     the page reads `bigten`, so before the guard `render()` rejected here and no panel drew."""
     man = _with_artifact("bigten", reason={"toString": 1})
-    got = _render(node, {"manifest": man})
+    got = _render(node, {"manifest": man, "roster": _roster_with_gain()})
     assert "status line unavailable" in got["footer"]
     assert got["panels"]["p-lineup"]["body"].startswith('<div class="lineup-gain">')
     assert "<table" in got["panels"]["p-roster"]["body"]
@@ -2349,14 +2485,27 @@ def test_the_page_renders_the_statement_once_under_the_header_before_every_zone(
     assert len([i for i in layout if i.startswith("st-")]) == 1
 
 
-def test_the_committed_record_renders_a_frozen_statement_of_both_counts(node):
-    """The committed artifact carries a pre-registered count above zero (#422), so the live
-    page is on the far side of the flip. Its figures are read back off the file."""
+def test_a_record_with_preregistered_predictions_renders_a_frozen_statement_of_both_counts(node):
+    """#422 made `n_preregistered` a computed count, so the page has a far side of the flip.
+    The record is built here with a count above zero rather than read off the committed file,
+    which sits on whichever side the season's git history puts it."""
+    tr = _tr(n_scored=80, n_preregistered=64)
+    got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
+    assert STATE_CLASSES["frozen"] in got["cls"].split()
+    assert "64 pre-registered, 80 scored" in got["body"]
+
+
+def test_the_committed_record_renders_the_statement_its_own_counts_call_for(node):
+    """Holds for every valid committed state: frozen once any prediction is pre-registered,
+    unconfirmed while none is, and either way the figures are the file's own."""
     tr = _fresh_record()
     got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
-    assert tr["n_preregistered"] > 0
-    assert STATE_CLASSES["frozen"] in got["cls"].split()
-    assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    if tr["n_preregistered"] > 0:
+        assert STATE_CLASSES["frozen"] in got["cls"].split()
+        assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    else:
+        assert STATE_CLASSES["unconfirmed"] in got["cls"].split()
+        assert f"{tr['n_scored']} predictions scored retrospectively, 0 pre-registered" in got["body"]
 
 
 def test_the_rendered_statement_is_unconfirmed_while_nothing_is_preregistered(node):
@@ -2571,3 +2720,33 @@ def test_a_page_that_ignores_the_manifests_weeks_turns_the_archive_red(node, tmp
     ]:
         got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new), _only(expected))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+
+# --- #516: a player whose game has kicked off is shown as locked, never as a swap -----------
+
+def test_the_headline_names_the_locked_players_with_position_and_team(node):
+    ros = dict(SWAP_ROSTER, locked=["Thu QB"],
+               rows=[*SWAP_ROSTER["rows"], _row("Thu QB", "QB", "DAL", locked=True)])
+    out = _headline(node, ros)
+    note = out[out.index("Locked, game started: "):]
+    assert _who("Thu QB", "QB", "DAL") in note[:note.index("</p>")]
+    assert out.index("Locked, game started") < out.index('class="swaps"')
+
+
+def test_a_week_with_nobody_locked_renders_no_lock_note(node):
+    assert "Locked" not in _headline(node, SWAP_ROSTER)
+
+
+def test_a_hostile_locked_name_is_escaped(node):
+    out = _headline(node, dict(SWAP_ROSTER, locked=[HOSTILE],
+                               rows=[*SWAP_ROSTER["rows"], _row(HOSTILE, "QB", HOSTILE)]))
+    assert "<script>" not in out and out.count("&lt;script&gt;") >= 2
+
+
+def test_the_roster_table_says_locked_rather_than_out(node):
+    rows = [_row("Thu QB", "QB", "DAL", locked=True, available=False, missing_games=2),
+            _row("Hurt Back", "RB", "MIA", available=False, missing_games=3)]
+    out = _run(node, f"import {{ rosterBody }} from {_mod('panels/roster.js')};\n"
+                     f"console.log(rosterBody({json.dumps(rows)}));")
+    assert "locked: game started" in out and "out 3 gm" in out and "out 2 gm" not in out

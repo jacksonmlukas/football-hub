@@ -98,6 +98,12 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_capture_written_after_kickoff_is_refused_and_nothing_lands",
         "test_a_capture_is_append_only_atomic_and_idempotent",
     )),
+    # The lineup capture's refusal: at Sunday's deadline refused, a second before written; a
+    # scrape outside the window and a mislabelled strict document refused too.
+    "hub.fetch.consensus.write_lineup_capture": ("tests/unit/test_fetch_consensus.py", (
+        "test_a_lineup_capture_written_after_sunday_starts_is_refused_and_nothing_lands",
+        "test_the_lineup_window_takes_fridays_page_and_refuses_either_side_of_it",
+    )),
     # #437: the reading's own refusals -- before the horizon (dates, then the data), a different
     # arm, too few weeks -- each planted and flipped.
     "hub.season.weekly_forward.read_forward": ("tests/unit/test_weekly_forward.py", (

@@ -1,9 +1,9 @@
 ---
 name: Weekly projection
 verdict: Removed
-figure: "t interval [-2.032, -0.262] pts/team-week, 3 of 4 seasons resolved"
+figure: "t interval [-2.169, -0.125] pts/team-week, 3 of 4 seasons resolved"
 detail: "kept as an unwired exhibit"
-as_of: 2026-10-07
+as_of: 2026-10-20
 issue: 430
 ---
 
@@ -38,7 +38,10 @@ and the decision is not re-decided here; see below.
 > The weekly gate's recipe (#378's ceiling recipe) restates from SHOW to **REMOVE on 3
 > resolved of 4, 1 abstained**, t interval [-2.032, -0.262], under #381's rule (C)
 > ([ADR-0019](0019-a-gate-requires-every-season.md), 2026-10-06): an Abstention no longer
-> vetoes a REMOVE. The evidence did not move, the rule did; the action was pre-registered
+> vetoes a REMOVE. *(Restated 2026-10-20, #520: the t interval's SE was the bootstrap SD,
+> low by `sqrt(3/4)` at four seasons; on the corrected SE it is **[-2.169, -0.125]**, MDE 1.119
+> → 1.292. Still excludes zero; REMOVE holds. `docs/gate-power.md`, *Restated 2026-10-20
+> (#520)*.)* The evidence did not move, the rule did; the action was pre-registered
 > (`weekly_gate.ACTIONS.remove`), so it is honoured. Its text says to delete the module rather
 > than ship it as an option. **The maintainer decided on 2026-10-06 to honour it the repo's way:
 > the module becomes an Exhibit** (CONTEXT.md, *Exhibit*), not a deletion, because the one

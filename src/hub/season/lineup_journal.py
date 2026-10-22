@@ -1,7 +1,7 @@
 """The lineup each source would set, week by week, and what each one scored (#492).
 
 **Why this exists.** ADR-0014 / issue #492: weekly consensus rank (ECR) is to set the lineup
-provisionally from week 8, "until a forward-gated model beats it", and "the journal's forward
+provisionally from week 7, "until a forward-gated model beats it", and "the journal's forward
 record" is what reopens that. So three sources are written down every week, side by side:
 
 - `mu`   -- the current rule: `hub.season.roster.lock`'s best lineup by mu.
@@ -9,16 +9,35 @@ record" is what reopens that. So three sources are written down every week, side
             capture (`hub.fetch.consensus`; a capture taken at or after the deadline is not read).
 - `espn` -- the best lineup by ESPN's own projection for the scoring period.
 
-All three choose from the same pool `lock` does (a projected, startable, available player), so a
-difference between lineups is a difference in *source*, not in who was eligible. Once the week is
-scored, each lineup's realised PPR points are written beside it.
+Beside them, `rule` records what the rule chose when the entry was written, Wednesday
+(`hub.season.lineup_rule`): `mu` through week 6, weekly ECR from week 7 as a provisional rule,
+the capture week it was set on, and the reason whenever that was not the week's own ECR. That
+block is part of the pre-kickoff comparison and is first-write-wins with the rest of it.
+
+**What was actually published (#517) is a separate block, `published`.** The week's lineup is
+set by whatever the roster publish decides, and the Friday lineup capture (and a late strict
+capture) lands after the Wednesday entry is frozen, so the Saturday publish can decide
+differently. Each roster publish up to the week's first Sunday kickoff therefore writes its own
+decision -- source, rule, consensus week and capture, lineup, `decided_at`, and the players whose
+game had kicked off (#516), when any had -- into `published`, replacing the previous publish's
+block and touching nothing else. From the start of the first Sunday game day, Eastern
+(`hub.fetch.consensus.lineup_deadline_for`, the lineup capture's own deadline), nothing is
+written: the last decision before Sunday is the one that set the lineup. Once scored,
+`realised.set` is the `published` lineup's points; a week journalled before `published`
+existed falls back to `rule.lineup`, and `settle` says so.
+
+All three choose from the same pool `lock` does (a projected, startable, available player not on
+bye), so a difference between lineups is a difference in *source*, not in who was eligible. Once
+the week is scored, each lineup's realised PPR points are written beside it.
 
 **Layout.** `state/lineup_journal/<season>/wk<NN>.json`, committed by the workflow that ran it,
 like the consensus captures: a lookahead choice that is not kept cannot be recovered.
 
-**Idempotent per week, first write wins.** `record` on a week that already has a file changes
-nothing -- the entry is what the sources said when it was first written, not what a later sync
-says. `settle` fills realised points once and leaves a scored week alone.
+**Idempotent per week, first write wins.** `record` on a week that already has its comparison
+changes nothing -- the entry is what the sources said when it was first written, not what a
+later sync says. (An entry holding only a `published` block, because a publish ran in a week
+`record` could not, gains the comparison beside it.) `settle` fills realised points once and
+leaves a scored week alone.
 
 **A source that cannot answer says so.** No capture, no scoring period, no ESPN weekly numbers,
 or too few ranked players to fill a legal lineup: that source's lineup is `null` with a reason,
@@ -35,7 +54,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
@@ -44,6 +63,10 @@ from hub.config import SEASON_AHEAD
 from hub.declare import not_an_input
 from hub.names import player_key
 from hub.paths import ROSTER_PARQUET, STATE_DIR
+
+if TYPE_CHECKING:                                    # `lineup_rule` imports this module
+    from hub.season.lineup_rule import Decision
+    from hub.season.roster import Lock
 
 ROOT = STATE_DIR / "lineup_journal"
 SOURCES = ("mu", "ecr", "espn")
@@ -105,10 +128,15 @@ def roster_week(df: pl.DataFrame) -> int | None:
 # --- the three lineups --------------------------------------------------------
 
 def _pool(df: pl.DataFrame) -> pl.DataFrame:
-    """The players `lock` would choose among: projected, startable, expected to play."""
+    """The players `lock` would choose among: projected, startable, not on bye, expected to
+    play -- the filters `hub.season.roster.lock` applies to its pool, in the same order."""
     p = df.filter(pl.col("projected"))
     if "can_start" in p.columns:
         p = p.filter(pl.col("can_start"))
+    # GUARD journal-pool-excludes-bye: a team with no game this week supplies no candidate
+    if "on_bye" in p.columns:
+        p = p.filter(~pl.col("on_bye"))
+    # /GUARD
     if "available" in p.columns:
         p = p.filter(pl.col("available"))
     return p
@@ -200,6 +228,30 @@ def refuse_after_kickoff(schedule: pl.DataFrame | None, week: int, now: datetime
     return None
 
 
+def refuse_after_first_sunday(schedule: pl.DataFrame | None, week: int,
+                              now: datetime) -> str | None:
+    """Why the published decision for `week` may not be written now, or None if it may.
+
+    The lineup is set by the last publish before Sunday's games, so the decision journalled is
+    frozen from the start of the week's first Sunday game day, Eastern --
+    `hub.fetch.consensus.lineup_deadline_for`, the deadline a lineup capture is held to, so the
+    two cannot disagree about when the week's lineup was settled. A schedule that cannot be
+    read refuses: a decision that cannot be placed before Sunday is not written as one.
+    """
+    from hub.fetch import consensus
+    if schedule is None:
+        return (f"week {week}: no schedule to check the first Sunday against; the published "
+                "decision was not journalled")
+    sunday = consensus.first_sundays(schedule).get(week)
+    if sunday is None:
+        return (f"week {week}: no Sunday game in the schedule; the published decision was "
+                "not journalled")
+    if now >= consensus.lineup_deadline_for(sunday):
+        return (f"week {week}: first Sunday {sunday} has started; the published decision is "
+                "kept as it was")
+    return None
+
+
 def week_incomplete(schedule: pl.DataFrame | None, week: int) -> str | None:
     """Why `week` cannot be scored yet, or None if every scheduled game has a final score."""
     if schedule is None:
@@ -227,7 +279,8 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     if wk is None:
         return None, "roster carries no scoring period; nothing journalled"
     path = journal_path(season, wk, base)
-    if path.exists():
+    old = _read_entry(path)
+    if old is not None and "sources" in old:
         return path, f"week {wk} already journalled; left as it was"
     now = now or datetime.now(UTC)
     # GUARD no-record-after-kickoff: a week already under way is never journalled
@@ -238,18 +291,79 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     espn, espn_reason = espn_weekly(df)
     got = lineups(df, ecr, ecr_reason, espn, espn_reason)
     sets = [tuple(v["lineup"]) for v in got.values() if v["lineup"]]
+    # What was actually published (#492, ADR-0014's "what was actually done"): the rule the
+    # week fell under, the source that set it, why if it was not the week's own ECR, and the
+    # lineup itself -- the same `lineup_rule.decide` the publisher calls, on the same capture.
+    from hub.season import lineup_rule
+    set_lock, decision = lineup_rule.decide(df, season, wk, captures, ecr=ecr,
+                                            ecr_reason=ecr_reason)
+    rule = {**decision.as_dict(), "lineup": sorted(set_lock.best_lineup) or None}
     doc = {
         "season": season, "week": wk,
         "recorded_at": (now or datetime.now(UTC)).astimezone(UTC).isoformat(),
         "sources": got,
+        "rule": rule,
         # More than one distinct lineup among the sources that answered.
         "disagree": len(set(sets)) > 1,
         "scored": False,
         "realised": dict.fromkeys(SOURCES),
     }
+    if old is not None and "published" in old:       # a publish ran first; its block stays
+        doc["published"] = old["published"]
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
     n = sum(1 for v in got.values() if v["lineup"])
     return path, f"week {wk} journalled ({n} of 3 sources)"
+
+
+def _read_entry(path: Path) -> dict[str, Any] | None:
+    """The week's entry, or None when there is none."""
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def published_block(lk: Lock, decision: Decision, decided_at: datetime) -> dict[str, Any]:
+    """What one roster publish decided (#517), from the `Lock` and `Decision` it published.
+
+    The decision's own fields less its fixed `basis`/`caveat` text (the `rule` block carries
+    those), the lineup, when, and -- only when a game had kicked off -- who was locked (#516)."""
+    out = {k: v for k, v in decision.as_dict().items() if k not in ("basis", "caveat")}
+    out["lineup"] = sorted(lk.best_lineup) or None
+    out["decided_at"] = decided_at.astimezone(UTC).isoformat()
+    if lk.locked:
+        out["locked"] = list(lk.locked)
+    return out
+
+
+def record_published(season: int, week: int | None, lk: Lock, decision: Decision, *,
+                     base: Path | None = None, schedule: pl.DataFrame | None = None,
+                     now: datetime | None = None) -> tuple[Path | None, str]:
+    """Write the decision a roster publish made into the week's `published` block (#517).
+
+    Called by every roster publish. Replaces the previous publish's `published` block and
+    nothing else: the Wednesday comparison (`sources`, `rule`) is first-write-wins and stays.
+    Refused from the week's first Sunday (`refuse_after_first_sunday`), and on a scored week.
+    With no entry yet (the week's `record` did not run) the block is written into a new one,
+    and `record` adds the comparison beside it if it still can.
+    """
+    if week is None:
+        return None, "roster carries no scoring period; no published decision journalled"
+    now = now or datetime.now(UTC)
+    # GUARD no-published-write-after-first-sunday: nothing is journalled once Sunday starts
+    if why := refuse_after_first_sunday(schedule, week, now):
+        return None, why
+    # /GUARD
+    path = journal_path(season, week, base)
+    doc = _read_entry(path)
+    if doc is None:
+        doc = {"season": season, "week": week, "scored": False,
+               "realised": dict.fromkeys(SOURCES)}
+    elif doc.get("scored"):
+        return path, f"week {week}: already scored; the published decision left as it was"
+    doc["published"] = published_block(lk, decision, now)
+    atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    return path, (f"week {week}: published decision journalled "
+                  f"({decision.source}, {len(lk.best_lineup)} starters)")
 
 
 def settle(season: int, week: int, points: Mapping[str, float],
@@ -276,17 +390,34 @@ def settle(season: int, week: int, points: Mapping[str, float],
     if not points:
         return f"week {week}: no realised points available yet"
     realised: dict[str, Any] = {}
+    sources = doc.get("sources") or {}              # absent on an entry only a publish wrote
     for s in SOURCES:
-        lineup = doc["sources"][s]["lineup"]
+        lineup = (sources.get(s) or {}).get("lineup")
         if not lineup:
             realised[s] = None
             continue
         ks = [player_key(n) for n in lineup]
         realised[s] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
                        "n_no_row": sum(1 for k in ks if k not in points)}
+    # The lineup that was set, scored beside the three sources: the last publish's decision
+    # before Sunday (#517). An entry from before `published` existed falls back to the
+    # Wednesday `rule` block and says so; one from before #492's switch carries neither and
+    # gains no `set`.
+    set_lineup, set_from = (doc.get("rule") or {}).get("lineup"), "rule"
+    # GUARD settle-scores-the-published-lineup: `set` is the published lineup when recorded
+    if "published" in doc:
+        set_lineup, set_from = (doc["published"] or {}).get("lineup"), "published"
+    # /GUARD
+    note = ("; set lineup scored from the Wednesday `rule` block -- no published decision "
+            "was journalled for this week (#517)" if set_lineup and set_from == "rule" else "")
+    if set_lineup:
+        ks = [player_key(n) for n in set_lineup]
+        realised["set"] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
+                           "n_no_row": sum(1 for k in ks if k not in points)}
+        doc["set_scored_from"] = set_from            # "published", or the "rule" fallback
     doc["realised"], doc["scored"] = realised, True
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
-    return f"week {week}: scored"
+    return f"week {week}: scored{note}"
 
 
 def read(season: int, base: Path | None = None) -> list[dict[str, Any]]:

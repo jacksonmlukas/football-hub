@@ -30,7 +30,23 @@ that too, and the next scheduled run tries again.
 Append-only: a second write to the same path with the same document is a no-op; with a different
 one it raises, because a capture that changes is not one. Written through `hub.atomic`.
 
+**A second, later capture, for setting the lineup and nothing else.** The archive publishes the
+page on Fridays (every 2026 `weekly-op` scrape seen, 09-11 through 10-16, is Friday-dated), so
+the strict window above -- before Thursday's game day -- is usually empty, and #492's rule has
+no ECR to set Sunday's lineup with. The players in Thursday's game are already locked by Friday,
+so a ranking taken after Thursday is fine *for Sunday's lineup* -- and useless as a lookahead
+measurement, because it has seen Thursday's game. The lineup capture therefore takes the newest
+`weekly-op` scrape dated after the previous week's last game and before the week's first
+**Sunday** game day, captured before the start of that Sunday, Eastern (`lineup_deadline_for`),
+and writes it apart from the strict record: `state/consensus/<season>/lineup/wk<NN>/
+lineup-<ts>.json`, with a mandatory `purpose: "lineup"`. The strict reader globs
+`<season>/wk*/cap-*.json` and also drops any document whose `purpose` is not strict, so nothing
+that measures against consensus point-in-time (`hub.season.weekly_forward`,
+`hub.season.lineup_journal.ecr_ranks`) can read one as a strict capture. Only
+`hub.season.lineup_rule` reads them, after the week's strict capture and before last-good.
+
     uv run python -m hub.fetch.consensus --capture
+    uv run python -m hub.fetch.consensus --lineup
 """
 from __future__ import annotations
 
@@ -72,6 +88,20 @@ EASTERN = ZoneInfo("America/New_York")
 CAPTURE_COLUMNS = ("player", "pos", "team", "ecr")
 _GLOB = "wk*/cap-*.json"
 
+# What a capture is for. A strict capture carries no `purpose` (every one written before the
+# lineup capture existed) or `"strict"`; a lineup capture must say `"lineup"`.
+STRICT, LINEUP = "strict", "lineup"
+LINEUP_DIR = "lineup"
+_LINEUP_GLOB = f"{LINEUP_DIR}/wk*/lineup-*.json"
+
+# The CLI's exit codes for "nothing captured". With the deadline still a day or more away the
+# next scheduled run can try again, and that is a notice (3); closer than this, no scheduled run
+# is left to recover it before the lineup is set, and the run must go red (4).
+NOTHING_YET, NOTHING_AND_LATE = 3, 4
+LOUD_WITHIN = not_an_input(
+    timedelta(hours=24), "how close to its deadline an empty capture run turns red instead of "
+                         "a notice: a day, about one scheduled retry, by the operator's choice")
+
 
 class LateCapture(RuntimeError):
     """The capture was written at or after its week's deadline, so it is not a lookahead one."""
@@ -93,6 +123,31 @@ class Capture:
     digest: str | None
     rows: pl.DataFrame
     path: Path | None = None
+    purpose: str = STRICT
+
+
+@dataclass(frozen=True)
+class LineupCapture:
+    """One committed lineup capture, as read back. Never a strict one (see the module doc)."""
+    season: int
+    week: int
+    captured_at: datetime               # aware, UTC
+    first_game_day: date
+    first_sunday: date
+    deadline: datetime                  # aware, UTC: the start of `first_sunday`, Eastern
+    scrape_floor: date
+    scrape_date: date
+    digest: str | None
+    rows: pl.DataFrame
+    path: Path | None = None
+
+    def note(self) -> str:
+        """The honest label for a lineup set on this capture."""
+        when = (f"taken after {self.first_game_day:%A}'s games"
+                if self.scrape_date >= self.first_game_day else
+                f"captured {self.captured_at.astimezone(EASTERN):%a %Y-%m-%d} for the lineup, "
+                "not before the week's first game day")
+        return f"consensus ranks as of {self.scrape_date:%a %Y-%m-%d}, {when}"
 
 
 def deadline_for(first_game_day: date) -> datetime:
@@ -105,6 +160,22 @@ def deadline_for(first_game_day: date) -> datetime:
 def is_late(captured_at: datetime, first_game_day: date) -> bool:
     """At or after the deadline. The one comparison the write and the read both make."""
     return captured_at >= deadline_for(first_game_day)
+
+
+def lineup_deadline_for(first_sunday: date) -> datetime:
+    """The lineup capture's deadline: the start of the week's first Sunday game day, Eastern --
+    before any Sunday kickoff, London's 09:30 ET included. The same clock as `deadline_for`."""
+    return deadline_for(first_sunday)
+
+
+def first_sundays(schedule: pl.DataFrame) -> dict[int, date]:
+    """Each regular-season week's first Sunday game day. A week with no Sunday game is absent."""
+    s = (schedule.filter(pl.col("game_type") == "REG")
+                 .with_columns(pl.col("gameday").str.to_date().alias("_d"))
+                 .filter(pl.col("_d").dt.weekday() == 7))
+    out = s.group_by("week").agg(pl.col("_d").min().alias("first")).sort("week")
+    return {int(w): d for w, d in zip(out["week"].to_list(), out["first"].to_list(),
+                                      strict=True)}
 
 
 def first_game_days(schedule: pl.DataFrame) -> dict[int, date]:
@@ -221,6 +292,7 @@ def write_capture(doc: dict, base: Path | None = None) -> Path:
 def read_capture(path: Path) -> Capture:
     doc = json.loads(path.read_text(encoding="utf-8"))
     return Capture(
+        purpose=str(doc.get("purpose") or STRICT),
         season=int(doc["season"]), week=int(doc["week"]),
         captured_at=datetime.fromisoformat(doc["captured_at"]),
         first_game_day=date.fromisoformat(doc["first_game_day"]),
@@ -232,9 +304,131 @@ def read_capture(path: Path) -> Capture:
 
 
 def read_captures(season: int, base: Path | None = None) -> list[Capture]:
-    """Every capture file for `season`, earliest first by `captured_at`."""
+    """Every strict capture file for `season`, earliest first by `captured_at`.
+
+    A document that says it is for anything but a strict capture is left out, wherever it is in
+    the tree: a lineup capture copied into `wk<NN>/` is still not a lookahead ranking."""
     root = (ROOT if base is None else Path(base)) / str(season)
-    return sorted((read_capture(p) for p in root.glob(_GLOB)), key=lambda c: c.captured_at)
+    caps = [read_capture(p) for p in root.glob(_GLOB)]
+    # GUARD strict-reader-skips-lineup [unit/test_fetch_consensus.py]: purpose must be strict
+    caps = [c for c in caps if c.purpose == STRICT]
+    # /GUARD
+    return sorted(caps, key=lambda c: c.captured_at)
+
+
+# --- the lineup capture --------------------------------------------------------------------
+
+def lineup_week(schedule: pl.DataFrame, now: datetime) -> tuple[int, date, date] | None:
+    """`(week, first_game_day, first_sunday)` of the first week whose lineup deadline is still
+    ahead, or None when the season has none left."""
+    firsts, sundays = first_game_days(schedule), first_sundays(schedule)
+    for week in sorted(sundays):
+        if now < lineup_deadline_for(sundays[week]) and week in firsts:
+            return week, firsts[week], sundays[week]
+    return None
+
+
+def build_lineup(season: int, week: int, rows: pl.DataFrame, scrape_date: date,
+                 scrape_floor: date, first_game_day: date, first_sunday: date,
+                 captured_at: datetime, digest: str | None) -> dict:
+    return {"season": season, "week": week, "page": PAGE, "purpose": LINEUP,
+            "captured_at": captured_at.astimezone(UTC).isoformat(),
+            "first_game_day": first_game_day.isoformat(),
+            "first_sunday": first_sunday.isoformat(),
+            "deadline": lineup_deadline_for(first_sunday).isoformat(),
+            "scrape_floor": scrape_floor.isoformat(),
+            "scrape_date": scrape_date.isoformat(), "digest": digest,
+            "rows": rows.select(*CAPTURE_COLUMNS).to_dicts()}
+
+
+def lineup_path(season: int, week: int, when: datetime, base: Path | None = None) -> Path:
+    root = ROOT if base is None else Path(base)
+    return (root / str(season) / LINEUP_DIR / f"wk{week:02d}"
+            / f"lineup-{when.astimezone(UTC):%Y%m%dT%H%M%S}.json")
+
+
+def lineup_problem(doc: dict) -> str | None:
+    """Why `doc` is not a lineup capture that may set its week's lineup, or None.
+
+    The one test the write refuses by and the read filters by: it says it is a lineup capture,
+    it was taken before the start of the week's first Sunday, and its scrape lies in the window
+    -- after the previous week's last game, before that Sunday."""
+    if doc.get("purpose") != LINEUP:
+        return f"purpose is {doc.get('purpose')!r}, not {LINEUP!r}"
+    when = datetime.fromisoformat(doc["captured_at"])
+    sunday = date.fromisoformat(doc["first_sunday"])
+    scraped = date.fromisoformat(doc["scrape_date"])
+    floor = date.fromisoformat(doc["scrape_floor"])
+    if when >= lineup_deadline_for(sunday):
+        return (f"captured {when.isoformat()}, at or after the lineup deadline "
+                f"{lineup_deadline_for(sunday).isoformat()} (the start of {sunday}, Eastern)")
+    if not floor <= scraped < sunday:
+        return f"scrape {scraped} is outside the week's window [{floor}, {sunday})"
+    return None
+
+
+@decision
+def write_lineup_capture(doc: dict, base: Path | None = None) -> Path:
+    """Write one lineup capture, or refuse (`LateCapture`) before touching disk. Append-only,
+    exactly as `write_capture`."""
+    if why := lineup_problem(doc):
+        raise LateCapture(f"week {doc.get('week')}: not a lineup capture: {why}; nothing was "
+                          "written.")
+    path = lineup_path(doc["season"], doc["week"], datetime.fromisoformat(doc["captured_at"]),
+                       base)
+    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
+    if path.exists():
+        if path.read_text(encoding="utf-8") == text:
+            return path
+        raise FileExistsError(f"{path} already holds a different lineup capture.")
+    return atomic.write_text(path, text)
+
+
+def read_lineup_captures(season: int, base: Path | None = None) -> list[LineupCapture]:
+    """Every lineup capture for `season` that passes `lineup_problem`, earliest first."""
+    root = (ROOT if base is None else Path(base)) / str(season)
+    out: list[LineupCapture] = []
+    for p in root.glob(_LINEUP_GLOB):
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        if lineup_problem(doc) is not None:
+            continue
+        out.append(LineupCapture(
+            season=int(doc["season"]), week=int(doc["week"]),
+            captured_at=datetime.fromisoformat(doc["captured_at"]),
+            first_game_day=date.fromisoformat(doc["first_game_day"]),
+            first_sunday=date.fromisoformat(doc["first_sunday"]),
+            deadline=datetime.fromisoformat(doc["deadline"]),
+            scrape_floor=date.fromisoformat(doc["scrape_floor"]),
+            scrape_date=date.fromisoformat(doc["scrape_date"]), digest=doc.get("digest"),
+            rows=pl.DataFrame(doc["rows"], schema={"player": pl.Utf8, "pos": pl.Utf8,
+                                                   "team": pl.Utf8, "ecr": pl.Float64}),
+            path=p))
+    return sorted(out, key=lambda c: c.captured_at)
+
+
+def capture_lineup(schedule: pl.DataFrame, archive: pl.DataFrame, season: int, now: datetime,
+                   digest: str | None, base: Path | None = None) -> tuple[Path, int]:
+    """The lineup capture's pure half: the upcoming week by Sunday deadline, its newest scrape
+    in the lineup window, written. Raises `StaleArchive` / `LateCapture`; `ValueError` when no
+    week is left."""
+    nxt = lineup_week(schedule, now)
+    if nxt is None:
+        raise ValueError("no regular-season week has a lineup deadline still ahead")
+    week, first, sunday = nxt
+    floor = scrape_floors(schedule)[week]
+    scrape, rows = window_scrape(archive, sunday, floor)
+    doc = build_lineup(season, week, rows, scrape, floor, first, sunday, now, digest)
+    return write_lineup_capture(doc, base), week
+
+
+def empty_exit(deadline: datetime | None, now: datetime) -> int:
+    """The exit code for a run that captured nothing: red (`NOTHING_AND_LATE`) when the deadline
+    it was capturing for is under `LOUD_WITHIN` away, a notice (`NOTHING_YET`) otherwise."""
+    # GUARD empty-capture-loud-near-deadline [unit/test_fetch_consensus.py]: red inside a day
+    if deadline is not None and now < deadline and deadline - now < LOUD_WITHIN:
+        return NOTHING_AND_LATE
+    # /GUARD
+    return NOTHING_YET
 
 
 def capture_week(schedule: pl.DataFrame, archive: pl.DataFrame, season: int, now: datetime,
@@ -258,20 +452,42 @@ def _fetch(
     return schedule, archive, (pin.digest if pin is not None else None)
 
 
+def _now() -> datetime:
+    """The clock a run judges its deadline by; a seam so a test can pin it."""
+    return datetime.now(UTC)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--capture", action="store_true",
                     help="write the next week's weekly-op page to state/consensus/")
+    ap.add_argument("--lineup", action="store_true",
+                    help="write the upcoming week's lineup-only capture (after Thursday, before "
+                         "Sunday) to state/consensus/<season>/lineup/")
     ap.add_argument("--season", type=int, default=SEASON_AHEAD)
     a = ap.parse_args(argv)
-    if not a.capture:
+    if a.capture == a.lineup:
         ap.print_usage(file=sys.stderr)
         return 2
-    now = datetime.now(UTC)
+    now = _now()
     try:
         schedule, archive, digest = _fetch(a.season)
     except Exception as exc:
         return unavailable("hub.fetch.consensus", "the FantasyPros archive or the schedule", exc)
+    if a.lineup:
+        try:
+            path, week = capture_lineup(schedule, archive, a.season, now, digest)
+        except (LateCapture, StaleArchive, ValueError) as exc:
+            nxt = lineup_week(schedule, now)
+            deadline = lineup_deadline_for(nxt[2]) if nxt is not None else None
+            left = (f"; the lineup deadline {deadline.isoformat()} is "
+                    f"{(deadline - now).total_seconds() / 3600:.1f}h away"
+                    if deadline is not None else "")
+            print(f"hub.fetch.consensus: nothing captured for the lineup: {exc}{left}",
+                  file=sys.stderr)
+            return empty_exit(deadline, now)
+        print(f"  consensus lineup capture: week {week}, {path}")
+        return 0
     try:
         path, week = capture_week(schedule, archive, a.season, now, digest)
     except (LateCapture, StaleArchive, ValueError) as exc:

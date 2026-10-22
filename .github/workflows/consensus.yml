@@ -19,6 +19,23 @@ name: consensus
 # workflow has nothing to commit; the harness separately excludes any file in the tree that was
 # first committed after its deadline, whatever the file says about itself.
 #
+# **Four more, Friday and Saturday, for the lineup capture only (`--lineup`).** The archive
+# publishes the page on Fridays -- every 2026 `weekly-op` scrape is Friday-dated -- so the four
+# runs above usually find nothing, and #492's rule had no ECR to set Sunday's lineup with. These
+# take the newest page dated after the previous week's last game and before the week's first
+# Sunday, and write it to `state/consensus/<season>/lineup/`, which no point-in-time reader reads
+# (see `hub.fetch.consensus`). They are ordered against the publish that uses them: `slate.yml`'s
+# Saturday 14:00 UTC full run writes `site/data/roster.json`, and the last lineup run is Saturday
+# 08:00 UTC, six hours ahead of it -- more than the 4-8.5h GitHub has been starting scheduled runs
+# late (#468) only if both slip alike, so the Friday runs are the margin: a Friday capture is in
+# the tree a day before the publish. The Sunday deadline the CLI enforces is the start of the
+# first Sunday game day, Eastern (04:00 UTC in daylight time, 05:00 in standard).
+#
+# **An empty run near its deadline is red, not a notice.** `--lineup` exits 3 ("nothing yet")
+# with a day or more left before Sunday's deadline, and 4 inside a day: by then no scheduled run
+# is left to recover it before the lineup is published, and a green notice is how this workflow
+# hid that the strict capture had never once been written. 4 fails the step.
+#
 # The slate's concurrency group, because both commit under `state/` and two runs rebasing onto
 # each other's commit is the race that group exists for.
 on:
@@ -27,7 +44,17 @@ on:
     - cron: "0 11 * * 3"    # Wednesday 11:00 UTC
     - cron: "0 17 * * 3"    # Wednesday 17:00 UTC
     - cron: "0 23 * * 3"    # Wednesday 23:00 UTC (19:00 EDT): the last before a Thursday game day
+    - cron: "0 13 * * 5"    # Friday 13:00 UTC: lineup capture, the morning after Thursday's game
+    - cron: "0 21 * * 5"    # Friday 21:00 UTC: lineup capture
+    - cron: "0 3 * * 6"     # Saturday 03:00 UTC: lineup capture
+    - cron: "0 8 * * 6"     # Saturday 08:00 UTC: lineup capture, the last before slate's 14:00 publish
   workflow_dispatch:
+    inputs:
+      purpose:
+        description: "strict (before Thursday, for the measurement) or lineup (after Thursday, for Sunday's lineup only)"
+        type: choice
+        options: [strict, lineup]
+        default: strict
 
 permissions:
   contents: write
@@ -47,14 +74,28 @@ jobs:
 
       # Exit 3 is "nothing to capture yet" (the page is not published, or the week's deadline
       # has passed) and is expected on most runs; any other non-zero is a failed fetch and
-      # must turn the run red so a missed week is seen, not read about in January.
+      # must turn the run red so a missed week is seen, not read about in January. Exit 4 is a
+      # lineup run that found nothing inside a day of Sunday's deadline: red, with an error.
+      # Which capture a run takes is read off the cron that started it (the four Friday and
+      # Saturday entries above), or the dispatch's `purpose`; anything else is the strict one.
       - name: Capture the next week's consensus page
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          PURPOSE: ${{ inputs.purpose }}
         run: |
+          case "${SCHEDULE:-}" in
+            "0 13 * * 5"|"0 21 * * 5"|"0 3 * * 6"|"0 8 * * 6") flag=--lineup ;;
+            "") if [ "${PURPOSE:-strict}" = lineup ]; then flag=--lineup; else flag=--capture; fi ;;
+            *) flag=--capture ;;
+          esac
           code=0
-          uv run python -m hub.fetch.consensus --capture || code=$?
+          uv run python -m hub.fetch.consensus "$flag" || code=$?
           if [ "$code" -eq 3 ]; then
-            echo "::notice::nothing captured this run; the next scheduled run tries again"
+            echo "::notice::nothing captured this run ($flag); the next scheduled run tries again"
             exit 0
+          fi
+          if [ "$code" -eq 4 ]; then
+            echo "::error::no consensus page captured for Sunday's lineup and the deadline is under a day away; the lineup will be set on last-good ECR or mu"
           fi
           exit "$code"
 
@@ -73,7 +114,8 @@ jobs:
           fi
           git commit -m "consensus: week capture ($(date -u +%Y-%m-%dT%H:%MZ))
 
-          Captured before the week's first game day -- see docs/weekly-forward.md and
-          docs/track-record.md rule 1."
+          A strict capture (wkNN/cap-*) is taken before the week's first game day -- see
+          docs/weekly-forward.md and docs/track-record.md rule 1. A lineup capture
+          (lineup/wkNN/lineup-*) is taken after Thursday's games, for Sunday's lineup only."
           git pull --rebase origin main
           git push

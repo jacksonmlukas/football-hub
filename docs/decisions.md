@@ -247,16 +247,17 @@ additive injury table lost.
 
 Sequence: **method page (by Sep 4) → Week 1 dependencies (by Sep 10) → everything else.**
 
-### The two provisional rules, and when they get judged
+### The provisional rules, and when they get judged
 
-Both are adopted under
+Each is adopted under
 [ADR-0014](adr/0014-a-provisional-rule-may-act-where-no-gate-can-run.md), which requires a
-stated horizon and a log. Fixed 2026-08-27:
+stated horizon and a log. The first two fixed 2026-08-27; the lineup rule 2026-10-16:
 
 | rule | horizon | log |
 |---|---|---|
 | Waiver tiebreaker — ECR picks the set, snap delta picks within it | **150 logged claims**, a count and not a calendar (~a decade at 14/season) | date, week, the rule's pick, what you claimed, and why if they differ |
 | Survivor contrarian threshold | **none reachable** — one pool a season, and it is stated rather than hidden | the week, the chalk pick, yours, and the probability cost accepted |
+| Lineup set by weekly ECR, from 2026 week 8 (restated 2026-10-20: from week 7; the 10-16 text took Sunday 10-18 for week 7, the schedule has it as week 6 -- #492) (#492, adopted 2026-10-16; `hub.season.lineup_rule`) | until a forward-gated model beats it; the journal's forward record is what reopens it | `state/lineup_journal/`: the `mu`, ECR and ESPN-weekly lineups, the `rule` that set the published one (and why, when the week's own ECR was missing), and each one's realised points |
 
 Two things follow that are easy to get wrong. **150 is not 1,800**: it is permission to look, not
 permission to decide, and "unresolved" remains an available answer at the horizon. And **nothing

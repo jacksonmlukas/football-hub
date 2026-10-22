@@ -204,6 +204,12 @@ written from documentation, resemble reality. It is marked `golden` and deselect
 running it is a deliberate act: `uv run pytest -m golden` with a key on the machine spends one
 call for the week it checks, and none once that response is cached.
 
+The Odds API check in the same suite is stricter, because that quota is credits rather than
+calls and every agent worktree inherits `.env`: with `ODDS_API_KEY` set it still skips unless
+`GOLDEN_SPEND_ODDS_CREDIT=1` is exported (#527). When it runs it records its spend in
+`state/odds.json`, where the fetcher records its own, so the balance stays attributable.
+CI's golden job is given no Odds key and so never reaches it.
+
 ## Historical backfill — do this in the first week of a billing month
 
 2015–2025 across games, lines, box scores, and SP+ runs roughly 250–350 calls. Doing it early in

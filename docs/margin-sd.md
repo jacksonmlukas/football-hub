@@ -477,6 +477,8 @@ No arm, rule or number was touched between the two.
 | seasons | won 14, lost 8, 22 resolved, 0 abstained |
 | P(location-shifted price better) | 47.7% |
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Favourite-longshot at k=22 (x1.0235): MDE +0.00184 → **+0.00188** against +0.00298; **SHOW holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 **It could run, and it did not resolve a gain.** The MDE (0.00184) is below the ceiling
 (0.00298), so NOT-RUNNABLE did not fire and this is a verdict, not an exemption. The interval
 excludes any gain above about 0.0011 nats a game, which is about 36% of the ceiling. The rule-16
@@ -550,6 +552,8 @@ untouched, and the survivor consumer (the wider survival product printed beside 
 live rows byte-identical) is **held** while #379 is dormant. The forward pin
 (`PINNED_ARM_MODULES`) is unmoved. #249 is advanced, not closed.
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Lookahead at 4 week clusters (x1.1547): t [−0.0012, +0.0003] → **[−0.0013, +0.0004]**, MDE 0.0009 → **0.0010**; **SHOW holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 *2026-10-14, wording (review of #249): which figure is which.* The restatement's **-0.0005**
 is the gate's cluster aggregate: the mean of the 4 week-cluster means (`summarise`,
 `cluster=("week",)`), with its **t interval [-0.0012, +0.0003]** built on 4 clusters. The ledger
@@ -558,3 +562,34 @@ entry's **-0.00038** (printed -0.0004, `m` = 62) is the per-season gain: the poo
 games. Its **lo/hi [-0.00095, 0.0]** are the percentile bootstrap over the same 4 week
 clusters (printed [-0.0010, +0.0000]), not the t interval. Same data, two aggregations and two
 interval methods; the numbers above stand as written.
+
+## Restated 2026-10-20 (#523): the adopted fit's window is eleven seasons, not ten
+
+Prior text kept. The sections above call 12.741 the "trailing 10" fit. That label is the gated
+candidate's. Two windows were in play and they were not the same length:
+
+| | window | seasons |
+|---|---|---|
+| gated candidate `trailing10` (`walk_forward`, `_report_shape`) | `yr-10 .. yr-1` | ten |
+| adoption path (`--fit`, "Value to adopt") | `season >= latest - 10` | **eleven: 2015-2025** |
+
+The adopted 12.741 +/- 0.164 is the **eleven-season** fit, n=3018. n says so: a season holds at
+most 272 regular-season and 13 playoff games, so ten seasons cannot reach 3018 (the ceiling is
+2850) and eleven can (`tests/unit/test_margin.py::test_fitted_n_needs_eleven_seasons_not_ten`).
+The row labelled "trailing 10" in the table under *What it is* is that eleven-season fit.
+
+**Decided (maintainer, 2026-10-20, #523): option (a).** The declared provenance is corrected to
+the eleven seasons actually fitted; no output changes. Whether to refit on ten and re-gate is an
+off-season decision, taken with the 2026-09-16 grandfathering decision above.
+
+**In the code.** The window is one function, `margin.window_start(latest, seasons)`, and the two
+lengths are two named numbers rather than one: `TRAILING = 10` (the gate's candidate and the
+shape report) and `ADOPTED_SEASONS = TRAILING + 1` (the adoption path, via `adoption_window`).
+One definition could not serve both without changing the gate's history or the adopted value.
+Tests pin each, and tie the adoption window's seasons to the declared `FITTED_WINDOW_RESTATED`
+("trailing 11 seasons (2015-2025), as of 2025"), so they cannot drift apart again. `FITTED_WINDOW`
+still reads "trailing 10 seasons, as of 2025", kept beside its restatement.
+
+The same correction applies to the later sections that say "the published figure on the trailing
+ten seasons": those are the shape report's window, which is ten and is not the width fit's.
+`MARGIN_SD`'s own window is the eleven above.

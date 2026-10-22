@@ -43,7 +43,15 @@ seq = ["torch"]
 # the modern-python shim outright. `--all-extras` still installs this group, because groups
 # are orthogonal to extras -- so no documented command changes.
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "ruff", "pyrefly>=1.0", "hypothesis"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "pyrefly>=1.0",
+    "hypothesis",
+    "playwright>=1.64.0",
+    "pillow>=12.3.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -96,5 +104,8 @@ pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 # Golden tests hit live third-party APIs. Deselected by default so an upstream outage
 # cannot block a docs commit; run them deliberately with `uv run pytest -m golden`.
-addopts = "-m 'not golden'"
-markers = ["golden: hits a live API; nightly only, never on PRs"]
+addopts = "-m 'not golden and not screenshots'"
+markers = [
+    "golden: hits a live API; nightly only, never on PRs",
+    "screenshots: needs Playwright's Chromium (`uv run playwright install chromium`); own CI job",
+]

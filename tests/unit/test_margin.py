@@ -712,3 +712,41 @@ def test_main_degrades_when_the_schedule_pull_fails(monkeypatch, capsys):
     said = captured.out + captured.err
     assert code != 0
     assert "nflverse schedules" in said or "unavailable" in said.lower()
+
+
+# --- the declared window is the fitted window (#523) -----------------------
+
+def test_the_adoption_window_is_the_eleven_seasons_the_provenance_declares():
+    """The adopted 12.741 was fitted on 2015-2025, eleven seasons, not "ten". The adoption
+    path's seasons and the declared provenance are tied here so they cannot drift apart."""
+    resid = margin.residuals(_synthetic(seasons=range(1999, 2026), per=10))
+    seasons = sorted(margin.adoption_window(resid)["season"].unique().to_list())
+    assert seasons == list(range(margin.FITTED_WINDOW_FIRST, margin.FITTED_WINDOW_LAST + 1))
+    assert (seasons[0], seasons[-1]) == (2015, 2025) and len(seasons) == 11
+    assert len(seasons) == margin.ADOPTED_SEASONS
+    assert margin.FITTED_WINDOW_RESTATED == "trailing 11 seasons (2015-2025), as of 2025"
+    assert f"{seasons[0]}-{seasons[-1]}" in margin.FITTED_WINDOW_RESTATED
+    assert f"{len(seasons)} seasons" in margin.FITTED_WINDOW_RESTATED
+
+
+def test_the_gated_candidate_and_the_report_keep_ten_and_the_two_names_differ_by_one():
+    """The gate's history is not touched: `trailing10` fits `yr-10..yr-1`, ten seasons, and the
+    shape report counts ten. Adoption counts one more because that is what was fitted."""
+    assert margin.TRAILING == 10 and margin.ADOPTED_SEASONS == margin.TRAILING + 1
+    assert margin.window_start(2025, 11) == 2015
+    assert margin.window_start(2024, margin.TRAILING) == 2015    # the candidate for yr=2025
+    # the candidate for yr = 2025, read off the walk-forward itself: ten seasons, 2015-2024
+    resid = margin.residuals(_synthetic(seasons=range(2000, 2026), per=30))
+    wf = margin.walk_forward(resid)
+    past = resid.filter((pl.col("season") >= 2015) & (pl.col("season") < 2025))
+    assert past["season"].n_unique() == 10
+    got = wf.filter(pl.col("season") == 2025)["sd_trailing10"][0]
+    assert got == pytest.approx(margin.fit(past)["sd"])
+
+
+def test_fitted_n_needs_eleven_seasons_not_ten():
+    """From structure, not from data: a season holds at most 272 regular-season games and 13
+    playoff games, so ten seasons cannot reach 3018 and eleven can."""
+    per_season_max = 272 + 13
+    assert margin.FITTED_N > 10 * per_season_max
+    assert margin.FITTED_N <= margin.ADOPTED_SEASONS * per_season_max

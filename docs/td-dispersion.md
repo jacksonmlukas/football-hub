@@ -250,6 +250,8 @@ data digest `17123a2e`, code digest `e290352b`, 1,987 qualifying player-season-p
 | ceiling (a dispersion fitted to the held-out season itself) | +0.01367 |
 | the refit's share of the ceiling | 90% |
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). At k=6 (x1.0954): t [+0.01087, +0.01380] → **[+0.01073, +0.01394]**, MDE +0.00195 → **+0.00214** against +0.01367; **ADOPT holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 | season | gain | se | player-clusters | disposition |
 |---|---|---|---|---|
 | 2020 | +0.01414 | 0.00421 | 252 | win |

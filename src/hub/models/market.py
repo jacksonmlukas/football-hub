@@ -31,6 +31,11 @@ from hub.models.base import FitSpec
 # hashed into every model version as though it had been measured. ADR-0006 draws that
 # line; this number was on the wrong side of it, and now says `fitted` with the fit beside it.
 #
+# **Restated 2026-10-20 (#523); the text above kept.** "Trailing ten seasons" is the gated
+# candidate's window. The adopted fit's own was eleven seasons, 2015-2025, n=3018 (the adoption
+# path filtered `season >= latest - 10`). The value is unchanged; refitting on ten is an
+# off-season decision.
+#
 # Two things the fit found that the assertion could not:
 #
 #   * It is NOT stable. Per-season sd runs 11.5 to 14.4 and trends down 0.037 a year

@@ -1,0 +1,70 @@
+name: screenshots
+
+# Pixel baselines for the dashboard (#475): two widths x two colour schemes, rendered from
+# frozen fixtures with a pinned clock. Its own workflow, not a job in ci.yml, because a
+# workflow-level `paths` filter is the only way to make it run on a change under `site/` and
+# be absent otherwise; ci.yml runs on every push.
+on:
+  push:
+    paths: &paths
+      - "site/**"
+      - "tests/screenshots/**"
+      - "tests/fixtures/site/**"
+      - "tests/golden/screenshots/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/screenshots.yml"
+  pull_request:
+    paths: *paths
+  # Baselines are per OS and these are the Linux ones, which cannot be made on a laptop. Run
+  # this with `update` ticked, download the `linux-baselines` artifact, and commit its PNGs
+  # to tests/golden/screenshots/linux/ in the same commit as the visual change.
+  workflow_dispatch:
+    inputs:
+      update:
+        description: "Regenerate the Linux baselines instead of comparing (uploads them as an artifact)"
+        type: boolean
+        default: false
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    # Its own limit, not the test job's 60: the whole job is a browser start and four renders,
+    # a few minutes with a warm cache. Twenty is a hang, and it should say so.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      # Chromium comes from the runner's cache, keyed on the locked Playwright version (a new
+      # Playwright wants a new browser build). On a hit nothing is downloaded; on a miss the
+      # download is the approved one, and it is then cached for the next run.
+      - id: pw
+        run: echo "version=$(uv run python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      # `install-deps` is the OS libraries Chromium links against; apt packages, not a browser.
+      - run: uv run playwright install --with-deps chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+      - run: uv run playwright install-deps chromium
+        if: steps.browsers.outputs.cache-hit == 'true'
+      - run: uv run pytest -m screenshots tests/screenshots -q
+        if: ${{ !inputs.update }}
+        env:
+          PYTHONHASHSEED: "0"
+      - run: UPDATE_SCREENSHOTS=1 uv run pytest -m screenshots tests/screenshots -q
+        if: ${{ inputs.update }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.update }}
+        with:
+          name: linux-baselines
+          path: tests/golden/screenshots/linux/
+      # The actual and diff images of a failed comparison.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: screenshot-diffs
+          path: test-results/screenshots/

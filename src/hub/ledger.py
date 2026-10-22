@@ -490,6 +490,11 @@ class Ledger:
                         {"entries": [e._as_dict() for e in entries]},
                         indent=2, sort_keys=True) + "\n")
                 except OSError:
-                    pass
+                    # The gate's verdict survives a ledger it cannot write (CLAUDE.md's
+                    # degradation rule), but the run is not in the history the next run
+                    # compares against, and a report that says nothing hides that (#524).
+                    lines.append(f"  interval width {stamped.width:.{self.places}f}; "
+                                 f"{self.path.name} could not be written, so this run is not "
+                                 f"recorded and the next run will not compare against it")
 
         return Comparison(stamped, previous, elsewhere, said.ratio, said.requires_review, lines)

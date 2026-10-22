@@ -881,3 +881,87 @@ def test_a_schedule_standard_that_withholds_everyone_is_not_a_lineup_call():
     lk = R.lock(df)
     assert lk.gain is None and lk.best_lineup == []
     assert (why := R.degenerate(df, lk)) is not None and "withheld" in why
+
+
+
+# --- #516: a game that has kicked off closes its players' calls --------------------------------
+#
+# Week 6 with `_WK6_BYES`: DAL v GB is Thursday night (10-15, 00:15Z on the 16th), KC v LAR
+# Sunday, JAX v BUF Monday. The Saturday publish runs at 14:00Z on the 17th, after Thursday's
+# game. The roster is set so an open search would make both kinds of illegal move: SIT a
+# Thursday starter (Tuten, 5.0) and START a Thursday bench player (Prescott, 22.0).
+
+_SAT6 = datetime(2026, 10, 17, 14, 0)            # slate.yml's Saturday publish
+# name, pos, team, mu, ESPN slot
+_LOCKED6 = [("Jordan Love", "QB", "GB", 14.9, "QB"), ("Dak Prescott", "QB", "DAL", 22.0, "BE"),
+            ("Tuten", "RB", "DAL", 5.0, "RB"), ("Jacobs", "RB", "KC", 15.5, "RB"),
+            ("Hall", "RB", "KC", 12.0, "BE"), ("Rashee Rice", "WR", "KC", 14.9, "WR"),
+            ("Denzel Boston", "WR", "LAR", 11.0, "WR"), ("Collins", "WR", "LAR", 14.4, "WR"),
+            ("Mark Andrews", "TE", "BUF", 9.2, "TE"),
+            ("McLaurin", "WR", "JAX", 8.0, "RB/WR/TE")]
+
+
+def _slotted(week, mine=_LOCKED6):
+    """`mine` is (name, pos, team, mu, slot); ESPN's average is `mu`, so the refresh keeps it,
+    and its total covers the games the team has left, so everyone is available."""
+    players = []
+    for n, pos, team, mu, slot in mine:
+        p = _Player(n, pos, slot=slot, pro=team)
+        p.projected_avg_points = mu
+        p.projected_total_points = mu * (week.remaining.get(team, 12) if week else 12)
+        players.append(p)
+    board = _board(player=[m[0] for m in mine], proj_blend=[m[3] for m in mine],
+                   pos=[m[1] for m in mine])
+    return R.build(E.roster_rows(_Team([], players)), board, week)
+
+
+def test_the_thursday_teams_have_kicked_off_by_saturday_and_nobody_has_by_wednesday():
+    sched = _sched(_WK6_BYES)
+    sat, wed = R.week_games(sched, _SAT6), R.week_games(sched, _WK6)
+    assert sat is not None and sat.week == 6 and sat.started == {"DAL", "GB"}
+    assert wed is not None and wed.week == 6 and wed.started == frozenset()
+    df = _slotted(sat)
+    got = dict(zip(df["player"], df["kicked_off"], strict=True))
+    assert {n for n, k in got.items() if k} == {"Jordan Love", "Dak Prescott", "Tuten"}
+
+
+def test_a_started_starter_is_kept_and_a_started_bench_player_is_never_started():
+    """The #516 reproduction. Kept as set: Love and Tuten. Never started: Prescott. Neither
+    side in the swaps. The one decision still open -- Hall over McLaurin at the flex -- is
+    still made, and `gain` is that decision alone."""
+    lk = R.lock(_slotted(R.week_games(_sched(_WK6_BYES), _SAT6)))
+    assert lk.locked == ("Dak Prescott", "Jordan Love", "Tuten")
+    assert {"Jordan Love", "Tuten"} <= set(lk.best_lineup)
+    assert "Dak Prescott" not in lk.best_lineup
+    assert lk.start == ["Hall"] and lk.bench == ["McLaurin"]
+    assert lk.withheld == []
+    assert lk.gain == pytest.approx(12.0 - 8.0)
+
+
+def test_the_same_roster_before_kickoff_makes_both_moves():
+    """The control: built on Wednesday, nothing has kicked off, and the open search SITs
+    Love and Tuten and STARTs Prescott -- the moves the lock above must refuse."""
+    lk = R.lock(_slotted(R.week_games(_sched(_WK6_BYES), _WK6)))
+    assert lk.locked == ()
+    assert "Dak Prescott" in lk.start and {"Jordan Love", "Tuten"} <= set(lk.bench)
+
+
+def test_a_started_starter_withheld_as_unavailable_is_still_kept_as_set():
+    """His game has started: nothing can be done about him, so he is neither withheld nor
+    replaced. Replacing him would be a START the league will not take."""
+    df = _slotted(R.week_games(_sched(_WK6_BYES), _SAT6)).with_columns(
+        pl.when(pl.col("player") == "Tuten").then(False).otherwise(pl.col("available"))
+          .alias("available"))
+    lk = R.lock(df)
+    assert "Tuten" in lk.best_lineup and "Tuten" not in lk.bench + lk.withheld
+
+
+def test_a_week_with_no_kickoff_locks_exactly_as_before():
+    """Byte-identical: the same frame without the column is the code before #516."""
+    df = _slotted(R.week_games(_sched(_WK6_BYES), _WK6))
+    assert not df["kicked_off"].any()
+    assert R.lock(df) == R.lock(df.drop("kicked_off"))
+    from hub.names import player_key
+    ranks = {player_key(m[0]): float(i) for i, m in enumerate(_LOCKED6, 1)}
+    by_rank = R.lock(df, ranks=ranks)
+    assert by_rank.best_lineup and by_rank == R.lock(df.drop("kicked_off"), ranks=ranks)

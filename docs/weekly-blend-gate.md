@@ -123,6 +123,14 @@ same argument one level up. The previous correction stopped a level short.
 | seasons won | 0 of 4 | 0 of 4 |
 | verdict | REMOVE | **REMOVE** |
 
+> **Restated 2026-10-20 (#520).** The SE above was the bootstrap draws' SD, biased low by
+> `sqrt(3/4)` at four seasons; the t reference's SE is that times `sqrt(4/3)` = 1.1547, on the
+> same draws. **SE 0.191 → 0.220, t on 3 df [−1.611, −0.396] → [−1.705, −0.302], MDE 0.768 →
+> 0.887.** The percentile interval and the mean do not move, and **REMOVE holds**. The
+> post-#248 restricted row below moves the same way: t [−1.326, −0.323] → **[−1.404, −0.245]**,
+> MDE 0.634 → **0.732**, REMOVE holds. See `gate-power.md`, *Restated 2026-10-20 (#520)*;
+> `test_the_restated_weekly_gate_figures_reproduce` pins the new figures.
+
 **How these were obtained, and the limit on them.** Not from a re-run: this gate builds its
 paired frame from the network and persists nothing, which is the same reason `gate-power.md`
 could not measure it. But a cluster bootstrap resamples the *cluster means*, and under

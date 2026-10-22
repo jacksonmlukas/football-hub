@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-10-19T17:13:25.420771",
+ "rows": [
+  {
+   "captured_at": "2026-10-19T17:13:25.420771",
+   "close_spread": 7.5,
+   "close_total": 52.0,
+   "game_id": "2026_06_WAS_SF",
+   "ml_home_prob": 0.7780361483986893,
+   "polls_unmoved": 1,
+   "spread_price": -106.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-19T17:13:25.420771"
+  }
+ ],
+ "season": 2026,
+ "week": 6
+}

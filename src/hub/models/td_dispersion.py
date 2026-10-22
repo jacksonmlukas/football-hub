@@ -263,7 +263,9 @@ def walk_forward(table: pl.DataFrame, *, incumbent: Mapping[str, float] | None =
             if rows.is_empty() or phase not in rate:
                 continue
             x = rows["x"].to_numpy().astype(int)
-            m = (rows["s"].to_numpy() - x + PRIOR_GAMES * rate[phase]) / rows["n"].to_numpy()
+            # n - 1 other games plus PRIOR_GAMES pseudo-games; with PRIOR_GAMES == 1 this is n.
+            m = ((rows["s"].to_numpy() - x + PRIOR_GAMES * rate[phase])
+                 / (rows["n"].to_numpy() - 1.0 + PRIOR_GAMES))
             base = count_logpmf(x, m, shipped[phase], floor)
             new = count_logpmf(x, m, fit.get(phase, shipped[phase]), floor) - base
             top_phi = ceiling[phase] if ceiling is not None else _top_dispersion(x, m, floor)

@@ -142,8 +142,11 @@ def test_the_coverage_artifacts_cap_and_its_comment_agree_with_the_file():
 
 # #432: one capture of the weekly consensus page, a few hundred ranked players, is a record of
 # what could have been read before a week's first game and is the only thing that can ever say
-# so. Bigger than a counter by design; still one small JSON document a file.
+# so. Bigger than a counter by design; still one small JSON document a file. The lineup capture
+# (`state/consensus/<season>/lineup/wk<NN>/lineup-*.json`) is the same page's rows under a few
+# more envelope fields (`purpose`, `first_sunday`, `scrape_floor`), so the same cap fits it.
 CAPTURE_CAP = 131072
+CAPTURE_PREFIX = "state/consensus/"
 
 # #434: the content-addressed input sets under `state/inputs/`, one file per distinct set of
 # pins a gate run read (identical sets share a file). A file is a small dict of
@@ -155,6 +158,23 @@ CAPTURE_CAP = 131072
 INPUTS_PREFIX = "state/inputs/"
 INPUTS_FILE_CAP = 8192
 INPUTS_DIR_BUDGET = 131072
+# #383: `state/odds/<season>/wk<NN>/snap-*.json` is one snapshot of the betting market, one
+# per-game spread record per game in the week, so a file's size scales with the slate rather than
+# staying a counter's. Measured 2026-10-18 on the 172 committed files: the largest, week 7, is
+# 4,206 bytes for 14 games (a counter's 4,096 cap tripped on it); a record is about 295 bytes
+# (largest seen ~330 with longer float reprs) over a 72-byte envelope. A full NFL week is 16
+# games: 72 + 16 * 330 = ~5,350 bytes. 8,192 is 1.5x that, so a full slate passes with room, while
+# a cached Odds API response (every book's lines for every game, tens of KB) is an order of
+# magnitude over it and still trips. Not a ledger: a snapshot is written once, never appended.
+ODDS_FILE_CAP = 8192
+ODDS_PREFIX = "state/odds/"
+# #493: `state/stream_journal/<season>/wk<NN>.json`, one D/ST and kicker streaming ranking a
+# week, written once (first write wins). Its shape is fixed by the league, not the slate: a row
+# for each of 32 teams in each of two lists, about 280 bytes a row -- 17,907 bytes measured for
+# week 6 (2026-10-18). Our own heuristic over implied totals, no third party's response. 32,768
+# is 1.8x the measured file, which a later gate settling the ranks in place could still fill.
+STREAM_JOURNAL_PREFIX = "state/stream_journal/"
+STREAM_JOURNAL_FILE_CAP = 32768
 # A contract that fails at the cap tells you after the fact. These fail at this share of it, so
 # the decision (roll the ledger by season, prune the sets no row names) is made while the file
 # still works.
@@ -173,7 +193,9 @@ def test_the_state_directory_carries_no_third_party_payload():
 
     A second (#432): `state/consensus/` holds one week's FantasyPros `weekly-op` page, as
     redistributed by DynastyProcess, taken before kickoff because a ranking that is not kept
-    cannot be shown to have been read in time. That source's terms have **not** been checked the
+    cannot be shown to have been read in time -- `<season>/wk<NN>/cap-*.json` -- and, under
+    `<season>/lineup/wk<NN>/lineup-*.json`, the same page taken after Thursday's games for
+    setting Sunday's lineup only. Both are one page's rows under `CAPTURE_CAP`. That source's terms have **not** been checked the
     way The Odds API's were; the repo is private, and `state/README.md` says to re-examine this
     directory first if it is ever made public."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
@@ -186,13 +208,49 @@ def test_the_state_directory_carries_no_third_party_payload():
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
         stored_set = f.startswith(INPUTS_PREFIX)
-        capture = f.startswith("state/consensus/")
+        capture = f.startswith(CAPTURE_PREFIX)
+        snapshot = f.startswith(ODDS_PREFIX)
+        journal = f.startswith(STREAM_JOURNAL_PREFIX)
         cap = (INPUTS_FILE_CAP if stored_set else CAPTURE_CAP if capture
+               else ODDS_FILE_CAP if snapshot else STREAM_JOURNAL_FILE_CAP if journal
                else LEDGER_CAPS.get(f, 4096))
         what = ("a stored input set" if stored_set
                 else "one week's captured page" if capture
+                else "one odds snapshot (a spread record per game)" if snapshot
+                else "one week's streaming ranking (32 teams, two lists)" if journal
                 else "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
         assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
+
+
+def test_the_lineup_capture_is_filed_under_the_capture_cap():
+    """The lineup capture's path is inside the prefix the capture cap is applied by, so a file
+    there is held to a page's size and not let through as a 4,096-byte counter -- or, if the
+    layout moved out from under the prefix, to nothing written for it at all.
+
+    Mutation (observed): `lineup_path` filing under `root.parent / "consensus_lineup"` is red."""
+    from hub.fetch import consensus
+    path = consensus.lineup_path(2026, 8, datetime(2026, 10, 23, 15, tzinfo=UTC),
+                                 ROOT / "state" / "consensus")
+    assert path.relative_to(ROOT).as_posix().startswith(CAPTURE_PREFIX)
+    assert path.relative_to(ROOT).as_posix() == (
+        "state/consensus/2026/lineup/wk08/lineup-20261023T150000.json")
+    assert consensus.ROOT.relative_to(consensus.ROOT.parents[1]).as_posix() + "/" == CAPTURE_PREFIX
+
+
+def test_the_odds_snapshot_cap_holds_a_full_slate_and_not_a_cached_payload():
+    """The cap is sized from the committed snapshots' own records: 16 games of the largest
+    record seen fit under it with room, and a response-sized file does not.
+
+    Mutation (observed): `ODDS_FILE_CAP = 131072` is red."""
+    rows = []
+    for f in subprocess.run(["git", "-C", str(ROOT), "ls-files", ODDS_PREFIX],
+                            capture_output=True, text=True).stdout.split():
+        body = json.loads((ROOT / f).read_text()) if f.endswith(".json") else {}
+        rows += [len(json.dumps(r)) for r in body.get("rows", []) if isinstance(r, dict)]
+    assert rows, "no odds snapshot rows to size the cap from"
+    full_week = 72 + 16 * max(rows)
+    assert full_week * 1.2 < ODDS_FILE_CAP, f"a 16-game week ({full_week} bytes) crowds the cap"
+    assert ODDS_FILE_CAP < 4 * full_week, "the cap is slack enough for a cached payload to fit"
 
 
 def _headroom_failure(used: int, cap: int, what: str) -> str | None:

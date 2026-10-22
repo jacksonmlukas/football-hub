@@ -1,8 +1,8 @@
 ---
 name: Weekly injury cost
 verdict: Not established
-figure: "+0.0623 MAE, t interval [-0.189, +0.314], 1 of 3 seasons resolved"
-as_of: 2026-10-07
+figure: "+0.0623 MAE, t interval [-0.245, +0.370], 1 of 3 seasons resolved"
+as_of: 2026-10-20
 issue: 360
 ---
 
@@ -273,6 +273,10 @@ and no every-season half; this section replaces it with the Gate every other com
 > *prior: "won 2, lost 1" (3 resolved, 0 abstained, on the sign alone)* **now: 2023 −0.0041
 > abstained (se 0.0250), 2024 +0.0867 won (se 0.0222), 2025 +0.0370 abstained (se 0.0264),
 > won 1, lost 0: 1 resolved of 3, 2 abstained.** **SHOW — KEEP `retention`, unchanged.**
+
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Retention at k=3 (x1.2247): t [−0.1889, +0.3135] → **[−0.2454, +0.3700]**, MDE +0.3004 → **+0.3679** against +0.1202; **NOT-RUNNABLE holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). Injury type at k=3 (x1.2247): t [−0.0531, +0.1328] → **[−0.0740, +0.1537]**, MDE +0.1111 → **+0.1361** against +0.3852; **SHOW holds**. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
 
 ## Does *what is wrong with him* add anything? Measured 2026-08-25: not by the gate
 

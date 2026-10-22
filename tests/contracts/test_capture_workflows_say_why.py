@@ -277,6 +277,77 @@ def test_exit_three_is_a_notice_and_a_failed_fetch_turns_the_run_red(tmp_path):
     assert _capture_with_exit(tmp_path, 0).returncode == 0
 
 
+def _capture_run(tmp_path: Path, code: int, schedule: str = "", purpose: str = "",
+                 step: str | None = None) -> subprocess.CompletedProcess:
+    """The capture step (or `step`, a planted copy) with `uv` replaced by a stub that records
+    its arguments and exits `code`, started as if by `schedule` (empty: a dispatch)."""
+    work = tmp_path / f"run{code}-{abs(hash((schedule, purpose, step)))}"
+    bin_dir = work / "bin"
+    bin_dir.mkdir(parents=True)
+    stub = bin_dir / "uv"
+    stub.write_text(f'#!/bin/sh\necho "uv $*"\nexit {code}\n')
+    stub.chmod(0o755)
+    return _sh(step or _consensus_step(CONSENSUS_CAPTURE), work,
+               extra_env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "SCHEDULE": schedule,
+                          "PURPOSE": purpose})
+
+
+def _lineup_crons() -> list[str]:
+    """The crons the capture step routes to `--lineup`, read off its own `case` line."""
+    line = next(ln for ln in _consensus_step(CONSENSUS_CAPTURE).splitlines()
+                if "flag=--lineup ;;" in ln and '"0 ' in ln)
+    return re.findall(r'"([^"]+)"', line.split(")")[0])
+
+
+def test_an_empty_lineup_run_inside_a_day_of_sunday_is_red_and_says_so(tmp_path):
+    red = _capture_run(tmp_path, 4, schedule="0 8 * * 6")
+    assert red.returncode == 4 and "::error::" in red.stdout and "--lineup" in red.stdout
+    notice = _capture_run(tmp_path, 3, schedule="0 13 * * 5")
+    assert notice.returncode == 0 and "::notice::" in notice.stdout
+
+
+def test_the_plant_folding_exit_four_into_the_notice_turns_the_red_run_green(tmp_path):
+    """The plant: `-eq 3` widened to `-ge 3` is the old behaviour, every empty run a notice. If
+    the test above could not tell that apart, it would not be holding the loud failure."""
+    new = _consensus_step(CONSENSUS_CAPTURE)
+    old = new.replace('if [ "$code" -eq 3 ]', 'if [ "$code" -ge 3 ]')
+    assert old != new, "could not plant the defect"
+    assert _capture_run(tmp_path, 4, schedule="0 8 * * 6", step=old).returncode == 0
+
+
+def test_each_cron_takes_the_capture_it_is_for(tmp_path):
+    wf = yaml.safe_load((WORKFLOWS / "consensus.yml").read_text())
+    crons = [c["cron"] for c in wf[True]["schedule"]]          # `on:` loads as the key True
+    lineup = _lineup_crons()
+    assert set(lineup) <= set(crons) and len(lineup) == 4
+    for cron in crons:
+        got = _capture_run(tmp_path, 0, schedule=cron)
+        want = "--lineup" if cron in lineup else "--capture"
+        assert f"hub.fetch.consensus {want}" in got.stdout, (cron, got.stdout)
+    assert "--capture" in _capture_run(tmp_path, 0).stdout                  # a bare dispatch
+    assert "--lineup" in _capture_run(tmp_path, 0, purpose="lineup").stdout
+
+
+def _week_minute(cron: str) -> int:
+    """Minutes since Sunday 00:00 UTC of a `M H * * D` cron, Sunday = 0."""
+    minute, hour, _, _, dow = cron.split()
+    return int(dow) * 1440 + int(hour) * 60 + int(minute)
+
+
+def test_every_lineup_run_falls_after_thursday_and_before_the_saturday_publish():
+    """The lineup capture is only worth taking if the publish that writes `roster.json` can see
+    it: `slate.yml`'s Saturday full run. Every lineup cron is after Thursday (the week's first
+    game day, the strict deadline) and before that publish."""
+    slate = yaml.safe_load((WORKFLOWS / "slate.yml").read_text())
+    gate = slate["jobs"]["refresh"]["if"]
+    full = re.findall(r'"(\d+ \d+ \* \* \d)"', gate)
+    publish = next(c for c in full if c.endswith(" 6"))                     # the Saturday one
+    thursday_ends = 5 * 1440
+    for cron in _lineup_crons():
+        assert thursday_ends <= _week_minute(cron) < _week_minute(publish), cron
+    assert _week_minute(publish) - max(map(_week_minute, _lineup_crons())) >= 6 * 60
+
+
 def test_the_commit_runs_after_the_capture_and_the_run_is_bounded():
     wf = yaml.safe_load((WORKFLOWS / "consensus.yml").read_text())
     steps = [s.get("name") for s in wf["jobs"]["capture"]["steps"]]

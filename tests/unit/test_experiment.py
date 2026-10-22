@@ -355,12 +355,15 @@ def test_the_standard_error_is_the_bootstraps_over_cluster_means():
     """Hand-computable: three seasons of one row each, gains 1, 2, 3. The units are the three
     cluster means, `mean` is their mean, and `se` is the percentile bootstrap's standard
     deviation of the mean of three draws with replacement -- `sqrt(var_pop / 3)` in the
-    limit, 0.4714, and not the closed-form 0.5774 of `sd(ddof=1) / sqrt(3)`."""
+    limit, 0.4714 -- **rescaled by `sqrt(3/2)` since #520** for the t on 2 df that reads it,
+    which in the limit is exactly the closed-form 0.5774 of `sd(ddof=1) / sqrt(3)`. This test
+    used to assert the 0.4714 and say "not 0.5774": it pinned the bias #520 corrects."""
     import math
     g = experiment.paired_gain([2.0, 4.0, 6.0], [1.0, 2.0, 3.0], cluster=[0, 1, 2],
                                season=[0, 1, 2], within=[0, 0, 0], bootstrap=200_000)
     assert g.mean == 2.0
-    assert math.isclose(g.se, math.sqrt((2.0 / 3.0) / 3.0), rel_tol=0.01)
+    assert math.isclose(g.se, math.sqrt((2.0 / 3.0) / 3.0) * math.sqrt(3 / 2), rel_tol=0.01)
+    assert math.isclose(g.se, 1.0 / math.sqrt(3.0), rel_tol=0.01)
     assert math.isclose(g.t, g.mean / g.se)
 
 
@@ -772,8 +775,11 @@ def test_the_standard_error_under_the_mde_is_the_intervals_own_bootstrap():
 
     assert s["lo"] == float(np.percentile(draws, 2.5))
     assert s["hi"] == float(np.percentile(draws, 97.5))
-    assert s["se"] == float(draws.std(ddof=1)), \
-        "the reported SE is not the standard deviation of the interval's own draws"
+    # #520: the interval's own draws, rescaled by sqrt(k/(k-1)) for the t reference -- still
+    # one vector, so a second bootstrap still cannot satisfy this.
+    k = len(units)
+    assert s["se"] == float(draws.std(ddof=1)) * math.sqrt(k / (k - 1)), \
+        "the reported SE is not the interval's own draws' SD, rescaled for the t reference"
     assert s["mde"] == experiment.minimum_detectable_effect(s["se"], int(s["clusters"]))
 
     # And it tracks the interval it sits under: a wider interval is a bigger SE is a bigger
@@ -1132,6 +1138,29 @@ def test_the_fixed_rule_s_null_size_is_not_degenerate():
     assert rate < 2 * experiment.ALPHA, (rate, "not bounded by twice the t half's own alpha")
 
 
+def test_the_t_interval_covers_at_its_nominal_rate_at_four_seasons():
+    """#520, ADOPTED (a) 2026-10-20. Under the null, at k=4 season clusters, the 95% t
+    interval `summarise` reports must cover zero ~95% of the time -- through the real
+    summarise -> `_t_reference_se` -> `t_interval` path, seeded, 4,000 trials.
+
+    On the pre-#520 SE (the bootstrap draws' raw SD, low by `sqrt(3/4)`) this simulation
+    measures ~0.920, the ~92.5% two independent simulations found; on the corrected SE it
+    measures 0.945-0.952 across seeds (a little under 0.95 because a 400-draw bootstrap SD
+    is itself noisy). The floor 0.935 sits ~3 binomial SEs (0.0035) under the corrected rate
+    and ~4 above the biased one, so it fails on the old SE and not on Monte Carlo luck; the
+    ceiling 0.965 catches an over-correction (e.g. the factor applied twice). Planted
+    2026-10-20: `_t_reference_se` returning `draw_sd` unchanged turns this red."""
+    rng = np.random.default_rng(520)
+    trials, covered = 4000, 0
+    for _ in range(trials):
+        frame = pl.DataFrame({"season": np.arange(4), "diff": rng.normal(0.0, 1.0, 4)})
+        s = experiment.summarise(frame, cluster=experiment.SEASON_CLUSTER, bootstrap=400,
+                                 seed=0)
+        covered += s["t_lo"] <= 0.0 <= s["t_hi"]
+    rate = covered / trials
+    assert 0.935 < rate < 0.965, (rate, "the nominal-95% t interval does not cover at 95%")
+
+
 # --- #335: the tie-aware every-season half, ADOPTED (A) with (i) --------------------------
 
 def _tied_season(season, base_gain, *, m=20, n_per_cluster=4, noise=1.0, seed):
@@ -1180,7 +1209,12 @@ def test_an_abstention_does_not_block_adopt_when_every_resolved_season_won():
     seasons = pl.concat([
         _confident_season(2022, 3.0), _confident_season(2023, 3.0),
         _confident_season(2024, 3.0),
-        _tied_season(2025, 0.05, seed=0),
+        # #520: was `_tied_season(2025, 0.05, seed=0)`. Three equal gains `a` beside one at
+        # zero have `se = a/4` and `mean = 3a/4` exactly at k=4, so the unbiased t half-width
+        # `3.18 * a/4` exceeds the mean and no such frame can ADOPT -- the biased SE was what
+        # let it. A tie at +0.5 (deterministic, inside its own +/-2 SE band) keeps the fixture
+        # about the abstention rather than about the interval.
+        _noisy_season(2025, 0.5, 4.0),
     ])
     run = _gate_frame(seasons)
     status, said = run.verdict
@@ -1200,7 +1234,7 @@ def test_an_abstention_does_not_block_remove_when_every_resolved_season_lost():
     seasons = pl.concat([
         _confident_season(2022, -3.0), _confident_season(2023, -3.0),
         _confident_season(2024, -3.0),
-        _tied_season(2025, -0.05, seed=1),
+        _noisy_season(2025, -0.5, 4.0),  # #520: was `_tied_season(2025, -0.05, seed=1)`
     ])
     run = _gate_frame(seasons)
     status, said = run.verdict
@@ -1506,7 +1540,13 @@ def _digest(parts: list[str]) -> str:
 # the MDE whenever one is present -- every block that grew an MDE line grows a power line
 # beside it, nothing else moves, and `test_every_block_grew_exactly_the_mde_and_power_lines`
 # below is what says so rather than this comment alone.
-BLOCK_SWEEP_DIGEST = "ccd649a3bb41755a"
+#
+# **Moved again by #520, 2026-10-20 -- numbers only, on two line kinds.** `summarise`'s SE is
+# the draws' SD times `sqrt(k/(k-1))` (`_t_reference_se`). Diffed block by block against the
+# pre-#520 SE on this grid: every block keeps its line count and labels, and the only lines
+# that differ are 628 MDE lines and 411 achieved-power lines (the MDE scales by exactly the
+# factor; the power falls with it). No interval, mean or verdict line moved.
+BLOCK_SWEEP_DIGEST = "3d5e535f04d1a94a"
 
 # **Moved by #357 (S1), 2026-09-21 -- wording only, checked rather than assumed.** `gate` now
 # reads `t_lo`/`t_hi` rather than `lo`/`hi`, and `_gate_summary` sets `t_lo = lo`, `t_hi = hi`
@@ -1727,9 +1767,12 @@ def test_a_runnable_gate_still_does_not_adopt_at_two_of_three_seasons():
     interval excluding zero is not enough on its own, and the every-season half is what stops
     one lucky season carrying a verdict. `_HUGE_CEILING` keeps stage 2 out of the way, so the
     branch below is what produced the answer."""
-    status, said = _gate([3.0, -0.05, 3.05, 3.1])
+    # #520: was `[3.0, -0.05, 3.05, 3.1]`. At k=4 one near-zero season beside three equal
+    # ones cannot exclude zero under the unbiased t (see the abstention fixtures above), so the
+    # frame that reaches this branch needs six seasons.
+    status, said = _gate([3.0, -0.05, 3.05, 3.1, 3.0, 2.95])
     assert status == "SHOW"
-    assert "won 3, tied 0, lost 1 of 4 seasons" in said
+    assert "won 5, tied 0, lost 1 of 6 seasons" in said
     assert "the sign is not consistent across seasons" in said
 
 
@@ -1753,8 +1796,10 @@ def test_the_restated_weekly_gate_figures_reproduce():
     assert s["mean"] == pytest.approx(-1.004, abs=0.001)
     assert (s["lo"], s["hi"]) == (pytest.approx(-1.347, abs=0.001),
                                   pytest.approx(-0.640, abs=0.001))
-    assert s["se"] == pytest.approx(0.191, abs=0.001)
-    assert s["mde"] == pytest.approx(0.768, abs=0.001)
+    # Restated 2026-10-20 (#520): 0.191 and 0.768 were the draws' raw SD and the MDE on it;
+    # the t-reference SE is that SD times sqrt(4/3), off the same draws.
+    assert s["se"] == pytest.approx(0.220, abs=0.001)
+    assert s["mde"] == pytest.approx(0.887, abs=0.001)
 
     # The verdict does not move: every season is negative, so no resample reaches zero.
     # #363 (S6): a gate with no ceiling is NOT-RUNNABLE, full stop -- this is what a real run

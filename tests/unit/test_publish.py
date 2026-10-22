@@ -72,6 +72,10 @@ def offline(monkeypatch, tmp_path):
     import hub.season.survivor as sv
     from hub.fetch import pool as fetch_pool
     serve(schedules=_sched([], []))
+    # A roster publish into the site journals its decision (#517); never into the committed
+    # `state/lineup_journal/`.
+    from hub.season import lineup_journal
+    monkeypatch.setattr(lineup_journal, "ROOT", tmp_path / "lineup_journal")
     # The survivor producer reads the pool host's last-known state for the Ledger (#280);
     # a real one under `data/processed/` must not reach a test's plan.
     monkeypatch.setattr(fetch_pool, "PROCESSED", tmp_path / "no-pool-state")
