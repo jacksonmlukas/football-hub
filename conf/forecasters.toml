@@ -8,9 +8,9 @@
 # Prices are USD per million tokens, as published by the provider on the pin date.
 
 [study]
-season_cap_usd = 0.0          # TBD: the cap the code enforces (the prereg's spending cap)
-home_rate = 0.0               # TBD: historical P(home win)
-home_rate_seasons = "TBD"     # TBD: the seasons it comes from
+season_cap_usd = 150.0        # the cap the code enforces (#448, adopted 2026-10-21)
+home_rate = 0.547             # historical P(home win), ties excluded (computed 2026-10-21)
+home_rate_seasons = "2016-2025 regular seasons (2,639 games)"
 est_input_tokens = 2000       # upper estimate of one rendered prompt, for the guard
 
 # The analysis settings v0 fixes ("Before v0"; "Scoring and the confirmatory test"), as
@@ -21,10 +21,9 @@ est_input_tokens = 2000       # upper estimate of one rendered prompt, for the g
 [analysis]
 delta = 0.02                  # H2's non-inferiority margin, nats of log loss per game
 h1_min_deviation_sd = 0.25    # H1's threshold: min SD of a model's log-odds deviations
-# H2 runs on hub.forecasters.score at a commit (it replaced "Parity", #448 item 1). TBD until
-# the merge commit of the lane that last changed score.py (#448's method lane) is on main:
-# "hub.forecasters.score@<that commit>".
-h2_implementation = "TBD"
+# H2 runs on hub.forecasters.score at a commit (it replaced "Parity", #448 item 1): the commit
+# that last changed score.py (#448's method lane, merged 2026-10-22).
+h2_implementation = "hub.forecasters.score@58fbfb71d617"
 
 # Pinned 2026-10-22 from each provider's own docs (docs/prereg/llm-forecasters.md, Contestants,
 # "Models pinned 2026-10-22": the ids, cutoffs, prices, sources and why each was chosen).

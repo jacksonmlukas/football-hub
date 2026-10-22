@@ -65,17 +65,21 @@ def _world(rng, *, weeks, per_week, kind, sd):
 
 # --- refusal -----------------------------------------------------------------------------
 
-def test_the_committed_analysis_settings_are_the_adopted_ones_and_wait_for_the_h2_pin():
-    """#448 (adopted 2026-10-22) items 5 and 6: delta 0.02 nats and the H1 threshold 0.25;
-    the H2 implementation pin waits for this lane's merge commit, so scoring still refuses
-    -- naming only that."""
+def test_the_committed_analysis_settings_are_the_adopted_ones_and_pin_the_current_scorer():
+    """#448 (adopted 2026-10-22) items 1, 5 and 6: delta 0.02 nats, the H1 threshold 0.25,
+    and H2 pinned to this module at the commit that last changed it. Editing score.py
+    without re-pinning (a prereg deviation once v0 is tagged) turns this red."""
+    import subprocess
     a = score.load_analysis()
-    assert a == Analysis(0.02, 0.25, None) == CFG.analysis
-    with pytest.raises(NotPinned) as exc:
-        score.require_pinned(a, CFG)
-    assert "analysis.h2_implementation" in str(exc.value)
-    assert "analysis.delta" not in str(exc.value)
-    assert "h1_min_deviation_sd" not in str(exc.value)
+    assert (a.delta, a.h1_min_deviation_sd) == (0.02, 0.25) and a == CFG.analysis
+    score.require_pinned(a, CFG)
+    pinned = (a.h2_implementation or "").split("@")[-1]
+    got = subprocess.run(["git", "log", "-1", "--format=%H", "--", "src/hub/forecasters/score.py"],
+                         capture_output=True, text=True)
+    if got.returncode != 0 or not got.stdout.strip():
+        pytest.skip("no git history here, so the pin cannot be checked against it")
+    assert got.stdout.strip().startswith(pinned), (
+        f"score.py changed after its H2 pin {pinned}; re-pin conf/forecasters.toml")
 
 
 def test_each_unset_setting_is_named_on_its_own(tmp_path):
@@ -119,7 +123,7 @@ def test_a_study_without_four_models_is_refused():
 def test_the_cli_refuses_in_one_sentence_while_unpinned(tmp_path):
     lines: list[str] = []
     rc = score.main(["--forecasts", str(tmp_path), "--games", str(tmp_path / "g.jsonl")],
-                    echo=lines.append)
+                    echo=lines.append, analysis=Analysis())
     assert rc == 3
     assert len(lines) == 1 and lines[0].startswith("refused: ")
 
