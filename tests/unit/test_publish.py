@@ -2198,11 +2198,15 @@ def test_a_degenerate_call_with_nothing_published_still_leaves_the_page_a_file(s
 def test_a_minority_withheld_that_leaves_no_lineup_is_flagged_and_a_thin_roster_is_not(
         site, tmp_path):
     """The two halves of the no-lineup branch. Both tight ends withheld leaves no TE to fill
-    the slot -- 2 of 10, well short of a majority, and still no call. A roster that is merely too
-    small to fill a lineup, with nobody held back, is not a fault in availability."""
+    the slot -- 2 of 10, well short of a majority, and still no full call: since #531 that is a
+    gap, published current and labelled incomplete with the reason, never stale and never last
+    week's file. A roster that is merely too small to fill a lineup, with nobody held back, is
+    not a fault in availability."""
     src = _called(tmp_path, withheld={"H", "I"})
     got = publish.roster(out=site, path=src)
-    assert isinstance(got, publish.Kept) and "no lineup" in got.why
+    assert isinstance(got, dict) and got["gain"] is None
+    assert got["incomplete"]["empty_slots"] == ["TE"]
+    assert "no lineup" in got["incomplete"]["reason"]
     thin = tmp_path / "thin.parquet"
     _roster_frame([("Chase", "WR", 19.7)]).write_parquet(thin)
     assert isinstance(publish.roster(out=site / "other", path=thin), dict)

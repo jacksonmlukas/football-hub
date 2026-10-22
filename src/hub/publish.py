@@ -41,7 +41,7 @@ from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
-from hub.season.roster import degenerate, withheld_reason
+from hub.season.roster import degenerate, gap, withheld_reason
 
 if TYPE_CHECKING:
     # Typing only. `survivor` imports the real module locally, the way every other
@@ -960,6 +960,27 @@ def _roster_journal(week: int | None, lk: Any, rule: Any) -> str:
 LOCKED_REASON = "locked: game started"
 
 
+def _incomplete(call: Any, why: str, waiver: dict[str, Any]) -> dict[str, Any]:
+    """The `incomplete` block of a gap's roster artifact (#531): the slots nothing eligible can
+    fill, this week's best partial lineup, what set it, and who could fill each empty slot --
+    one sentence per slot, which is the panel's headline. `why` is `degenerate`'s sentence."""
+    from hub.league import FLEX_FROM
+    from hub.season import waiver as waiver_mod
+    empty = list(call.partial.empty)
+    fas, note = waiver_mod.fill_candidates(waiver, empty, FLEX_FROM)
+    said = []
+    for slot in dict.fromkeys(empty):
+        n = empty.count(slot)
+        names = ", ".join(f"{r['player']} ({r.get('nfl_team') or '?'})" for r in fas[slot])
+        lead = f"{slot}: no eligible player{f' for {n} slots' if n > 1 else ''}; add one"
+        said.append(f"{lead} -- best free agents at {slot} not on bye: {names}" if names else
+                    f"{lead} -- no free agent at {slot} in the waiver table is off bye and "
+                    f"able to play")
+    return {"empty_slots": empty, "lineup": list(call.partial.lineup),
+            "lineup_source": call.as_dict(), "headline": "; ".join(said) + ".",
+            "free_agents": fas, "free_agents_note": note, "reason": why}
+
+
 def roster(out: Path | None = None,
            path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
@@ -1007,6 +1028,27 @@ def roster(out: Path | None = None,
     # An empty lineup ticks nobody, which is what declining means.
     best = set(lk.best_lineup)
     bad = degenerate(df, lk)
+    start, sit = lk.start, lk.bench
+    # A gap (#531): withholding left a slot nothing eligible can fill, with a minority withheld.
+    # Last week's file is the wrong answer to that -- on 2026-10-21 it started a tight end on
+    # bye -- so this week's best partial lineup is published instead, labelled incomplete, with
+    # the empty slot and who could fill it. The withholding is unchanged: nobody withheld is put
+    # back to fill a slot. A majority withheld, or a contract refusal, stays stale as before.
+    call: lineup_rule.PartialCall | None = None
+    if bad and gap(df, lk):
+        got_call = lineup_rule.partial_call(df, SEASON_AHEAD, wk, ecr=ecr_by_key,
+                                            ecr_reason=ecr_reason)
+        if got_call.partial.lineup and got_call.partial.empty:
+            call = got_call
+    if call is not None:
+        best = set(call.partial.lineup)
+        shut = set(lk.locked)
+        was = {r["player"] for r in df.iter_rows(named=True)
+               if r["projected"] and r["starting"]}
+        start, sit = sorted(best - was - shut), sorted(was - best - shut)
+        if call.ecr_capture is not None:
+            # As under `decide`: the `ecr` column shows the ranks that set the lineup.
+            ecr_by_key, ecr_reason = call.ranks, None
 
     # The other two sources beside `mu` (#492): weekly consensus rank and ESPN's projection for
     # the scoring period. Null with a reason, never zero, when either is missing.
@@ -1017,7 +1059,7 @@ def roster(out: Path | None = None,
     from hub.season import swaps as swaps_mod
     qs = swaps_mod.quantiles(df)
     unproj, unproj_reasons = swaps_mod.unprojected(df)
-    swap_rows, odds_reason = swaps_mod.swaps(df, lk.bench, lk.start, lk.withheld)
+    swap_rows, odds_reason = swaps_mod.swaps(df, sit, start, lk.withheld)
 
     rows = []
     for r in df.iter_rows(named=True):
@@ -1057,7 +1099,7 @@ def roster(out: Path | None = None,
     payload = jsonio.artifact("roster", "roster.parquet", rows,
                         as_of=stamp,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
-                        withheld=lk.withheld, start=lk.start, sit=lk.bench,
+                        withheld=lk.withheld, start=start, sit=sit,
                         week=wk, ecr_reason=ecr_reason, espn_week_reason=espn_reason,
                         # What set `start`/`sit`/`best_start` this week and why (#492): `mu` or
                         # weekly ECR, labelled `provisional` when ECR (ADR-0014), with the reason
@@ -1093,14 +1135,21 @@ def roster(out: Path | None = None,
         # conditional field's producer by its keyword name.
         payload.update(locked=list(lk.locked),
                        locked_reasons=dict.fromkeys(lk.locked, LOCKED_REASON))
+    if call is not None:
+        # Only on a gap (#531), so a fillable week publishes the bytes it always did. The label
+        # *is* this key: the artifact is current and incomplete, never stale.
+        payload.update(incomplete=_incomplete(call, cast(str, bad), payload["waiver"]))
     # The new fields' own contract (#479): a malformed one is a stale call with the reason,
     # served as last-good, like every other call the lock cannot stand behind.
     from hub.contracts import ContractViolation, check_roster_artifact
     try:
         check_roster_artifact(payload)
     except ContractViolation as e:
-        bad = bad or f"roster fields refused: {e}"
-    if bad:
+        # A refused gap is stale with the refusal as its reason, never as a silent decline.
+        bad = f"roster fields refused: {e}" if call is not None else (
+            bad or f"roster fields refused: {e}")
+        call = None
+    if bad and call is None:
         # A call the lock could not stand behind is stale, with the reason, and last-good stays
         # where it is (issue #419). What is withheld is `lock`'s refusal and stays; what was
         # missing is anyone hearing it. Kept through `_keeping`, like every other keep; with
@@ -1118,7 +1167,9 @@ def roster(out: Path | None = None,
     # is not what the Saturday publish decided. Only a call that reached the site's own
     # directory is the site's decision -- a publish into a scratch `out` is not -- and only one
     # that published; refused from the week's first Sunday inside `record_published`.
-    if dest == SITE and not isinstance(got, Kept):
+    # A gap (#531) is not journalled here either: the journal records the decline as it always
+    # has, and a partial lineup is not the full call `record_published` is the record of.
+    if dest == SITE and not isinstance(got, Kept) and call is None:
         print(f"  lineup journal: {_roster_journal(wk, lk, rule)}", flush=True)
     return got
 
@@ -1172,12 +1223,18 @@ class Artifact(NamedTuple):
         seen = read(self.produce(), self.reason, keeps=self.keeps)
         path = out / f"{self.name}.json"
         present = path.exists()
-        return {
+        entry = {
             "name": self.name, "present": present, "stale": seen.stale,
             "reason": seen.reason,
             "generated_at": (seen.fresh.get("generated_at") if seen.fresh
                              else (_generated_at(path) if present else None)),
         }
+        gap_ = seen.fresh.get("incomplete") if seen.fresh else None
+        if isinstance(gap_, dict):
+            # Current and incomplete (#531): the roster's gap, said in the manifest too, and
+            # only when there is one, so every other entry is what it was.
+            entry["incomplete"] = gap_.get("headline")
+        return entry
 
 
 def _board(out: Path) -> dict[str, Any] | None:
@@ -1555,8 +1612,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     man = publish_all(a.season, a.week)
     print(f"  published {len(man['artifacts'])} artifacts for {a.season} week {a.week}")
     for art in man["artifacts"]:
-        mark = "stale" if art["stale"] else "ok"
-        print(f"    {art['name']:<16} {mark:<6} {art['reason'] or ''}")
+        mark = "stale" if art["stale"] else ("incomplete" if art.get("incomplete") else "ok")
+        print(f"    {art['name']:<16} {mark:<6} {art['reason'] or art.get('incomplete') or ''}")
     return 0
 
 

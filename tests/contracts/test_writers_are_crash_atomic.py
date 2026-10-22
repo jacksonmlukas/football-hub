@@ -41,15 +41,47 @@ DIRECT = frozenset({"write_text", "write_bytes", "write_parquet"})
 ALLOWED: dict[str, str] = {}
 
 
+# `open(p, "a")` writes a final path too: an append killed mid-line leaves a torn last line,
+# which is the truncated file in another shape (#444, `hub.forecasters.runner._append`). Any
+# mode with one of these letters opens for writing; a read-only `open` is not a writer.
+WRITE_MODE = frozenset("wax+")
+
+
+def _opens_for_write(node: ast.Call) -> bool:
+    """`open(...)` (the builtin, or `x.open(...)`) whose mode, positional or keyword, is a
+    string literal that writes. A mode that is not a literal is counted as writing: the scan
+    cannot tell, and an unprovable read is the case the allowlist exists for."""
+    f = node.func
+    is_open = ((isinstance(f, ast.Name) and f.id == "open")
+               or (isinstance(f, ast.Attribute) and f.attr == "open"
+                   and not (isinstance(f.value, ast.Name) and f.value.id == "os")))
+    if not is_open:
+        return False
+    builtin = isinstance(f, ast.Name)
+    pos = node.args[1] if builtin and len(node.args) > 1 else (
+        node.args[0] if not builtin and node.args else None)
+    mode = next((k.value for k in node.keywords if k.arg == "mode"), pos)
+    if mode is None:
+        return False
+    if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
+        return bool(WRITE_MODE & set(mode.value))
+    return True
+
+
 def _is_direct(node: ast.AST) -> TypeGuard[ast.Call]:
-    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    if not isinstance(node, ast.Call):
+        return False
+    if _opens_for_write(node):
+        return True
+    return (isinstance(node.func, ast.Attribute)
             and node.func.attr in DIRECT
             and not (isinstance(node.func.value, ast.Name) and node.func.value.id == HELPER))
 
 
 def _direct_writes(source: str) -> list[int]:
     """Lines calling `.write_text`, `.write_bytes` or `.write_parquet` on anything but the
-    helper module itself (`atomic.write_text(...)` is the routed spelling)."""
+    helper module itself (`atomic.write_text(...)` is the routed spelling), or `open` in a
+    writing mode."""
     return [n.lineno for n in ast.walk(ast.parse(source)) if _is_direct(n)]
 
 
@@ -122,6 +154,15 @@ def test_the_scan_sees_a_direct_write():
     scanner that matches nothing (the failure `test_guards_are_load_bearing.py` catalogues)."""
     assert _direct_writes("p.write_text(s)\nq.write_parquet(t)\n") == [1, 2]
     assert _direct_writes("atomic.write_text(p, s)\natomic.write_parquet(df, p)\n") == []
+
+
+def test_the_scan_sees_an_open_for_write():
+    """`open` in a writing mode is a direct write; a read, or `os.open` (a descriptor, as a
+    lock takes), is not. Planted both ways so the extension is not a matcher of nothing."""
+    assert _direct_writes(
+        "open(p, 'a')\nopen(p, mode='w')\np.open('ab')\nopen(p, m)\nopen(p, 'r+')\n"
+    ) == [1, 2, 3, 4, 5]
+    assert _direct_writes("open(p)\nopen(p, 'rb')\np.open()\nos.open(p, flags)\n") == []
 
 
 def test_a_planted_direct_write_in_a_new_module_is_found(tmp_path):

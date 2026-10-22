@@ -365,6 +365,48 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
     """
     from hub.season.lineup import NoLegalLineup, TooManyLineups, best_by_points
 
+    proj, pool, pinned, search, withheld, locked = _open_calls(df, include_unavailable, ranks)
+    if pool.is_empty():
+        return Lock(None, None, None, [], [], [], withheld, locked)
+
+    try:
+        best = best_by_points(search)["starters"]
+    except (NoLegalLineup, TooManyLineups):
+        # Withholding can make a thin roster unfillable, and a lock that raises would take
+        # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
+        # withheld, which is the actionable half, and no comparison -- which means no lineup
+        # either. Both are empty here so that a reader of either one sees the same refusal.
+        # What *can* be filled is `partial`'s question, and the publisher's to show (#531).
+        return Lock(None, None, None, [], [], [], withheld, locked)
+    # Priced over `pool`, so both totals count the same players. A withheld starter drops out
+    # of the set lineup's value rather than out of one side of a subtraction.
+    set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
+    # In `mu` whichever source chose the lineup: under ranks this is what the model says the
+    # consensus lineup is worth, so `gain` may be negative, and it is the lineup that is the call.
+    # Read back from `pool` whenever the search's `mu` is not the model's (ranks, or the pin).
+    best_total = float(best["mu"].sum() if ranks is None and pinned.is_empty() else
+                       pool.filter(pl.col("player").is_in(best["player"].to_list()))["mu"].sum())
+    chosen = set(best["player"])
+    was = set(proj.filter(pl.col("starting"))["player"]) | set(pinned["player"])
+    return Lock(set_total, best_total, best_total - set_total,
+                sorted(chosen), sorted(chosen - was), sorted(was - chosen - set(locked)),
+                withheld, locked)
+
+
+class _Open(NamedTuple):
+    """What `lock` and `partial` search over, built once so the two cannot drift apart."""
+    proj: pl.DataFrame          # projected players whose game has not kicked off
+    pool: pl.DataFrame          # those who may start, plus the pinned started starters
+    pinned: pl.DataFrame        # started starters, kept where they are (#516)
+    search: pl.DataFrame        # `pool` as the lineup search scores it (ranks, the pin)
+    withheld: list[str]
+    locked: tuple[str, ...]
+
+
+def _open_calls(df: pl.DataFrame, include_unavailable: bool,
+                ranks: Mapping[str, float] | None) -> _Open:
+    """The pool a lineup is searched over, withholding and game locks applied. `lock`'s
+    docstring says why each step is where it is; this is only where they are written."""
     proj = df.filter(pl.col("projected"))
     started: pl.Expr = pl.lit(False)
     # GUARD lineup-respects-kickoff: a player whose game has kicked off is never moved
@@ -402,30 +444,71 @@ def lock(df: pl.DataFrame, *, include_unavailable: bool = False,
         pool = pl.concat([pool, pinned], how="diagonal_relaxed")
     else:
         search = pool if ranks is None else _by_rank(pool, ranks)
-    if pool.is_empty():
-        return Lock(None, None, None, [], [], [], withheld, locked)
+    return _Open(proj, pool, pinned, search, withheld, locked)
 
+
+class Partial(NamedTuple):
+    """The best lineup that *can* be set when not every slot can (#531).
+
+    `empty` names each slot nothing eligible can fill, one entry per slot (`"TE"`, `"FLEX"`), in
+    the league's slot order. `lineup` is who fills the rest. Both empty when nothing could be
+    searched at all.
+    """
+    lineup: list[str]
+    empty: list[str]
+
+
+def partial(df: pl.DataFrame, *, ranks: Mapping[str, float] | None = None) -> Partial:
+    """Fill every slot that can be filled, from the same pool `lock` searches.
+
+    **One-directional, like the withholding it follows.** The pool is `lock`'s: injured reserve,
+    byes and short-of-a-slate players are out of it, and a started game's players are where they
+    were (#516). Nothing withheld is put back to fill a slot; the slot is named empty instead,
+    which is the thing a reader can act on.
+
+    The slots are the league's with each position's count cut to what the pool holds; the flex
+    takes what is left over. Filling a position's own slot before the flex never fills fewer
+    slots, since every player fills at most one, so the search below is over the lineups that
+    fill the most slots and picks the best of those by `mu` -- or by rank, under `ranks`, with
+    unranked players out exactly as in `lock`.
+    """
+    from hub.league import FLEX_FROM, FLEX_SLOTS, STARTERS
+    from hub.season.lineup import NoLegalLineup, TooManyLineups, best_by_points
+
+    got = _open_calls(df, False, ranks)
+    have: dict[str, int] = {str(p): int(n) for p, n in
+                            got.search.group_by("pos").len().iter_rows()}
+    slots = {p: min(n, int(have.get(p, 0))) for p, n in STARTERS.items()}
+    empty = [p for p, n in STARTERS.items() for _ in range(n - slots[p])]
+    spare = sum(int(have.get(p, 0)) - slots.get(p, 0) for p in FLEX_FROM)
+    flex = min(FLEX_SLOTS, spare)
+    empty += ["FLEX"] * (FLEX_SLOTS - flex)
+    if got.search.is_empty():
+        return Partial([], empty)
     try:
-        best = best_by_points(search)["starters"]
-    except (NoLegalLineup, TooManyLineups):
-        # Withholding can make a thin roster unfillable, and a lock that raises would take
-        # the whole slate down with it -- CLAUDE.md's degradation rule. Report the players
-        # withheld, which is the actionable half, and no comparison -- which means no lineup
-        # either. Both are empty here so that a reader of either one sees the same refusal.
-        return Lock(None, None, None, [], [], [], withheld, locked)
-    # Priced over `pool`, so both totals count the same players. A withheld starter drops out
-    # of the set lineup's value rather than out of one side of a subtraction.
-    set_total = float(pool.filter(pl.col("starting"))["mu"].sum())
-    # In `mu` whichever source chose the lineup: under ranks this is what the model says the
-    # consensus lineup is worth, so `gain` may be negative, and it is the lineup that is the call.
-    # Read back from `pool` whenever the search's `mu` is not the model's (ranks, or the pin).
-    best_total = float(best["mu"].sum() if ranks is None and pinned.is_empty() else
-                       pool.filter(pl.col("player").is_in(best["player"].to_list()))["mu"].sum())
-    chosen = set(best["player"])
-    was = set(proj.filter(pl.col("starting"))["player"]) | set(pinned["player"])
-    return Lock(set_total, best_total, best_total - set_total,
-                sorted(chosen), sorted(chosen - was), sorted(was - chosen - set(locked)),
-                withheld, locked)
+        best = best_by_points(got.search, slots=slots, flex_from=FLEX_FROM,
+                              flex_slots=flex)["starters"]
+    except (NoLegalLineup, TooManyLineups):      # never raises, as `lock` does not
+        return Partial([], empty)
+    return Partial(sorted(best["player"]), empty)
+
+
+def gap(df: pl.DataFrame, lk: Lock) -> bool:
+    """Whether a declined call is a *gap* (#531): no lineup could be filled, something was
+    withheld, and no more than half the candidates were -- the case `degenerate` names first and
+    the week-7 roster was in (5 of 15 withheld, no eligible TE).
+
+    A majority withheld stays stale, as `degenerate` has it: fourteen of seventeen held back was
+    a misread of availability (#419), and a lineup of the three left, with free agents to add at
+    every other slot, would publish the misread as advice.
+    """
+    if lk.gain is not None or not lk.withheld:
+        return False
+    cols = df.columns
+    cands = df.filter(pl.col("projected") & (pl.col("can_start") if "can_start" in cols
+                                             else pl.lit(True)))
+    held = len(set(lk.withheld) & set(cands["player"]))
+    return 0 < held <= MAJORITY * cands.height
 
 
 # Added to a started starter's search score (#516) so that the best lineup always holds him. Any
@@ -604,6 +687,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
             print(f"    {pl_name}")
     if bad := degenerate(df, lk):
         print(f"\n  WARNING: not a lineup call -- {bad}", file=sys.stderr)
+        if gap(df, lk):
+            # The publisher's incomplete lineup (#531), by `mu` here: what can be filled.
+            part = partial(df)
+            print(f"  incomplete: empty {', '.join(part.empty)}; best partial lineup "
+                  f"{', '.join(part.lineup) or 'nobody'}")
     if lk.withheld:
         # Per player, because the two reasons are different and the note below is only true
         # of one of them. Printing it over an IR-ed player would explain the wrong thing.

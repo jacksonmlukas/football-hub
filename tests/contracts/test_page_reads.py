@@ -73,6 +73,9 @@ CONDITIONAL: dict[str, dict[str, str]] = {
         # #516: only while someone's game has kicked off, so that a week nobody has played yet
         # publishes the bytes it did before; the page renders no lock note without it.
         "locked": "written only once a rostered player's game has kicked off",
+        # #531: only when withholding leaves a slot nothing eligible can fill, so that a
+        # fillable week publishes the bytes it did before; the page shows the gap from it.
+        "incomplete": "written only when withholding leaves a lineup slot unfillable",
     },
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "ledger",
   "source": "docs/adr + docs front matter + docs/signal-screens.md",
-  "generated_at": "2026-10-17T16:58:15+00:00",
+  "generated_at": "2026-10-21T15:49:39+00:00",
   "shape": "rows",
   "n": 13,
   "rows": [
@@ -26,10 +26,10 @@
     {
       "name": "Weekly projection",
       "verdict": "Removed",
-      "figure": "t interval [-2.032, -0.262] pts/team-week, 3 of 4 seasons resolved",
+      "figure": "t interval [-2.169, -0.125] pts/team-week, 3 of 4 seasons resolved",
       "adr": "docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md",
       "issue": 430,
-      "as_of": "2026-10-07",
+      "as_of": "2026-10-20",
       "source": "docs/adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md",
       "detail": "kept as an unwired exhibit"
     },
@@ -71,61 +71,73 @@
     },
     {
       "name": "Age (next season)",
-      "verdict": "Null",
-      "figure": null,
+      "verdict": "Inconclusive",
+      "figure": "partial r = +0.0076, 95% interval [-0.035, +0.050]",
       "adr": null,
       "issue": null,
-      "as_of": "2026-09-21",
+      "as_of": "2026-10-17",
       "source": "docs/signal-screens.md",
-      "detail": null
+      "detail": null,
+      "interval": [
+        -0.035,
+        0.05
+      ]
     },
     {
       "name": "Depth-chart climb (next season)",
-      "verdict": "Null",
-      "figure": "partial r = +0.008",
+      "verdict": "Inconclusive",
+      "figure": "partial r = +0.0085, 95% interval [-0.049, +0.066]",
       "adr": null,
       "issue": null,
-      "as_of": "2026-09-21",
+      "as_of": "2026-10-17",
       "source": "docs/signal-screens.md",
-      "detail": "docs/depth-chart-signal.md"
+      "detail": "docs/depth-chart-signal.md",
+      "interval": [
+        -0.049,
+        0.066
+      ]
     },
     {
       "name": "Depth-chart climb (rest of season)",
-      "verdict": "Null",
-      "figure": null,
+      "verdict": "Inconclusive",
+      "figure": "partial r = +0.0120, 95% interval [-0.153, +0.177]",
       "adr": null,
       "issue": null,
-      "as_of": "2026-09-21",
+      "as_of": "2026-10-17",
       "source": "docs/signal-screens.md",
-      "detail": "docs/depth-chart-signal.md"
+      "detail": "docs/depth-chart-signal.md",
+      "interval": [
+        -0.153,
+        0.177
+      ]
     },
     {
       "name": "Expected-vs-actual points (next season)",
-      "verdict": "Null",
-      "figure": "r = 0.21",
+      "verdict": "Inconclusive",
+      "figure": null,
       "adr": null,
       "issue": null,
-      "as_of": "2026-09-21",
+      "as_of": "2026-10-17",
       "source": "docs/signal-screens.md",
       "detail": "docs/lambda-sweep.md"
     },
     {
       "name": "Recency-weighted expected-vs-actual (next season)",
-      "verdict": "Null",
+      "verdict": "Inconclusive",
       "figure": null,
       "adr": null,
       "issue": null,
-      "as_of": "2026-09-21",
+      "as_of": "2026-10-17",
       "source": "docs/signal-screens.md",
       "detail": "docs/lambda-sweep.md"
     },
     {
       "name": "Weekly injury cost",
       "verdict": "Not established",
-      "figure": "+0.0623 MAE, t interval [-0.189, +0.314], 1 of 3 seasons resolved",
+      "figure": "+0.0623 MAE, t interval [-0.245, +0.370], 1 of 3 seasons resolved",
       "adr": null,
       "issue": 360,
-      "as_of": "2026-10-07",
+      "as_of": "2026-10-20",
       "source": "docs/weekly-injury.md"
     }
   ],

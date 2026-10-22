@@ -1,0 +1,80 @@
+name: llm-forecast-close
+# The LLM-forecaster study's closing line (docs/prereg/llm-forecasters.md, "Closing line"; #450).
+#
+# **Switched off until `prereg-llm-v0` is tagged**, by the same repository variable as
+# `forecast.yml`: the job runs only when LLM_FORECASTS_ENABLED is 'true'. A separate workflow
+# and a separate concurrency group, so nothing here can hold, cancel or fail the forecast job.
+#
+# **One call per distinct kickoff time, never per game.** `hub.forecasters.close_line capture`
+# spends nothing unless an NFL kickoff is within 30 minutes with no study attempt inside that
+# window; then it makes one `market.snapshot("closing")` call (h2h, one region: one credit),
+# which prices every game. At most ten a week (`hub.closing.CLOSE_CALLS_PER_WEEK`), counted in
+# `hub.forecasters.market.WORST_MONTH_CREDITS`; the study floor refuses on the freshest balance
+# before an attempt is recorded.
+#
+# **GitHub's delays (#468).** Scheduled starts land 4-8.5h late, so the crons below cannot be
+# what lands in a 30-minute window. The game-window loop (`live.yml`) is: every five-minute
+# cycle runs `study-close-dispatch.sh`, which dispatches this workflow when a window is open
+# and uncovered. The crons -- the issue's "15-minute triggers during game windows", on
+# `live.yml`'s window hours (a contract test holds the two together) -- are the backup, and a
+# late one is harmless: the gate reads the clock at run time, nothing is due once kickoff has
+# passed, and a missed window is never retried after kickoff.
+#
+# **Where output goes.** The `forecasts` branch only, through `commit-state.sh` pointed at the
+# `forecasts` worktree: `closing/` (the attempt record and each snapshot's closes) and the
+# study's own balance file `state/odds.json` there (#445 (a)). Nothing is committed to main.
+# The attempt marker is committed and pushed BEFORE the request (`--commit-attempt`); if that
+# push fails no request is made, and if the capture's push is lost afterwards the window is
+# still on record as spent.
+
+on:
+  schedule:
+    - cron: "*/15 16-23 * * 0"   # Sunday daytime ET (live.yml's window hours)
+    - cron: "*/15 0-5  * * 1"    # Sunday night ET
+    - cron: "*/15 0-5  * * 2"    # Monday night ET
+    - cron: "*/15 16-23 * * 6"   # Saturday daytime ET (late-season NFL Saturdays)
+    - cron: "*/15 0-5  * * 0"    # Saturday night ET
+    - cron: "*/15 0-5  * * 5"    # Thursday night ET
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialised, never cancelled: a second trigger waits, then finds the window covered and spends
+# nothing. Cancelling one mid-call would spend the credit and lose the capture.
+concurrency:
+  group: llm-forecast-close
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: vars.LLM_FORECASTS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check out the forecasts branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin forecasts:forecasts; then
+            git worktree add forecasts-branch forecasts
+          else
+            git worktree add --orphan -b forecasts forecasts-branch
+          fi
+
+      - name: Capture the closing line if a kickoff is within 30 minutes
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: uv run python -m hub.forecasters.close_line capture --out forecasts-branch --commit-attempt
+
+      # `always()` so a request that spent and then failed still commits the balance it recorded.
+      - name: Commit to the forecasts branch
+        if: always()
+        env:
+          STATE_REPO: forecasts-branch
+          STATE_PATHS: closing state
+          STATE_REF: forecasts
+        run: .github/scripts/commit-state.sh 'forecasts - closing line'

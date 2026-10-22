@@ -1,19 +1,19 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-10-17T16:58:15+00:00",
+  "generated_at": "2026-10-21T15:49:39+00:00",
   "shape": "rows",
   "n": 18,
   "rows": [
     {
       "week": 7,
       "team": "NYJ",
-      "win_prob": 0.6380271805560663
+      "win_prob": 0.6526311696267606
     },
     {
       "week": 8,
-      "team": "DAL",
-      "win_prob": 0.7950617937505842
+      "team": "CIN",
+      "win_prob": 0.7837344437707137
     },
     {
       "week": 9,
@@ -77,8 +77,8 @@
     },
     {
       "week": 17,
-      "team": "BUF",
-      "win_prob": 0.7219522298168483
+      "team": "DAL",
+      "win_prob": 0.6380271805560663
     },
     {
       "week": 17,
@@ -87,8 +87,8 @@
     },
     {
       "week": 18,
-      "team": "CIN",
-      "win_prob": 0.7219522298168483
+      "team": "BUF",
+      "win_prob": 0.7837344437707137
     },
     {
       "week": 18,
@@ -104,7 +104,7 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.0021418110558616477,
+  "survival": 0.0020719011279599136,
   "unpriced_weeks": [],
   "weeks_remaining": [
     7,
@@ -137,7 +137,6 @@
     "SF"
   ],
   "snapshot_only_weeks": [
-    8,
     9,
     10,
     11,

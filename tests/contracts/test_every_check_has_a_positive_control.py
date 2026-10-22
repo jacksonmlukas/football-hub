@@ -107,7 +107,7 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_capture_is_append_only_atomic_and_idempotent",
     )),
     # The lineup capture's refusal: at Sunday's deadline refused, a second before written; a
-    # scrape outside the window and a mislabelled strict document refused too.
+    # scrape outside the window and a mislabelled week document refused too.
     "hub.fetch.consensus.write_lineup_capture": ("tests/unit/test_fetch_consensus.py", (
         "test_a_lineup_capture_written_after_sunday_starts_is_refused_and_nothing_lands",
         "test_the_lineup_window_takes_fridays_page_and_refuses_either_side_of_it",
@@ -129,6 +129,11 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
         "test_a_capture_after_kickoff_is_excluded_at_the_read_and_named",
         "test_a_stale_page_is_refused_and_the_latest_valid_capture_is_the_one_used",
         "test_a_capture_first_committed_after_the_deadline_is_not_admitted",
+        # #515 (ADR-0027): in time per player -- a Friday capture admits Sunday's players and
+        # not Thursday's, and weeks before the adoption keep the per-week rule.
+        "test_a_friday_capture_is_in_time_for_sunday_players_and_not_for_thursdays",
+        "test_a_capture_committed_after_sundays_kickoff_is_in_time_only_for_mondays_players",
+        "test_weeks_before_the_adoption_are_replayed_by_the_rule_they_were_registered_under",
     )),
     "hub.models.margin.verdict": ("tests/unit/test_margin.py", (
         "test_a_better_challenger_is_adopted",
@@ -206,6 +211,18 @@ CONTROLLED: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub.draft.adherence.verdict": ("tests/unit/test_adherence.py", (
         "test_twelve_of_sixteen_meets_it",
         "test_eleven_of_sixteen_misses_it",
+    )),
+    # #452: the LLM-forecaster study's two pre-registered decisions. H1 is planted both ways
+    # (an informed model detected through Holm, noisy ones not; a copier leaves the family);
+    # H2's intersection-union claim on four passes, one failure, and an empty family.
+    "hub.forecasters.score.h1_verdict": ("tests/unit/test_forecasters_score.py", (
+        "test_h1_detects_the_informed_model_after_holm_and_not_the_noisy_ones",
+        "test_a_model_that_copies_the_betting_market_leaves_h1_and_the_holm_family",
+        "test_noise_deviations_cover_zero_at_roughly_the_nominal_rate",
+    )),
+    "hub.forecasters.score.h2_verdict": ("tests/unit/test_forecasters_score.py", (
+        "test_h2_claims_only_when_every_model_rejects",
+        "test_non_inferiority_rejects_just_inside_the_bound_and_not_just_outside",
     )),
 }
 

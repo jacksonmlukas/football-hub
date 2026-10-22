@@ -22,14 +22,19 @@ the lineup and drops a started bench player from the pool *before* the ranks are
 player missing from a lineup capture taken after Thursday's games is not treated as unranked:
 his call is decided, not open. The ranks only ever choose among the decisions still open.
 
-**It degrades, it never raises.** The week's strict capture first. If it is missing, the week's
-*lineup capture* (`hub.fetch.consensus --lineup`: the newest page dated after the previous week's
-last game and before the week's first Sunday, taken after Thursday's games because the archive
-publishes on Fridays) -- labelled as such on the artifact and the page, never as a pre-kickoff
-capture. If that is missing too, the newest earlier pre-deadline strict capture of the season
-(last-good ECR), saying which week that was; if there is none, or ECR ranks too few of the pool to
-fill a legal lineup, the model's lineup is served and says why. The reason travels on the
-artifact, the journal and the page.
+**It degrades, it never raises.** The order is by how many of the week's players a capture is in
+time for (ADR-0027: in time for a player means taken before his own kickoff). First the week
+capture, taken before the week's first game day and so in time for every player. If it is
+missing, the week's *Friday capture* (`hub.fetch.consensus --lineup`, filed as a lineup capture:
+the newest page dated after the previous week's last game and before the week's first Sunday,
+taken after Thursday's games because the archive publishes on Fridays). Since 2026-10-20 that is
+the week's in-time capture for Sunday's and Monday's players, and in practice the one that sets
+the lineup; it is labelled with its date and as taken after Thursday's games on the artifact and
+the page, and it costs nothing for Thursday's players, whose calls `lock` has already closed. If
+that is missing too, the newest earlier week capture of the season (last-good ECR), saying which
+week that was; if there is none, or ECR ranks too few of the pool to fill a legal lineup, the
+model's lineup is served and says why. The reason travels on the artifact, the journal and the
+page.
 
 **Wording (ADR-0014).** The ECR rule is labelled `provisional` everywhere it is shown and is never
 described as validated or as an edge.
@@ -43,7 +48,7 @@ from typing import Any, NamedTuple
 import polars as pl
 
 from hub.config import SEASON_AHEAD
-from hub.season.roster import Lock, lock
+from hub.season.roster import Lock, Partial, lock, partial
 
 # The decided boundary (#492): the first week of each season whose lineup ECR sets. A season
 # absent here is set by `mu` throughout -- the rule was adopted for 2026 and says nothing else.
@@ -56,10 +61,11 @@ MODEL = "model"
 ECR_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the newest capture taken "
              "before the week's first game day; best legal lineup by rank among projected, "
              "startable, available players not on bye")
-ECR_LINEUP_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the week's lineup "
+ECR_LINEUP_BASIS = ("weekly expert consensus rank (FantasyPros ECR), from the week's Friday "
                     "capture: the newest page dated after the previous week's last game and "
-                    "before the week's first Sunday, taken after Thursday's games and so not a "
-                    "pre-kickoff capture; best legal lineup by rank among projected, startable, "
+                    "before the week's first Sunday, taken after Thursday's games and so in time "
+                    "only for players whose game had not started (ADR-0027), Thursday's being "
+                    "already locked; best legal lineup by rank among projected, startable, "
                     "available players not on bye")
 MU_BASIS = ("the model's weekly mean (mu): the board's blend of ESPN's season average and "
             "last season's xFP per game; best legal lineup by summed mu")
@@ -77,7 +83,7 @@ class Decision(NamedTuple):
     ecr_week: int | None             # the capture's week when ECR set it (last-good if != week)
     reason: str | None               # why `source` is not the week's own ECR, when it is not
     # Set only when the week's *lineup* capture set it: `{purpose, scrape_date, captured_at,
-    # note}`. Absent from `as_dict` otherwise, so every artifact a strict capture, last-good or
+    # note}`. Absent from `as_dict` otherwise, so every artifact a week capture, last-good or
     # `mu` set is byte-for-byte what it was before the lineup capture existed.
     ecr_capture: dict[str, str] | None = None
 
@@ -112,10 +118,10 @@ def rule_for(season: int, week: int | None) -> str:
 
 def last_good_ecr(season: int, week: int,
                   base: Path | None = None) -> tuple[dict[str, float], int | None]:
-    """`{player_key: ecr}` from the newest pre-deadline capture of an *earlier* week, or `({},
+    """`{player_key: ecr}` from the newest week capture of an *earlier* week, or `({},
     None)`. Each such capture was taken before its own week began, so before this one."""
     from hub.fetch import consensus
-    from hub.names import player_key
+    from hub.season.lineup_journal import ranks_of
     try:
         caps = consensus.read_captures(season, base)
     except Exception:                                # graceful degradation, per CLAUDE.md
@@ -125,11 +131,7 @@ def last_good_ecr(season: int, week: int,
     if not ok:
         return {}, None
     cap = max(ok, key=lambda c: (c.week, c.captured_at))
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, cap.week
+    return ranks_of(cap.rows), cap.week
 
 
 def lineup_ecr(season: int, week: int, base: Path | None = None
@@ -139,7 +141,7 @@ def lineup_ecr(season: int, week: int, base: Path | None = None
     `consensus.lineup_problem` are read (taken before the week's first Sunday, scrape in the
     window), so a late one is never served."""
     from hub.fetch import consensus
-    from hub.names import player_key
+    from hub.season.lineup_journal import ranks_of
     try:
         caps = [c for c in consensus.read_lineup_captures(season, base) if c.week == week]
     except Exception:                                # graceful degradation, per CLAUDE.md
@@ -147,12 +149,9 @@ def lineup_ecr(season: int, week: int, base: Path | None = None
     if not caps:
         return {}, None
     cap = caps[-1]                                   # earliest first
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, {"purpose": consensus.LINEUP, "scrape_date": cap.scrape_date.isoformat(),
-                 "captured_at": cap.captured_at.isoformat(), "note": cap.note()}
+    return ranks_of(cap.rows), {"purpose": consensus.LINEUP,
+                                "scrape_date": cap.scrape_date.isoformat(),
+                                "captured_at": cap.captured_at.isoformat(), "note": cap.note()}
 
 
 def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None,
@@ -189,9 +188,10 @@ def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None
         reasons.append(f"week {wk}'s consensus ranks too few of the pool to fill a legal lineup")
     else:
         reasons.append(ecr_reason or f"no consensus ranks for week {wk}")
-    # The week's lineup capture, after its strict one and before last-good. It is this week's
-    # page, so it is no departure and carries no reason unless a strict capture existed and
-    # could not fill a lineup; its label (`ecr_capture.note`) says it was taken after Thursday.
+    # The week's Friday capture, after its week capture and before last-good. It is this week's
+    # page and in time for every call still open (ADR-0027), so it is no departure and carries
+    # no reason unless a week capture existed and could not fill a lineup; its label
+    # (`ecr_capture.note`) says it was taken after Thursday.
     late, label = lineup_ecr(season, wk, captures)
     if late:
         got = lock(df, ranks=late)
@@ -209,3 +209,57 @@ def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None
     else:
         reasons.append("no earlier capture to serve as last-good")
     return model("; ".join(reasons) + "; the model's lineup (mu) is served instead")
+
+
+class PartialCall(NamedTuple):
+    """The best partial lineup for a week whose roster cannot fill every slot (#531), and what
+    set it. The rule is `decide`'s: consensus rank from the switch week, `mu` before it."""
+    partial: Partial
+    source: str                      # "ecr" or "mu": what chose `partial.lineup`
+    ecr_week: int | None             # the capture's week when ECR chose it
+    reason: str | None               # why `source` is not the week's own rule, when it is not
+    ranks: dict[str, float]          # the ranks that chose it, `{}` under `mu`
+    ecr_capture: dict[str, str] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"source": self.source,
+                               "label": PROVISIONAL if self.source == ECR else MODEL,
+                               "ecr_week": self.ecr_week, "reason": self.reason}
+        if self.ecr_capture is not None:
+            out["ecr_capture"] = dict(self.ecr_capture)
+        return out
+
+
+def partial_call(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None,
+                 captures: Path | None = None, ecr: Mapping[str, float] | None = None,
+                 ecr_reason: str | None = None) -> PartialCall:
+    """`decide`'s source order, for a lineup that cannot be filled. Never raises.
+
+    `decide` falls back to `mu` whenever ranks fill no legal lineup, which on a roster with a
+    slot nothing can fill is every rank source -- so asking it would set the partial lineup by
+    `mu` in a week the rule sets by consensus. Here a rank source is taken when it leaves no more
+    slots empty than the roster itself does (`mu`'s partial): the gap is the roster's, not the
+    ranking's. Otherwise the next source, and `mu` last, saying why.
+    """
+    from hub.season import lineup_journal
+    base = partial(df)
+    if week is None or rule_for(season, week) == MU:
+        return PartialCall(base, MU, None, None, {})
+    if ecr is None:
+        ecr, ecr_reason = lineup_journal.ecr_ranks(season, week, captures)
+    tries: list[tuple[dict[str, float], int | None, str | None, dict[str, str] | None]] = []
+    if ecr:
+        tries.append((dict(ecr), week, None, None))
+    late, label = lineup_ecr(season, week, captures)
+    if late:
+        tries.append((late, week, None, label))
+    old, old_week = last_good_ecr(season, week, captures)
+    if old:
+        tries.append((old, old_week, f"set on week {old_week}'s capture (last-good)", None))
+    for ranks, wk, why, cap in tries:
+        got = partial(df, ranks=ranks)
+        if got.lineup and got.empty == base.empty:
+            return PartialCall(got, ECR, wk, why, ranks, cap)
+    why = (f"consensus ranks for week {week} leave more slots empty than the roster does"
+           if tries else (ecr_reason or f"no consensus ranks for week {week}"))
+    return PartialCall(base, MU, None, f"{why}; the model's partial lineup (mu) is served", {})

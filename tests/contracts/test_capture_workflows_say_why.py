@@ -316,16 +316,31 @@ def test_the_plant_folding_exit_four_into_the_notice_turns_the_red_run_green(tmp
 
 
 def test_each_cron_takes_the_capture_it_is_for(tmp_path):
+    """#515 retired the Tuesday and Wednesday runs: every scheduled run is the Friday capture,
+    and the week capture is a dispatch's (`purpose: week`). A cron the step does not route is a
+    schedule edited without it, and is red rather than a guess -- planted below."""
     wf = yaml.safe_load((WORKFLOWS / "consensus.yml").read_text())
     crons = [c["cron"] for c in wf[True]["schedule"]]          # `on:` loads as the key True
     lineup = _lineup_crons()
-    assert set(lineup) <= set(crons) and len(lineup) == 4
+    assert set(lineup) == set(crons) and len(lineup) == 4
     for cron in crons:
         got = _capture_run(tmp_path, 0, schedule=cron)
-        want = "--lineup" if cron in lineup else "--capture"
-        assert f"hub.fetch.consensus {want}" in got.stdout, (cron, got.stdout)
-    assert "--capture" in _capture_run(tmp_path, 0).stdout                  # a bare dispatch
+        assert "hub.fetch.consensus --lineup" in got.stdout, (cron, got.stdout)
+    assert "--lineup" in _capture_run(tmp_path, 0).stdout                   # a bare dispatch
     assert "--lineup" in _capture_run(tmp_path, 0, purpose="lineup").stdout
+    assert "--capture" in _capture_run(tmp_path, 0, purpose="week").stdout
+    stray = _capture_run(tmp_path, 0, schedule="0 23 * * 3")              # the retired Wednesday
+    assert stray.returncode == 1 and "::error::" in stray.stdout and "uv " not in stray.stdout
+
+
+def test_no_run_is_scheduled_before_thursday_since_the_archive_publishes_on_fridays():
+    """The retired runs stay retired unless someone says why (#515): in six weeks of 2026 they
+    never captured, and under ADR-0027 a pre-Thursday page adds only Thursday's players."""
+    wf = yaml.safe_load((WORKFLOWS / "consensus.yml").read_text())
+    for c in wf[True]["schedule"]:
+        assert _week_minute(c["cron"]) >= 5 * 1440, c["cron"]
+    text = (WORKFLOWS / "consensus.yml").read_text()
+    assert "Tuesday and Wednesday runs are retired" in text and "#515" in text
 
 
 def _week_minute(cron: str) -> int:

@@ -8,12 +8,15 @@ to, scored as the season is played, with the incumbent read from the first-party
 `hub.fetch.consensus` writes under `state/consensus/` -- not from the archive, which cannot
 show what could have been read before kickoff.
 
-**What it admits.** A week counts if and only if a capture of that week's page exists whose
-`captured_at` precedes the week's first game day, whose scrape is that week's page, and whose
-file was first committed before that day as well (`first_commit_at`: the commit is the
-timestamp, `hub.prereg`'s argument). Every other week is *named* with its reason, never silently
-dropped, and the weeks played before any capture existed are not in the measurement at all
-(`docs/weekly-forward.md`, *Weeks 1-5*).
+**What it admits (per player since 2026-10-20, ADR-0027).** A player-week counts if and only
+if a capture of that week's page was taken -- by `captured_at` and by its file's first commit
+(`first_commit_at`: the commit is the timestamp, `hub.prereg`'s argument), whichever is later --
+before *that player's* kickoff. So a Friday capture admits a week for its Sunday and Monday
+players, and Thursday's are left out of that week's comparison and counted. The per-week rule it
+replaced (before the week's first game day) admitted no week of 2026, because the archive
+publishes on Fridays (#515). A week no capture is in time for anyone in is *named* with its
+reason, never silently dropped, and the weeks played before any capture existed are not in the
+measurement at all (`docs/weekly-forward.md`, *Weeks 1-5*).
 
 **When it speaks.** Once, at the horizon: week 14's games are played. Before that it prints
 NOT-YET, and -- the point of the structure -- it has not loaded a single 2026 outcome to say so:
@@ -31,6 +34,7 @@ for the reason `docs/weekly-forward.md` gives, with the variance decomposition.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -134,6 +138,14 @@ MIN_WEEKS = not_an_input(
     6, "the fewest admitted weeks the forward reading is pre-registered to issue a verdict on: "
        "a harness threshold chosen before any outcome, which no prediction reads")
 
+# The first week the per-player rule (ADR-0027) admits by: week 7 of 2026, whose first game
+# (Thursday 10-22) is the first after the rule was adopted on Tuesday 10-20. A rule chosen after
+# weeks 5 and 6 were played does not reach back into them: they are judged by the per-week rule
+# they were pre-registered under, so a replay of them admits exactly what it admitted before.
+PER_PLAYER_FROM_WEEK = not_an_input(
+    7, "the first week admitted per player rather than per week: the first whose games all "
+       "follow the 2026-10-20 adoption of ADR-0027, a harness boundary no prediction reads")
+
 # What one independent observation is in the interval half. 2026 is one season, so the season
 # has no degrees of freedom; the week is the unit that absorbs what the rosters of a week share.
 CLUSTER_WEEK: tuple[str, ...] = ("week",)
@@ -162,10 +174,15 @@ CAVEATS = (
 
 
 class Admission(NamedTuple):
-    """Which weeks count, and why each of the others does not."""
-    admitted: dict[int, Capture]
+    """Which weeks count, for which players, and why each of the others does not."""
+    # week -> the captures it is read from, newest first, each cut to the players it is the
+    # newest in-time capture for (ADR-0027); together, everyone the week is compared on
+    admitted: dict[int, tuple[Capture, ...]]
     refused: dict[int, str]           # week -> why every capture of it was turned away
     uncaptured: tuple[int, ...]       # weeks 1-14 with no capture file at all
+    # week -> players ranked by an admitted capture and left out of the week's comparison,
+    # because every capture of them was taken after their game had started (Thursday's)
+    excluded: dict[int, int]
 
 
 class Reading(NamedTuple):
@@ -200,19 +217,30 @@ def first_commit_at(path: Path) -> datetime | None:
 @decision
 def admit(captures: Sequence[Capture], days: dict[int, date],
           floors: dict[int, date], *,
-          first_commit: Callable[[Path], datetime | None]) -> Admission:
-    """The weeks the measurement may read, by the rule the design fixed before any outcome.
+          first_commit: Callable[[Path], datetime | None],
+          kickoffs: Mapping[tuple[int, str], datetime] | None = None) -> Admission:
+    """The player-weeks the measurement may read, by the rule ADR-0027 fixed (2026-10-20).
 
-    A capture is turned away when it was written at or after its week's first game day
-    (`consensus.is_late`, judged against the schedule *as it is now*, so a game moved earlier
-    makes a capture later, not earlier), when its scrape is not that week's page, or when its
-    file was first committed after the deadline whatever the file says of itself. Of the
-    captures that stand the latest is the page that could last have been read, and is the one
-    used. A week with captures and no valid one is **refused with its reason**; a week with none
-    is `uncaptured`; neither is scored.
+    A capture's moment is the later of its `captured_at` and its file's first commit, whatever
+    the file says of itself. It is in time for a player when that moment precedes *his* kickoff
+    (`consensus.in_time_rows`, on `kickoffs`: `consensus.kickoffs` of the schedule *as it is
+    now*, so a game moved earlier makes a capture later, not earlier). A capture is turned away
+    whole when it is in time for no one -- at or after the week's last kickoff, or, with no
+    kickoff times to place players by, at or after the week's first game day -- when its scrape
+    is not that week's page, or when its first commit cannot be read. Of the captures that stand,
+    each player is read from the newest one in time for him; a player no capture is in time for
+    (Thursday's, under a Friday capture) is left out of the week and counted in `excluded`. A
+    week with captures and nobody admitted is **refused with its reason**; a week with none is
+    `uncaptured`; neither is scored.
+
+    Before `PER_PLAYER_FROM_WEEK` no kickoff is consulted, which is exactly the per-week rule
+    those weeks were pre-registered under (in time for all or for none: before the week's first
+    game day, scrape before it too), so replaying them is unchanged.
     """
-    admitted: dict[int, Capture] = {}
+    every = dict(kickoffs or {})
+    admitted: dict[int, tuple[Capture, ...]] = {}
     refused: dict[int, str] = {}
+    excluded: dict[int, int] = {}
     uncaptured: list[int] = []
     for week in FANTASY_WEEKS:
         if week not in days:
@@ -222,15 +250,28 @@ def admit(captures: Sequence[Capture], days: dict[int, date],
         if not mine:
             uncaptured.append(week)
             continue
-        valid: list[Capture] = []
+        kicks = every
+        # GUARD per-week-rule-before-adoption [unit/test_weekly_forward.py]: no reach-back
+        if week < PER_PLAYER_FROM_WEEK:
+            kicks = {}
+        # /GUARD
+        theirs = [k for (w, _), k in kicks.items() if w == week]
+        if theirs:
+            deadline = max(theirs)
+            last_day = deadline.astimezone(consensus.EASTERN).date()
+            what = "the week's last kickoff: in time for no player"
+        else:
+            deadline = consensus.deadline_for(first)
+            last_day = first - timedelta(days=1)
+            what = "the first game day; no kickoff times to place its players by"
+        valid: list[tuple[datetime, Capture]] = []
         why: list[str] = []
         for c in mine:
-            deadline = consensus.deadline_for(first)
-            if consensus.is_late(c.captured_at, first):
+            if c.captured_at >= deadline:
                 why.append(f"{c.captured_at:%Y-%m-%dT%H:%M}Z is at or after the deadline "
-                           f"{deadline:%Y-%m-%dT%H:%M}Z")
+                           f"{deadline:%Y-%m-%dT%H:%M}Z ({what})")
                 continue
-            if not (floors[week] <= c.scrape_date < first):
+            if not (floors[week] <= c.scrape_date <= last_day):
                 why.append(f"its scrape of {c.scrape_date} is not week {week}'s page")
                 continue
             committed = first_commit(c.path) if c.path is not None else None
@@ -242,14 +283,32 @@ def admit(captures: Sequence[Capture], days: dict[int, date],
                            f"(`fetch-depth: 0`)")
                 continue
             if committed >= deadline:
-                why.append(f"first committed {committed:%Y-%m-%dT%H:%M}Z, after the deadline")
+                why.append(f"first committed {committed:%Y-%m-%dT%H:%M}Z, after the deadline "
+                           f"{deadline:%Y-%m-%dT%H:%M}Z ({what})")
                 continue
-            valid.append(c)
-        if valid:
-            admitted[week] = max(valid, key=lambda c: c.captured_at)
+            valid.append((max(c.captured_at, committed), c))
+        used: list[Capture] = []
+        seen: set[str] = set()
+        ranked: set[str] = set()
+        for moment, c in sorted(valid, key=lambda mc: mc[1].captured_at, reverse=True):
+            ranked |= set(c.rows["player"].to_list())
+            rows, _ = consensus.in_time_rows(c.rows, moment, week, first, kicks)
+            rows = rows.filter(~pl.col("player").is_in(sorted(seen)))
+            if rows.height:
+                used.append(dataclasses.replace(c, rows=rows))
+                seen |= set(rows["player"].to_list())
+            if used and not theirs:
+                break      # the per-week rule: the newest capture that stands, and it alone
+        if used:
+            admitted[week] = tuple(used)
+            if ranked - seen:
+                excluded[week] = len(ranked - seen)
+        elif valid:
+            refused[week] = (f"every capture was taken after its players' kickoffs "
+                             f"({len(ranked)} ranked, none in time)")
         else:
             refused[week] = "; ".join(why)
-    return Admission(admitted, refused, tuple(uncaptured))
+    return Admission(admitted, refused, tuple(uncaptured), excluded)
 
 
 def horizon_reached(as_of: date, last_game_day: date | None) -> bool:
@@ -259,6 +318,9 @@ def horizon_reached(as_of: date, last_game_day: date | None) -> bool:
 
 def _admission_lines(adm: Admission) -> list[str]:
     out = [f"  weeks admitted ({len(adm.admitted)}): {sorted(adm.admitted) or 'none'}"]
+    for week, n in sorted(adm.excluded.items()):
+        out.append(f"  week {week}: {n} ranked player(s) left out, their game had started when "
+                   f"every capture of them was taken (ADR-0027)")
     for week, why in sorted(adm.refused.items()):
         out.append(f"  week {week} REFUSED: {why}")
     if adm.uncaptured:
@@ -268,7 +330,8 @@ def _admission_lines(adm: Admission) -> list[str]:
 
 @decision
 def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capture],
-                 assemble: Callable[[dict[int, Capture]], tuple[pl.DataFrame, dict | None]],
+                 assemble: Callable[[dict[int, tuple[Capture, ...]]],
+                                    tuple[pl.DataFrame, dict | None]],
                  first_commit: Callable[[Path], datetime | None],
                  horizon_data: Callable[[], bool], arm: Mapping[str, str] | None,
                  seed: int = 0) -> Reading:
@@ -300,7 +363,8 @@ def read_forward(*, as_of: date, schedule: pl.DataFrame, captures: Sequence[Capt
             f"REFUSED: the arm under test is not the pinned one ({'; '.join(diff)}). "
             f"A change to code the projection runs is a new arm and needs a new pre-registration "
             f"({DESIGN}); no verdict is read and no outcome was loaded."])
-    adm = admit(captures, days, consensus.scrape_floors(schedule), first_commit=first_commit)
+    adm = admit(captures, days, consensus.scrape_floors(schedule), first_commit=first_commit,
+                kickoffs=consensus.kickoffs(schedule))
     head = _admission_lines(adm)
     if len(adm.admitted) < MIN_WEEKS:
         return Reading("NOT-RUNNABLE", [
@@ -337,8 +401,12 @@ def arm_closure() -> dict[str, str] | None:  # pragma: no cover - reads the work
         return None
 
 
-def consensus_frame(admitted: dict[int, Capture]) -> pl.DataFrame:
-    """The captures as the frame `weekly_consensus` returns: `season`, `week`, `key`, `ecr`."""
+def consensus_frame(admitted: dict[int, tuple[Capture, ...]]) -> pl.DataFrame:
+    """The captures as the frame `weekly_consensus` returns: `season`, `week`, `key`, `ecr`.
+
+    Only the rows `admit` kept, so a player left out of a week (his game had started when every
+    capture of him was taken) is absent here, which `assemble_universe` reads as unranked: outside
+    `weekly_gate.priced_by_both`, so neither arm is scored on him that week (ADR-0027)."""
     from hub.names import player_key
     frames = [c.rows.select(pl.col("player").map_elements(player_key, return_dtype=pl.Utf8)
                             .alias("key"), pl.col("ecr").cast(pl.Float64))
@@ -346,12 +414,12 @@ def consensus_frame(admitted: dict[int, Capture]) -> pl.DataFrame:
                             week=pl.lit(c.week, dtype=pl.Int64),
                             lead_days=pl.lit((c.first_game_day - c.scrape_date).days,
                                              dtype=pl.Int64))
-              for c in admitted.values()]
+              for caps in admitted.values() for c in caps]
     return (pl.concat(frames).group_by(["season", "week", "key"])
               .agg(pl.col("ecr").min(), pl.col("lead_days").first()))
 
 
-def assemble_2026(admitted: dict[int, Capture]
+def assemble_2026(admitted: dict[int, tuple[Capture, ...]]
                   ) -> tuple[pl.DataFrame, dict]:  # pragma: no cover - network
     """Rosters, realised points and both arms' scores for 2026, on the admitted weeks only.
 
@@ -385,7 +453,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - networ
     except Exception as exc:
         return unavailable("hub.season.weekly_forward", "the 2026 schedule", exc)
     reading = read_forward(as_of=as_of, schedule=schedule,
-                           captures=consensus.read_captures(SEASON), assemble=assemble_2026,
+                           captures=consensus.read_every_capture(SEASON),
+                           assemble=assemble_2026,
                            first_commit=first_commit_at, horizon_data=week14_loaded,
                            arm=arm_closure())
     print("\n".join(reading.lines))

@@ -17,6 +17,15 @@
 # The professional league only: the odds market polled is the NFL's.
 set -uo pipefail
 
+# The LLM study's closing line (#450) rides the same cycle, before the league filter: its
+# check reads the NFL schedule whichever board the loop is for. `STUDY_CLOSE_HOOK` is a
+# command line (`study-close-dispatch.sh <dispatch...>`), word-split on purpose; unset, as in
+# every hub-only test, it changes nothing here, and its failure is never this script's.
+if [ -n "${STUDY_CLOSE_HOOK:-}" ]; then
+  # shellcheck disable=SC2086
+  $STUDY_CLOSE_HOOK || echo "  the study's closing-line hook failed; carrying on"
+fi
+
 league=${LIVE_LOOP_LEAGUE:-}
 [ "$league" = "nfl" ] || exit 0
 [ "$#" -gt 0 ] || { echo "close-dispatch.sh: no dispatch command given" >&2; exit 2; }

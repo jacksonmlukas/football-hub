@@ -1640,6 +1640,18 @@ def _with_artifact(name: str, **fields) -> dict:
     return man
 
 
+def _roster_healthy(man: dict | None = None) -> dict:
+    """The manifest with the roster artifact in the state a normal week writes: current, no
+    reason. The committed roster is stale whenever the optimiser declines (week 7 had no
+    eligible TE and `publish` kept the last rows, flagged stale), which is a designed state; a
+    test about the healthy path builds it here rather than reading whatever was committed."""
+    man = man if man is not None else _committed_manifest()
+    for a in man["artifacts"]:
+        if a["name"] == "roster":
+            a.update(present=True, stale=False, reason=None)
+    return man
+
+
 def _status_records(node: str, man_js: dict | None) -> list[dict]:
     return json.loads(_run(node, f"import {{ statusRecords }} from {_mod('panels/footer.js')};\n"
                                  f"console.log(JSON.stringify(statusRecords("
@@ -1692,15 +1704,19 @@ def test_the_footer_names_all_six_manifest_artifacts_and_both_non_fetches_on_one
 
 
 def test_a_healthy_artifact_adds_no_reason_to_the_line(node):
-    """Silent when healthy: the control for the stale case below. The roster is current, so
-    its entry is a name and an age and nothing else."""
-    got = _render(node)["footer"]
+    """Silent when healthy: the control for the stale case below. The roster is built current
+    here (the committed one is stale whenever the optimiser declines), so its entry is a name
+    and an age and nothing else; the same roster stale carries its reason."""
+    got = _render(node, {"manifest": _roster_healthy()})["footer"]
     entry = re.search(r"<span class=\"\">roster [^<]*</span>", got)
     assert entry and "stale" not in entry.group(0)
+    stale = _render(node, {"manifest": _with_artifact(
+        "roster", stale=True, reason="no lineup could be filled")})["footer"]
+    assert "no lineup could be filled" in stale, "the control: a stale roster says why"
 
 
 def test_a_stale_artifact_is_named_in_the_footer_and_bannered_at_its_panel(node):
-    man = _with_artifact("survivor", stale=True, reason="CFBD quota exhausted")
+    man = _roster_healthy(_with_artifact("survivor", stale=True, reason="CFBD quota exhausted"))
     got = _render(node, {"manifest": man})
     assert "survivor" in _footer_names(got["footer"])
     assert "CFBD quota exhausted" in got["footer"]
@@ -1942,6 +1958,48 @@ def test_a_null_gain_says_so_in_the_headline_slot_and_still_names_who_was_withhe
     assert _who("Hurt Back", "RB", "MIA") in out
 
 
+GAP_ROSTER = dict(
+    SWAP_ROSTER, gain=None, set_total=None, optimal_total=None, withheld=["Old TE"],
+    sit=["Old TE"], start=[],
+    lineup_rule={"source": "mu", "rule": "ecr", "label": "model", "week": 7,
+                 "ecr_from_week": 7, "ecr_week": None,
+                 "reason": "week 7's consensus ranks too few of the pool to fill a legal lineup"},
+    incomplete={"empty_slots": ["TE"], "lineup": ["Fast WR", "Strong RB"],
+                "lineup_source": {"source": "ecr", "label": "provisional", "ecr_week": 7,
+                                  "reason": None},
+                "headline": "TE: no eligible player; add one -- best free agents at TE not on "
+                            f"bye: {HOSTILE} (KC)",
+                "free_agents": {"TE": [{"player": HOSTILE, "pos": "TE", "nfl_team": "KC",
+                                        "proj_per_game": 8.04, "percent_owned": 12.5,
+                                        "injury_status": ""}]},
+                "free_agents_note": "the latest free-agent fetch failed; these are from the "
+                                    "last good pool",
+                "reason": "no lineup could be filled: 1 of 7 projected players withheld"})
+
+
+def test_a_gap_is_the_headline_and_never_says_no_lineup(node):
+    """#531: the empty slot and the action are the headline; the bare refusal is not shown."""
+    out = _headline(node, GAP_ROSTER)
+    assert out.startswith('<p class="lineup-call incomplete">Incomplete lineup &mdash; TE: no '
+                          'eligible player; add one')
+    assert "No lineup could be filled" not in out
+    assert "This week&#39;s best partial lineup" not in out  # prose is markup, not escaped text
+    assert "best partial lineup: " in out
+    for name in ("Fast WR", "Strong RB"):
+        row = next(r for r in SWAP_ROSTER["rows"] if r["player"] == name)
+        assert _who(name, row["pos"], row["nfl_team"]) in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">the latest free-agent fetch failed' in out
+    # What set the partial lineup is the gap's own source, not `decide`'s fallback to mu.
+    assert "consensus rank" in out and "model&#39;s projection" not in out
+
+
+def test_a_gaps_free_agents_render_escaped_through_the_table(node):
+    out = _headline(node, GAP_ROSTER)
+    assert "<script>" not in out
+    assert out.count("&lt;script&gt;alert(1)&lt;/script&gt;") == 2, "headline and table cell"
+    assert "<th>espn /g</th>" in out and ">8.0<" in out
+
+
 def test_a_name_the_rows_do_not_carry_shows_the_gap_rather_than_a_bare_name(node):
     out = _headline(node, dict(SWAP_ROSTER, start=["Ghost"], sit=["Slow WR"], rows=[]))
     assert _who("Ghost", "?", "?") in out
@@ -1980,7 +2038,9 @@ def _call_first_with_names(body: str, ros: dict) -> None:
 def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
     """Either valid branch of the committed call, whichever this week's optimiser landed on."""
     ros = json.loads((SITE / "data" / "roster.json").read_text())
-    body = _render(node)["panels"]["p-lineup"]["body"]
+    # The manifest may call the committed roster stale (a declined week keeps the last rows and
+    # flags them); the call is asserted under a healthy manifest, so the banner is not in play.
+    body = _render(node, {"manifest": _roster_healthy()})["panels"]["p-lineup"]["body"]
     by_rank = (ros.get("lineup_rule") or {}).get("source") == "ecr"
     if by_rank and ros["gain"] is not None and (ros["start"] or ros["sit"]):
         assert body.startswith('<p class="lineup-call">Consensus rank calls'), body[:120]
@@ -1996,11 +2056,12 @@ def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
 
 def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_name(node):
     ros = _roster_with_gain()
-    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    man = _roster_healthy()
+    body = _render(node, {"roster": ros, "manifest": man})["panels"]["p-lineup"]["body"]
     assert body.startswith('<div class="lineup-gain">+11.5'), body[:120]
     _call_first_with_names(body, ros)
     assert '<ul class="swaps">' in body
-    flat = _render(node, {"roster": dict(ros, gain=0.0)})["panels"]["p-lineup"]["body"]
+    flat = _render(node, {"roster": dict(ros, gain=0.0), "manifest": man})["panels"]["p-lineup"]["body"]
     assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
 
 
@@ -2073,7 +2134,7 @@ def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else()
 
 
 def test_without_a_roster_the_call_stays_hidden_and_the_roster_panel_says_why(node):
-    got = _render(node, {"roster": None})
+    got = _render(node, {"roster": None, "manifest": _roster_healthy()})
     assert "No roster yet" in got["panels"]["p-roster"]["body"]
     assert got["panels"]["p-lineup"]["body"] == ""
 
@@ -2252,17 +2313,18 @@ def test_the_rendered_page_carries_the_line_and_a_kept_roster_makes_it_stale(nod
     ros = _roster_with_gain()
     ros["previous"] = {"generated_at": "2000-01-01T00:00:00+00:00",
                        "start": [], "sit": [], "withheld": []}
-    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    healthy = _roster_healthy()
+    body = _render(node, {"roster": ros, "manifest": healthy})["panels"]["p-lineup"]["body"]
     assert "the earlier lineup call is not from the last regen" in body, "a 2000 prior is too old"
     ros["previous"]["generated_at"] = (
         dt.datetime.fromisoformat(ros["generated_at"]) - dt.timedelta(days=3)).isoformat()
-    body = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    body = _render(node, {"roster": ros, "manifest": healthy})["panels"]["p-lineup"]["body"]
     assert "lineup-changes" in body and body.index("lineup-gain") < body.index("lineup-changes")
     man = _with_artifact("roster", stale=True, reason="ESPN unreachable")
     got = _render(node, {"roster": ros, "manifest": man})["panels"]["p-lineup"]["body"]
     assert f'class="lineup-changes {STATE_CLASSES["stale"]}"' in got, got
     assert "describes the run synced" in got
-    fresh = _render(node, {"roster": ros})["panels"]["p-lineup"]["body"]
+    fresh = _render(node, {"roster": ros, "manifest": healthy})["panels"]["p-lineup"]["body"]
     assert f'class="lineup-changes {STATE_CLASSES["frozen"]}"' in fresh, "the control: current"
 
 
@@ -2293,7 +2355,7 @@ def test_a_page_that_diffs_against_a_stale_prior_or_renders_a_stale_line_as_curr
 def test_a_status_record_that_throws_costs_the_footer_and_nothing_else(node):
     """Planted: a `reason` whose `String()` throws. `statusLine` escapes it, and nothing else on
     the page reads `bigten`, so before the guard `render()` rejected here and no panel drew."""
-    man = _with_artifact("bigten", reason={"toString": 1})
+    man = _roster_healthy(_with_artifact("bigten", reason={"toString": 1}))
     got = _render(node, {"manifest": man, "roster": _roster_with_gain()})
     assert "status line unavailable" in got["footer"]
     assert got["panels"]["p-lineup"]["body"].startswith('<div class="lineup-gain">')

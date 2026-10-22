@@ -1,0 +1,77 @@
+# LLM forecasters vs. the market -- the settings `prereg-llm-v0` pins.
+# docs/prereg/llm-forecasters.md, "Before v0". Every "TBD" must be replaced before the tag;
+# `hub.forecasters.runner.require_pinned` refuses to call a model while any remains.
+# A change after v0 is a row in the prereg's deviations log, not just an edit here.
+#
+# temperature: a number only where the model's API accepts one; "none" otherwise.
+# reasoning_effort: the provider's own value for a reasoning model; "none" otherwise.
+# Prices are USD per million tokens, as published by the provider on the pin date.
+
+[study]
+season_cap_usd = 0.0          # TBD: the cap the code enforces (the prereg's spending cap)
+home_rate = 0.0               # TBD: historical P(home win)
+home_rate_seasons = "TBD"     # TBD: the seasons it comes from
+est_input_tokens = 2000       # upper estimate of one rendered prompt, for the guard
+
+# The analysis settings v0 fixes ("Before v0"; "Scoring and the confirmatory test").
+# `hub.forecasters.score.require_pinned` refuses to score while any is "TBD".
+[analysis]
+delta = "TBD"                 # H2's non-inferiority margin, nats of log loss per game
+h1_min_deviation_sd = "TBD"   # H1's threshold: min SD of a model's log-odds deviations
+parity_version = "TBD"        # the Parity version or commit that runs H2
+
+[[llm]]
+name = "llm1"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm2"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm3"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm4"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+# The paired retrieval arm (#511; docs/prereg/llm-forecasters.md, Contestants, 2026-10-22):
+# the LLM named here, same settings, its own line-aware packet plus a Tavily news search per
+# game (hub.forecasters.retrieval: 4 searches a game, one credit each).
+# season_credit_cap: Tavily credits, counted apart from dollars. ~64 a 16-game week, ~650 for
+# weeks 9-18; 1,500 leaves room for reruns and stays far under the ~9k promo balance.
+# usd_per_credit: what one credit costs, priced into the dollar cost log -- 0 while the promo's
+# credits are free, Tavily's published per-credit price once they are not.
+[retrieval]
+paired_with = "TBD"           # TBD: one of the [[llm]] names above
+season_credit_cap = 1500
+usd_per_credit = -1.0         # TBD: pinned from Tavily's pricing and the promo's terms

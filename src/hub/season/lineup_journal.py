@@ -15,7 +15,7 @@ the capture week it was set on, and the reason whenever that was not the week's 
 block is part of the pre-kickoff comparison and is first-write-wins with the rest of it.
 
 **What was actually published (#517) is a separate block, `published`.** The week's lineup is
-set by whatever the roster publish decides, and the Friday lineup capture (and a late strict
+set by whatever the roster publish decides, and the Friday capture (and a late week
 capture) lands after the Wednesday entry is frozen, so the Saturday publish can decide
 differently. Each roster publish up to the week's first Sunday kickoff therefore writes its own
 decision -- source, rule, consensus week and capture, lineup, `decided_at`, and the players whose
@@ -84,6 +84,16 @@ def journal_path(season: int, week: int, base: Path | None = None) -> Path:
 
 # --- the two weekly inputs, each with the reason it is absent -----------------
 
+def ranks_of(rows: pl.DataFrame) -> dict[str, float]:
+    """`{player_key: ecr}` from a capture's rows; the first row for a player wins and an unranked
+    row is skipped. The one reading of a capture's ranks, shared with the lineup rule."""
+    out: dict[str, float] = {}
+    for r in rows.iter_rows(named=True):
+        if r["ecr"] is not None:
+            out.setdefault(player_key(r["player"]), float(r["ecr"]))
+    return out
+
+
 def ecr_ranks(season: int, week: int | None,
               base: Path | None = None) -> tuple[dict[str, float], str | None]:
     """`{player_key: ecr}` from the newest pre-deadline capture for `week`, or `({}, reason)`."""
@@ -101,11 +111,7 @@ def ecr_ranks(season: int, week: int | None,
         return {}, (f"no pre-kickoff consensus capture for week {week}"
                     + (f" ({late} found, all at or after the deadline)" if late else ""))
     cap = ok[-1]                                     # read_captures sorts earliest first
-    out: dict[str, float] = {}
-    for r in cap.rows.iter_rows(named=True):
-        if r["ecr"] is not None:
-            out.setdefault(player_key(r["player"]), float(r["ecr"]))
-    return out, None
+    return ranks_of(cap.rows), None
 
 
 def espn_weekly(df: pl.DataFrame) -> tuple[dict[str, float], str | None]:

@@ -103,7 +103,7 @@ def closes(archive: pl.DataFrame, kickoffs: pl.DataFrame) -> pl.DataFrame:
 
 
 def due(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime,
-        attempts: Sequence[datetime] = ()) -> pl.DataFrame:
+        attempts: Sequence[datetime] = (), *, window_min: int = CLOSE_WINDOW_MIN) -> pl.DataFrame:
     """Games whose kickoff is within the window, still ahead, with nothing spent inside it yet.
 
     Strictly ahead: at or after kickoff nothing is due, because a line fetched then is not a
@@ -113,16 +113,19 @@ def due(archive: pl.DataFrame, kickoffs: pl.DataFrame, now: datetime,
     otherwise stay due and re-spend every cycle; the window spends at most once. `attempts` are
     the moments a call was started (`record_attempt`), kept so a call whose capture never landed
     -- a lost push, a response that matched nothing -- still counts.
+
+    `window_min` is the hub's `CLOSE_WINDOW_MIN` unless a caller with its own window asks:
+    the LLM study's closing line (`hub.forecasters.close_line`, #450) uses its prereg's 30.
     """
     soon = (kickoffs.drop_nulls("kickoff")
             .filter((pl.col("kickoff") > now)
-                    & (pl.col("kickoff") <= now + timedelta(minutes=CLOSE_WINDOW_MIN))))
+                    & (pl.col("kickoff") <= now + timedelta(minutes=window_min))))
     if soon.is_empty():
         return soon.select("game_id", "kickoff")
     stamps = list(attempts)
     if not archive.is_empty():
         stamps += archive["captured_at"].unique().to_list()
-    window = timedelta(minutes=CLOSE_WINDOW_MIN)
+    window = timedelta(minutes=window_min)
     keep = [any(k - window <= t <= k for t in stamps) is False
             for k in soon["kickoff"].to_list()]
     return soon.filter(pl.Series(keep, dtype=pl.Boolean)).select("game_id", "kickoff")

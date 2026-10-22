@@ -184,6 +184,14 @@ Thursday's game is in it) **and** whose newest scrape is within 8 days of that k
 (`CONSENSUS_MAX_LEAD_DAYS`), so last week's page is never filed under this week. The weeks the
 harness admits are those, within weeks 1-14 (`GATE_WEEKS`); 15-17 are not read.
 
+*(Restated 2026-10-20 under rule 13, #515, [ADR-0027](adr/0027-a-consensus-capture-is-in-time-per-player.md):
+from week 7, a **player-week** counts when a capture of that week's page was taken -- on the
+later of its `captured_at` and its first commit -- before **that player's own kickoff**; a player
+whose game had started when every capture of him was taken (Thursday's, under the Friday capture)
+is left out of that week's comparison, and the reading counts how many. Weeks 1-6 are read by the
+paragraph above, unchanged. The paragraph above is the prior text, kept. See the 2026-10-20
+amendment at the end of this document.)*
+
 **The verdict is read once, at the horizon: when every regular-season game of week 14 has been
 played and is in nflverse.** Before that the harness prints NOT-YET and loads no outcome at all
 (it does not read a partial season "for monitoring": a reading taken to see how it is going is
@@ -1031,6 +1039,50 @@ constant reproduces both prior values). That is the model version's label and th
 **The row now pinned.** `hub.models.components` `d42ac69f7717` (was `75740834610f`); the other 28
 rows are as in the latest table above. Closure digest **`69a09cab8e72c77d`** (was
 `a2a3e8720e86c13b`).
+
+## Amended 2026-10-20: a capture is in time per player, not per week (#515, ADR-0027; prior text kept)
+
+Before any 2026 outcome has been read: the harness has printed NOT-YET on every run and loaded
+nothing. This restates, under method rule 13, what *The horizon: which weeks count* above meant by
+a week "pre-registered against consensus". The text above is kept as it was written.
+
+**Why.** The per-week rule could not be met. The nflverse rankings archive publishes the weekly
+page on Fridays only (all six 2026 scrapes, 09-11 through 10-16), so no scrape ever fell before a
+Thursday game day; every Tuesday and Wednesday run of `consensus.yml` exited 3 and no week capture
+was ever written. Under the rule above the measurement could only ever have read NOT-RUNNABLE.
+
+**The rule, from week 7.** A capture is *in time* for a player when it was taken before that
+player's own kickoff, its time being the later of the file's `captured_at` and its first commit.
+Kickoffs are nflverse's Eastern `gameday` and `gametime` through `hub.schedule.kickoff_expr`
+(DST-aware, to UTC); a game with no time is placed at the start of its game day, Eastern. A player
+whose team the schedule cannot place is left out rather than trusted; a player on a bye stands.
+Each player is read from the newest capture in time for him, so a Wednesday page, if one ever
+exists, still serves Thursday's players. A player no capture is in time for is **left out of that
+week's comparison** and the reading prints how many: he is absent from the consensus frame, which
+puts him outside `weekly_gate.priced_by_both` (#206), so neither arm is scored on him that week.
+The harness is `weekly_forward.admit`; the test is `hub.fetch.consensus.in_time_rows`; the
+captures read are both kinds (`consensus.read_every_capture`), the Friday one filed under
+`state/consensus/<season>/lineup/` by the name it had when it set the lineup only.
+
+**Weeks 1-6 are not reached back into.** The rule was adopted on Tuesday 2026-10-20, after weeks
+5 and 6 were played; week 7's first game is Thursday 10-22. Weeks before
+`weekly_forward.PER_PLAYER_FROM_WEEK` (7) are read by the per-week rule above, unchanged, so their
+Friday captures stay refused exactly as before
+(`test_weeks_before_the_adoption_are_replayed_by_the_rule_they_were_registered_under`).
+
+**What it costs.** About two of fourteen games a week (Thursday's) leave the comparison, and the
+most weeks the measurement can now admit is **8** (weeks 7-14), against the 10 or 9 the power table
+above was computed for. `MIN_WEEKS` stays 6 and is not moved by this. The power at 8 clusters is
+the table's own row for that count (P(ADOPT) 0.6172 at +2.0 points a team-week as printed, which
+#520's amendment above marks stale and lower once re-run), lower than at 9 or 10, and the
+decision rule's SHOW branch, already the likely one, is likelier. The table was
+simulated on whole weeks; leaving Thursday's players out moves each week's lineups a little and
+is not in it.
+
+**What did not change.** The arm (`PINNED_ARM_MODULES`, closure digest unchanged): every file
+edited here is `hub.fetch.consensus` (exempt as `hub.fetch.*`) or `hub.season.weekly_forward`,
+which is not in the arm's closure. Only which captures, and which of their rows, the evaluation
+reads has changed; the projection computes what it computed.
 
 ## Amended 2026-10-20: `hub.models.margin` and `hub.models.market` re-pinned for #523's provenance correction (prior text kept)
 
