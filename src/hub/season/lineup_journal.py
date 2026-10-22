@@ -26,6 +26,19 @@ written: the last decision before Sunday is the one that set the lineup. Once sc
 `realised.set` is the `published` lineup's points; a week journalled before `published`
 existed falls back to `rule.lineup`, and `settle` says so.
 
+**From the switch week, consensus is scored from `published` (#530).** ADR-0027 (#515) retired
+the Tuesday/Wednesday crons, so no week capture is written and Wednesday's `sources.ecr` has
+nothing to read. That is not a missing measurement: from `lineup_rule.ECR_FROM_WEEK` the
+consensus lineup is the one published off the Friday lineup capture. So in those weeks a
+Wednesday `ecr` with no capture carries `superseded_by: "published"` (written by `record`, or
+added by `settle` to an entry written before the label), `settle` scores no null `realised.ecr`
+beside it, and the published lineup -- when consensus set it -- is scored as
+`realised.consensus`, the forward record of consensus against `mu` and ESPN that #492's
+reopening condition names. A week consensus did not set carries `consensus_unscored` with
+why. Every realised number in those weeks names the lineup it scores (`"scores":
+"sources.mu.lineup"`, `"published.lineup"`, ...). Before the switch week nothing moved: a
+pre-switch week settles byte for byte as it did before #530.
+
 All three choose from the same pool `lock` does (a projected, startable, available player not on
 bye), so a difference between lineups is a difference in *source*, not in who was eligible. Once
 the week is scored, each lineup's realised PPR points are written beside it.
@@ -70,6 +83,12 @@ if TYPE_CHECKING:                                    # `lineup_rule` imports thi
 
 ROOT = STATE_DIR / "lineup_journal"
 SOURCES = ("mu", "ecr", "espn")
+# From the switch week the consensus lineup is the published one (#530): `realised.consensus`.
+CONSENSUS = "consensus"
+SUPERSEDED_REASON = (
+    "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the "
+    "consensus lineup is the one published off the Friday lineup capture, scored at settle as "
+    "`realised.consensus` (#530)")
 
 # ECR is a rank (lower is better) and the lineup search maximises a total, so the search is
 # handed a score that falls as the rank rises. The constant only has to exceed any rank.
@@ -304,6 +323,11 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     set_lock, decision = lineup_rule.decide(df, season, wk, captures, ecr=ecr,
                                             ecr_reason=ecr_reason)
     rule = {**decision.as_dict(), "lineup": sorted(set_lock.best_lineup) or None}
+    # GUARD record-labels-a-superseded-ecr: no week capture from the switch week is not a gap
+    if not ecr and _switched(season, wk):
+        got["ecr"]["superseded_by"] = "published"
+        got["ecr"]["superseded_reason"] = SUPERSEDED_REASON
+    # /GUARD
     doc = {
         "season": season, "week": wk,
         "recorded_at": (now or datetime.now(UTC)).astimezone(UTC).isoformat(),
@@ -319,6 +343,13 @@ def record(df: pl.DataFrame, *, season: int = SEASON_AHEAD, week: int | None = N
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
     n = sum(1 for v in got.values() if v["lineup"])
     return path, f"week {wk} journalled ({n} of 3 sources)"
+
+
+def _switched(season: int, week: int) -> bool:
+    """From the season's switch week the rule asks for consensus, and the consensus lineup is
+    the published one (#530); before it nothing about the journal moved."""
+    from hub.season import lineup_rule
+    return lineup_rule.rule_for(season, week) == lineup_rule.ECR
 
 
 def _read_entry(path: Path) -> dict[str, Any] | None:
@@ -382,6 +413,9 @@ def settle(season: int, week: int, points: Mapping[str, float],
 
     `points` is `{player_key: PPR points}` for the played week. A rostered player absent from
     it scored nothing (did not play) and is counted in `n_no_row` so a name-matching break shows.
+
+    From the switch week the published consensus lineup is scored too (`_settle_consensus`),
+    and each number names the lineup it scores; before it the entry is written as it always was.
     """
     path = journal_path(season, week, base)
     if not path.exists():
@@ -395,16 +429,19 @@ def settle(season: int, week: int, points: Mapping[str, float],
     # /GUARD
     if not points:
         return f"week {week}: no realised points available yet"
+    switched = _switched(season, week)
     realised: dict[str, Any] = {}
     sources = doc.get("sources") or {}              # absent on an entry only a publish wrote
     for s in SOURCES:
         lineup = (sources.get(s) or {}).get("lineup")
         if not lineup:
+            # GUARD settle-drops-the-superseded-ecr: no null consensus beside a scored one
+            if switched and s == "ecr":
+                continue                             # consensus is scored from `published`
+            # /GUARD
             realised[s] = None
             continue
-        ks = [player_key(n) for n in lineup]
-        realised[s] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
-                       "n_no_row": sum(1 for k in ks if k not in points)}
+        realised[s] = _scored(lineup, points, f"sources.{s}.lineup" if switched else None)
     # The lineup that was set, scored beside the three sources: the last publish's decision
     # before Sunday (#517). An entry from before `published` existed falls back to the
     # Wednesday `rule` block and says so; one from before #492's switch carries neither and
@@ -417,13 +454,53 @@ def settle(season: int, week: int, points: Mapping[str, float],
     note = ("; set lineup scored from the Wednesday `rule` block -- no published decision "
             "was journalled for this week (#517)" if set_lineup and set_from == "rule" else "")
     if set_lineup:
-        ks = [player_key(n) for n in set_lineup]
-        realised["set"] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
-                           "n_no_row": sum(1 for k in ks if k not in points)}
+        realised["set"] = _scored(set_lineup, points,
+                                  f"{set_from}.lineup" if switched else None)
         doc["set_scored_from"] = set_from            # "published", or the "rule" fallback
+    if switched:
+        note += _settle_consensus(doc, realised, points)
     doc["realised"], doc["scored"] = realised, True
     atomic.write_text(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return f"week {week}: scored{note}"
+
+
+def _scored(lineup: Sequence[str], points: Mapping[str, float],
+            scores: str | None) -> dict[str, Any]:
+    """One lineup's realised points. `scores` names the lineup they are of (`sources.mu.lineup`,
+    `published.lineup`, ...) from the switch week on; before it the shape is as it always was."""
+    ks = [player_key(n) for n in lineup]
+    out: dict[str, Any] = {"points": round(sum(points.get(k, 0.0) for k in ks), 2),
+                           "n_no_row": sum(1 for k in ks if k not in points)}
+    if scores is not None:
+        out["scores"] = scores
+    return out
+
+
+def _settle_consensus(doc: dict[str, Any], realised: dict[str, Any],
+                      points: Mapping[str, float]) -> str:
+    """Score the published consensus lineup as `realised.consensus` (#530), in place.
+
+    From the switch week the week's consensus lineup is the published one when consensus set
+    it (`published.source == "ecr"`), and that -- not the Wednesday `sources.ecr`, which no
+    capture fills since ADR-0027 -- is the forward record of consensus against `mu` and ESPN.
+    A Wednesday `ecr` left null for want of a capture is labelled superseded, not missing. A
+    week consensus did not set says why under `consensus_unscored`, and the note says so too."""
+    from hub.season import lineup_rule
+    pub = doc.get("published") or {}
+    # GUARD settle-scores-the-published-consensus: consensus's realised points from `published`
+    if pub.get("source") == lineup_rule.ECR and pub.get("lineup"):
+        realised[CONSENSUS] = _scored(pub["lineup"], points, "published.lineup")
+        ecr = (doc.get("sources") or {}).get("ecr")
+        if ecr is not None and not ecr.get("lineup"):
+            ecr.setdefault("superseded_by", "published")
+            ecr.setdefault("superseded_reason", SUPERSEDED_REASON)
+        return ""
+    # /GUARD
+    why = ("no published decision was journalled for this week (#517)" if not pub
+           else f"the published lineup was set by {pub.get('source')}, not consensus"
+           + (f": {pub['reason']}" if pub.get("reason") else ""))
+    doc["consensus_unscored"] = why
+    return f"; no consensus lineup scored -- {why}"
 
 
 def read(season: int, base: Path | None = None) -> list[dict[str, Any]]:

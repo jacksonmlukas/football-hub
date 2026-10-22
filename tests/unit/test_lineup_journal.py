@@ -6,6 +6,7 @@ second tight end. A journal that cannot tell the sources apart records one lineu
 """
 import json
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -206,10 +207,13 @@ def test_settle_with_no_points_leaves_the_week_unscored(tmp_path):
 
 
 def test_a_null_lineup_has_null_realised_points(tmp_path):
-    _rec(_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "x")
+    """ESPN with no weekly numbers is a missing measurement and scores null. A Wednesday ECR
+    with no capture in a switch week is not one (#530): it is superseded, not scored null."""
+    _rec(_roster(espn=False), season=SEASON, base=tmp_path / "j", captures=tmp_path / "x")
     _settle(SEASON, WEEK, {player_key("Qa One"): 1.0}, tmp_path / "j")
     doc = json.loads(J.journal_path(SEASON, WEEK, tmp_path / "j").read_text())
-    assert doc["realised"]["ecr"] is None and doc["realised"]["mu"]["n_no_row"] == 7
+    assert doc["realised"]["espn"] is None and doc["realised"]["mu"]["n_no_row"] == 7
+    assert "ecr" not in doc["realised"]
 
 
 def test_read_returns_the_weeks_in_order(tmp_path):
@@ -589,3 +593,147 @@ def test_a_full_entry_stays_well_under_the_state_cap(tmp_path):
     assert all(doc["sources"][s]["lineup"] for s in J.SOURCES)
     assert doc["published"]["ecr_capture"] and doc["published"]["locked"]
     assert len(json.dumps(doc)) < 0.8 * 4096, len(json.dumps(doc))
+    # Settled (#530): all three Wednesday sources, the set lineup and the consensus lineup
+    # scored, each labelled with the lineup it scores -- the largest a settled entry gets.
+    J.settle(SEASON, SW, {player_key(p[0]): p[2] for p in long}, tmp_path / "j",
+             schedule=_week_schedule(final=True))
+    doc = _doc(path)
+    assert set(doc["realised"]) == {*J.SOURCES, "set", J.CONSENSUS}
+    assert len(json.dumps(doc)) < 0.8 * 4096, len(json.dumps(doc))
+
+
+# --- #530: the consensus lineup scored from `published`, weeks 1-6 replayed unchanged ---------
+#
+# Since ADR-0027 (#515) no week capture is written, so a Wednesday `sources.ecr` from week 7 on
+# is null for want of a capture, not for want of a consensus lineup: from the switch week the
+# published lineup *is* consensus's, set off the Friday lineup capture. Settle scores it as
+# `realised.consensus` beside `mu` and ESPN. Before the switch week nothing about settle moved,
+# which the replay below holds byte for byte against entries settled by the code before #530.
+
+REPLAY_GOLDEN = Path(__file__).parents[1] / "fixtures" / "lineup_journal_wk01_06_settled.json"
+
+
+def _week_day(wk: int) -> date:
+    return FIRST + timedelta(days=7 * (wk - WEEK))
+
+
+def replay_weeks_1_to_6(tmp) -> dict[str, str]:
+    """Six pre-switch weeks journalled and settled, one entry shape each, as `{week: text}`.
+
+    1: a Wednesday capture and a publish. 2: no capture, a publish. 3: `record` only (the
+    pre-#517 shape, scored from `rule`). 4: a publish only. 5: a capture and a publish with no
+    ESPN weekly. 6: a capture, a publish, and a starter with no realised row."""
+    j, cons, sched = tmp / "j", tmp / "cons", _schedule(weeks=range(1, 7))
+    out: dict[str, str] = {}
+    for wk in range(1, 7):
+        first = _week_day(wk)
+        wed = datetime.combine(first - timedelta(days=4), datetime.min.time(), UTC)
+        df = _roster(espn=wk != 5, week=wk)
+        if wk in (1, 5, 6):
+            _capture(cons, when=wed - timedelta(hours=6), week=wk)
+        if wk != 4:
+            J.record(df, season=SEASON, base=j, captures=cons, now=wed, schedule=sched)
+        if wk != 3:
+            lk, rule = lineup_rule.decide(df, SEASON, wk, cons)
+            J.record_published(SEASON, wk, lk, rule, base=j, schedule=sched,
+                               now=wed + timedelta(days=2))
+        pts = {player_key(p[0]): p[2] + wk for p in PLAYERS
+               if not (wk == 6 and p[0] == "Ta One")}
+        J.settle(SEASON, wk, pts, j, schedule=sched)
+        out[str(wk)] = J.journal_path(SEASON, wk, j).read_text()
+    return out
+
+
+def test_weeks_1_to_6_settle_byte_for_byte_as_before(tmp_path):
+    """The replay: six pre-switch entry shapes, settled now, equal the text the code before
+    #530 wrote for them (`REPLAY_GOLDEN`, frozen from that code). Nothing in a pre-switch week
+    gains a `scores` label, a `consensus` key, a `superseded_by`, or loses its null `ecr`."""
+    assert all(not J._switched(SEASON, wk) for wk in range(1, 7))
+    golden = json.loads(REPLAY_GOLDEN.read_text())
+    got = replay_weeks_1_to_6(tmp_path)
+    assert sorted(got) == sorted(golden) == [str(w) for w in range(1, 7)]
+    for wk, text in got.items():
+        assert text == golden[wk], f"week {wk} settled differently from before #530"
+    assert json.loads(got["2"])["realised"]["ecr"] is None, "the replay holds a null ecr"
+
+
+def _consensus_week(site, monkeypatch) -> tuple[dict, dict, str]:
+    """The switch week as ADR-0027 runs it: Wednesday's `record` with no week capture, the
+    Friday lineup capture, Saturday's publish, then the scored week. Returns the settled entry,
+    the points, and settle's note."""
+    J.record(_pub_roster(), season=SEASON, now=WED_AM, schedule=_week_schedule())
+    _friday_lineup_capture(site / "cons")
+    _publish_at(site, SAT_AM, monkeypatch)
+    pts = {player_key(p[0]): p[2] for p in PLAYERS} | {player_key("Wd Four"): 3.0,
+                                                       player_key("Tb Two"): 30.0}
+    note = J.settle(SEASON, SW, pts, schedule=_week_schedule(final=True))
+    return _entry(), pts, note
+
+
+def test_a_switch_week_settles_consensus_beside_mu_and_espn(site, monkeypatch):
+    """The acceptance case (#530): the published consensus lineup's realised points sit beside
+    the Wednesday `mu` and ESPN lineups', each naming the lineup it scores, and three
+    different lineups give three different numbers."""
+    doc, pts, note = _consensus_week(site, monkeypatch)
+    assert note == f"week {SW}: scored"
+    r, pub = doc["realised"], doc["published"]
+    assert pub["source"] == "ecr" and "Wd Four" in pub["lineup"]
+    assert r[J.CONSENSUS] == {"points": round(sum(pts[player_key(n)] for n in pub["lineup"]), 2),
+                              "n_no_row": 0, "scores": "published.lineup"}
+    for s in ("mu", "espn"):
+        assert r[s]["scores"] == f"sources.{s}.lineup"
+        assert r[s]["points"] == round(
+            sum(pts[player_key(n)] for n in doc["sources"][s]["lineup"]), 2)
+    assert len({r["mu"]["points"], r["espn"]["points"], r[J.CONSENSUS]["points"]}) == 3
+    assert r["set"]["scores"] == "published.lineup" and r["set"]["points"] == r[J.CONSENSUS]["points"]
+    assert "consensus_unscored" not in doc
+
+
+def test_a_switch_weeks_missing_wednesday_ecr_is_superseded_not_missing(site, monkeypatch):
+    """No week capture since ADR-0027: Wednesday's `sources.ecr` is labelled as superseded by
+    `published` when written, and settle scores no null `ecr` beside the consensus number."""
+    J.record(_pub_roster(), season=SEASON, now=WED_AM, schedule=_week_schedule())
+    wed = _entry()["sources"]["ecr"]
+    assert wed["lineup"] is None
+    assert wed["superseded_by"] == "published" and "ADR-0027" in wed["superseded_reason"]
+    doc, _, _ = _consensus_week(site, monkeypatch)
+    assert "ecr" not in doc["realised"]
+    assert all(v is not None for v in doc["realised"].values())
+
+
+def test_a_switch_week_journalled_before_the_label_gains_it_at_settle(site, monkeypatch):
+    """An entry written before #530 (week 7's, committed 10-21) carries a bare null `ecr`;
+    settling it labels that superseded once the consensus lineup is scored."""
+    J.record(_pub_roster(), season=SEASON, now=WED_AM, schedule=_week_schedule())
+    path = J.journal_path(SEASON, SW)
+    old = _doc(path)
+    for k in ("superseded_by", "superseded_reason"):
+        del old["sources"]["ecr"][k]
+    atomic.write_text(path, json.dumps(old, indent=1, sort_keys=True) + "\n")
+    _friday_lineup_capture(site / "cons")
+    _publish_at(site, SAT_AM, monkeypatch)
+    J.settle(SEASON, SW, {player_key("Qa One"): 1.0}, schedule=_week_schedule(final=True))
+    ecr = _entry()["sources"]["ecr"]
+    assert ecr["superseded_by"] == "published" and ecr["reason"] == old["sources"]["ecr"]["reason"]
+
+
+def test_a_switch_week_consensus_did_not_set_says_why_and_scores_no_consensus(tmp_path):
+    """With no capture at all the publish falls back to `mu`: there is no consensus lineup, so
+    none is scored, and the entry and the note say why rather than holding a null number."""
+    lk, rule = lineup_rule.decide(_pub_roster(), SEASON, captures=tmp_path / "none")
+    assert rule.source == "mu"
+    kw = {"schedule": _week_schedule(), "now": WED_AM}
+    J.record(_pub_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "none", **kw)
+    J.record_published(SEASON, SW, lk, rule, base=tmp_path / "j", **kw)
+    note = J.settle(SEASON, SW, {player_key("Qa One"): 1.0}, tmp_path / "j",
+                    schedule=_week_schedule(final=True))
+    doc = _doc(J.journal_path(SEASON, SW, tmp_path / "j"))
+    assert J.CONSENSUS not in doc["realised"] and "ecr" not in doc["realised"]
+    assert doc["consensus_unscored"].startswith("the published lineup was set by mu")
+    assert rule.reason and rule.reason in doc["consensus_unscored"]
+    assert "no consensus lineup scored" in note and doc["consensus_unscored"] in note
+    assert "superseded_by" in doc["sources"]["ecr"]
+    alone = tmp_path / "alone"                                # no publish ever ran
+    J.record(_pub_roster(), season=SEASON, base=alone, captures=tmp_path / "none", **kw)
+    J.settle(SEASON, SW, {player_key("Qa One"): 1.0}, alone, schedule=_week_schedule(True))
+    assert "no published decision" in _doc(J.journal_path(SEASON, SW, alone))["consensus_unscored"]
