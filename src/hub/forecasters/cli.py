@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 
+from hub import atomic
 from hub.forecasters import config as study_config
 from hub.forecasters import days, runner
 
@@ -51,9 +52,10 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
         return 0
 
     if args.cmd == "mark-done":
-        m = _marker(args.out, args.day)
-        m.parent.mkdir(parents=True, exist_ok=True)
-        m.write_text(f"{datetime.now().astimezone().isoformat()}\n")
+        # Through `hub.atomic`, as every writer in the tree is
+        # (`tests/contracts/test_writers_are_crash_atomic.py`).
+        atomic.write_text(_marker(args.out, args.day),
+                          f"{datetime.now().astimezone().isoformat()}\n")
         return 0
 
     try:

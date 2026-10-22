@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from hub import atomic
 from hub.forecasters import prompt
 from hub.forecasters.config import UNSET, LlmSpec, StudyConfig
 from hub.forecasters.packet import Condition, MarketBlock, Packet, packet_hash
@@ -224,25 +225,36 @@ def _written(out_dir: Path) -> tuple[set[tuple[str, str]], float]:
 
 
 def _append(path: Path, record: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a") as f:
-        f.write(json.dumps(record, sort_keys=True, default=str) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    """Add one record to the log, landing whole (`hub.atomic`).
+
+    Not an `open(path, "a")`: an append killed mid-line leaves a torn last line, which
+    `_written` cannot parse -- so every later run would refuse at step 2 until someone edited
+    the log by hand -- and the next append would land on the same line as the fragment and
+    tear a second record. Rewriting the day's file through `hub.atomic` costs one read of at
+    most a few hundred lines a record, and a kill now leaves the previous file exactly as it
+    was: the crash loses the one record in flight, which step 2 re-forecasts.
+    """
+    line = json.dumps(record, sort_keys=True, default=str) + "\n"
+    atomic.write_text(path, (path.read_text() if path.exists() else "") + line)
 
 
 @contextlib.contextmanager
 def _lock(out_dir: Path) -> Iterator[None]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / LOCK, "w") as f:
+    # Opened, never written: the lock is the flock on the descriptor, not the file's bytes,
+    # so it is not a writer `tests/contracts/test_writers_are_crash_atomic.py` governs.
+    fd = os.open(out_dir / LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
         try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Locked(f"{out_dir / LOCK} is held by another run") from None
         try:
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 # --- the run ------------------------------------------------------------------------------
