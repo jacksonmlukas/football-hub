@@ -1127,8 +1127,14 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     verdict word -- so no price moves; the version moves because the pre-registration declares
     them `chosen` rather than `not_an_input`. Removing exactly those five names from the live
     constants reproduces `9f2d0b0c` and, through `config_digest`, `839ceda9`.
+
+    **Moved again 2026-10-21 (#375): `f7aaf995` -> `e90a851d`**, `fitted_digest` `58da3a91` ->
+    `f893f282`, sixty covered declarations unchanged. One name moved, by value:
+    `posterior.P_COSTLY` 0.9 -> 0.95 (ADOPTED by the maintainer: 0.9's null ADOPT rate was
+    7-10% under heterogeneity). **Not a model change**, as above: no prediction reads it.
+    Restoring 0.9 reproduces `58da3a91`, so no other declared constant moved.
     """
-    assert config_digest(HubConfig()) == "f7aaf995"
+    assert config_digest(HubConfig()) == "e90a851d"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

@@ -5181,6 +5181,36 @@ prediction row carries a new version string. That is the cost of `chosen` over `
 (the declaration `ALPHA`, `POWER` and `FDR_Q` carry, for "nothing here predicts"); it is named
 here for the maintainer rather than chosen silently.
 
+## Amended 2026-10-21: `P_COSTLY` 0.9 → 0.95 (ADOPTED by the maintainer)
+
+**Decision, in the maintainer's words:** "ADOPTED: P_COSTLY 0.9 -> 0.95 (null size 4.7% at the
+worst cell, clears the k=3 ceiling of 0.9585). Amend the pre-registration, drop the xfail, rerun
+the gates." It closes the 2026-10-18 amendment's finding 1, on that amendment's own numbers.
+
+> *Recorded by AI, 2026-10-21, at the maintainer's instruction in session. The disposition is the maintainer's.*
+
+- **The costly tier is now:** ADOPT when `P(delta > 0 | data) > 0.95`, REMOVE when `< 0.05`,
+  SHOW between — the expected-utility action when a wrong switch costs nineteen times what a
+  right one gains. The bar is strict: exactly 0.95 is SHOW.
+- **Check 2 holds in every cell.** The strict `xfail` is removed; the null-size test
+  (`test_the_posterior_rule_s_null_size_is_controlled`) is again one assertion over every
+  pre-registered cell, both heterogeneity settings included, at the same 4,000 trials and the
+  same `ALPHA + 2 MC SE` bar, and passes.
+- **The ceiling it must stay under is held by a test.** `test_a_consistent_effect_saturates_below_certainty`
+  now also asserts `P_COSTLY` is below the k = 3 saturation (0.9585), so a later bar that the
+  three-season gates could never reach fails the suite rather than silently disabling ADOPT
+  for them. The margin is 0.0085.
+- **What it costs, from the 2026-10-18 table:** power at a 3-pooled-SE effect (k = 4, τ = 0)
+  falls from 0.87 to 0.68.
+- **Digest:** `fitted_digest` `58da3a91` → `f893f282`, `config_digest` `f7aaf995` → `e90a851d`;
+  no prediction reads it, and each gate's next ledger run starts a new series, as on 2026-10-18.
+- **Unchanged by #520 (2026-10-20), checked:** `S_REF` is the sd of the stored season *gains*,
+  which #520 does not move. **Named, not decided:** #520 rescales the pooled SE by `sqrt(k/(k-1))`
+  but deliberately leaves `per_season`'s `se` — the within-season bootstrap SD this section's
+  likelihood reads as `se_s` — raw, which is low by `sqrt((m-1)/m)` in `m` within-season
+  clusters (≤ 4.5% at `m ≥ TIE_MIN_CLUSTERS`, more below it). Whether the likelihood should read
+  the rescaled SE is a likelihood amendment for the maintainer, not part of this one.
+
 # Restated 2026-10-20 (#520): the SE under the t interval, the MDE and the power was biased low by sqrt((k-1)/k)
 
 ADOPTED (a) on #520, 2026-10-20: fix the SE first, as its own dated restatement; #375 builds on

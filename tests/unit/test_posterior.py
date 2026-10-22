@@ -110,44 +110,27 @@ def test_simulation_based_calibration_detects_a_misspecified_prior():
 _NULL_N = 4000
 
 
-def _null_size_failures(heterogeneous: bool) -> list[tuple]:
-    """The pre-registered cells -- k in {3, 4, 5, 6}, the frozen scale at 1, 1.5 and 2 times
-    the season noise, `tau` at zero or at all the heterogeneity that scale implies -- whose
-    costly-tier ADOPT or REMOVE rate at `delta = 0` exceeds `ALPHA` plus two Monte Carlo SEs."""
-    rng = np.random.default_rng(37501 + heterogeneous)
+def test_the_posterior_rule_s_null_size_is_controlled():
+    """At `delta = 0` the costly tier's ADOPT rate, and by symmetry its REMOVE rate, is at most
+    `ALPHA` plus two Monte Carlo SEs in every pre-registered cell: k in {3, 4, 5, 6}, the frozen
+    scale at 1, 1.5 and 2 times the season noise, and `tau` at zero and at all the heterogeneity
+    that scale implies. A failing cell is a finding that reopens `P_COSTLY`, not a tolerance to
+    widen -- the message names it. At 0.9 the heterogeneous cells failed at 7-10% (recorded
+    2026-10-18); 0.95, ADOPTED 2026-10-21, is the bar this holds."""
+    rng = np.random.default_rng(37501)
     bar = experiment.ALPHA + 2 * math.sqrt(experiment.ALPHA * (1 - experiment.ALPHA) / _NULL_N)
     failed = []
     for k in (3, 4, 5, 6):
         for ratio in (1.0, 1.5, 2.0):
             se = S / ratio
-            tau = math.sqrt(max(S**2 - se**2, 0.0)) if heterogeneous else 0.0
-            if heterogeneous and tau == 0.0:
-                continue
-            y, se2 = _simulate(rng, _NULL_N, k, se=se, delta=0.0, tau=tau)
-            f = fit_many(y, se2, S, S, interval=False)
-            codes = posterior.action_codes(f.mean, f.p_positive, costly=True)
-            adopt, remove = float((codes == 1).mean()), float((codes == -1).mean())
-            if adopt > bar or remove > bar:
-                failed.append((k, ratio, round(tau, 3), adopt, remove))
-    return failed
-
-
-def test_the_posterior_rule_s_null_size_is_controlled():
-    """Check 2 with no true heterogeneity: at `delta = 0` the costly tier's ADOPT rate, and by
-    symmetry its REMOVE rate, is at most `ALPHA` plus two Monte Carlo SEs in every cell."""
-    failed = _null_size_failures(heterogeneous=False)
-    assert not failed, f"null ADOPT/REMOVE above the bar at (k, S/se, tau, adopt, remove): {failed}"
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "FINDING 2026-10-18 (#375), recorded not loosened: with the heterogeneity S_REF implies "
-    "(tau > 0), the costly tier's 0.9 bar has a null ADOPT rate of 7-10% at k = 3-6, above "
-    "ALPHA. Per the pre-registration this reopens P_COSTLY, which is the maintainer's; strict, "
-    "so a change of bar that fixes it fails here until this marker is removed."))
-def test_the_posterior_rule_s_null_size_is_controlled_under_heterogeneity():
-    """Check 2's other half: the cells with `tau = sqrt(S_REF**2 - se**2) > 0`."""
-    failed = _null_size_failures(heterogeneous=True)
-    assert not failed, f"null ADOPT/REMOVE above the bar at (k, S/se, tau, adopt, remove): {failed}"
+            for tau in sorted({0.0, math.sqrt(max(S**2 - se**2, 0.0))}):
+                y, se2 = _simulate(rng, _NULL_N, k, se=se, delta=0.0, tau=tau)
+                f = fit_many(y, se2, S, S, interval=False)
+                codes = posterior.action_codes(f.mean, f.p_positive, costly=True)
+                adopt, remove = float((codes == 1).mean()), float((codes == -1).mean())
+                if adopt > bar or remove > bar:
+                    failed.append((k, ratio, round(tau, 3), adopt, remove))
+    assert not failed, f"null ADOPT/REMOVE above {bar:.4f} at (k, S/se, tau, adopt, remove): {failed}"
 
 
 def test_the_reversible_rule_s_null_adopt_rate_is_one_half():
@@ -212,21 +195,25 @@ def test_the_tau_grid_does_not_truncate_a_conflicting_posterior(monkeypatch):
 def test_a_consistent_effect_saturates_below_certainty():
     """Recorded, not a defect: under `N(0, S_REF)` a perfectly consistent effect of any size
     reads `P(effect > 0)` near 0.977 at k=4 (0.959 at k=3), because the model can always put
-    the excess in `tau`. Pinned because a costly bar at or above this could never ADOPT."""
+    the excess in `tau`. Pinned because a costly bar at or above this could never ADOPT -- and
+    `P_COSTLY` must stay under the k = 3 ceiling, which is what the last line holds."""
     assert fit([1000.0] * 3, [S] * 3, S, S).p_positive == pytest.approx(0.9585, abs=1e-3)
     assert fit([1000.0] * 4, [S] * 4, S, S).p_positive == pytest.approx(0.9774, abs=1e-3)
+    assert posterior.P_COSTLY < fit([1000.0] * 3, [S] * 3, S, S).p_positive
 
 
 def test_posterior_action_reads_its_tier():
     """The scalar decision on both tiers' boundaries."""
     near = Posterior(mean=0.1, lo=-1.0, hi=1.0, p_positive=0.6, tau_mean=0.0)
-    sure = Posterior(mean=2.0, lo=1.0, hi=3.0, p_positive=0.95, tau_mean=0.0)
-    gone = Posterior(mean=-2.0, lo=-3.0, hi=-1.0, p_positive=0.05, tau_mean=0.0)
+    sure = Posterior(mean=2.0, lo=1.0, hi=3.0, p_positive=0.97, tau_mean=0.0)
+    gone = Posterior(mean=-2.0, lo=-3.0, hi=-1.0, p_positive=0.03, tau_mean=0.0)
+    at_bar = Posterior(mean=1.0, lo=0.0, hi=2.0, p_positive=posterior.P_COSTLY, tau_mean=0.0)
     assert posterior_action(near, costly=False) == "ADOPT"
     assert posterior_action(near, costly=True) == "SHOW"
     assert posterior_action(sure, costly=True) == "ADOPT"
     assert posterior_action(gone, costly=True) == "REMOVE"
     assert posterior_action(gone, costly=False) == "REMOVE"
+    assert posterior_action(at_bar, costly=True) == "SHOW", "the bar is strict"
 
 
 # --- the report a gate prints ------------------------------------------------------------
@@ -235,7 +222,7 @@ _PRIOR = Prior(S, S, costly=True)
 
 
 def test_sensitivity_flags_an_action_the_prior_decides():
-    """A three-SE pooled gain clears 0.9 under the primary prior and not under s/4: printed
+    """A three-SE pooled gain clears `P_COSTLY` under the primary prior and not under s/4: printed
     prior-sensitive. A gain inside the noise is SHOW under all three and is not."""
     k, se = 4, [S] * 4
     borderline = assess([1.6] * k, se, _PRIOR, "SHOW")

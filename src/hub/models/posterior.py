@@ -63,8 +63,11 @@ S_REF: dict[str, float] = chosen({
 REVERSIBLE: frozenset[str] = chosen(frozenset({"td_dispersion", "injury_type"}))
 
 # The costly tier's bar: ADOPT above it, REMOVE below `1 - P_COSTLY`, SHOW between. The
-# expected-utility action when a wrong switch costs nine times what a right one gains.
-P_COSTLY = chosen(0.9)
+# expected-utility action when a wrong switch costs nineteen times what a right one gains.
+# 0.9 -> 0.95, ADOPTED 2026-10-21: 0.9's null ADOPT rate was 7-10% under the heterogeneity
+# S_REF implies; 0.95's is 4.7% at the worst cell, and it clears the k = 3 saturation
+# (0.9585) that any bar at or above it could never reach (docs/gate-power.md, #375).
+P_COSTLY = chosen(0.95)
 
 # The prior-sd multipliers every posterior is refitted under and printed beside; they decide
 # nothing. `tau_scale` is not scaled.
@@ -277,8 +280,8 @@ def posterior_action(post: Posterior, *, costly: bool) -> str:
     exactly zero -- the linear-utility action at no friction (#364's form). Its null ADOPT rate
     is 1/2 by construction, which is why its check is regret and not size.
     **Costly**: ADOPT when `P(delta > 0) > P_COSTLY`, REMOVE when `< 1 - P_COSTLY`, SHOW
-    between -- the action under a loss where a wrong switch costs nine times a right one's
-    gain, and the tier `test_the_posterior_rule_s_null_size_is_controlled` holds to `ALPHA`.
+    between -- the action under a loss where a wrong switch costs nineteen times a right
+    one's gain, and the tier `test_the_posterior_rule_s_null_size_is_controlled` holds to `ALPHA`.
     """
     return _WORD[int(action_codes(post.mean, post.p_positive, costly=costly))]
 
