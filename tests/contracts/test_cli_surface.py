@@ -276,9 +276,10 @@ ABSENT_INPUT = [
     # The LLM-forecaster run (#444): until v0 is pinned the config refuses before any model
     # or odds call, and says so. `--out` keeps it off any real forecasts checkout.
     ("hub.forecasters.cli", ["run", "--out", "{tmp}", "--day", "2026-10-25"]),
-    # The study's scoring (#452): until delta, the H1 threshold and the Parity version are
-    # pinned the committed config refuses in one sentence, before any input is read.
-    ("hub.forecasters.score", ["--forecasts", "{tmp}", "--games", "{tmp}/games.jsonl"]),
+    # The study's scoring (#452, #448): until the H2 implementation pin (and delta and the H1
+    # threshold) is set the committed config refuses in one sentence, before any input is
+    # read. With no `--games` it would read nflverse's schedule cache; it never gets there.
+    ("hub.forecasters.score", ["--forecasts", "{tmp}"]),
     # The study's closing line (#450): the schedule it places kickoffs by cannot be reached, so
     # it says so and exits 2 before any attempt is recorded or credit spent.
     ("hub.forecasters.close_line", ["capture", "--out", "{tmp}"]),

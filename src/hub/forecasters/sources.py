@@ -11,10 +11,11 @@ such, so the day pipeline can be dry-run end to end on recorded or synthetic pay
   `completed_at` stays `None` and the packet bounds it by kickoff (`packet._completion`).
 * **Injuries** -- ESPN's league-wide report, one call for every team (never a loop over
   games). **No injury source has a real publication time** (nflverse: the season file's
-  release time only; ESPN: a minute-precision `date` per item). Until the maintainer adopts a
-  basis in the prereg export, `published_at` is the newest item `date` *strictly before run
-  start*, and an item dated at or after run start is dropped rather than shown: it may carry a
-  status the run could not have known, and omitting a line is the conservative direction --
+  release time only; ESPN: a minute-precision `date` per item). The basis, adopted on #448
+  (2026-10-22, item 7) and restated in the prereg: `published_at` is the newest item `date`
+  *strictly before run start*, and an item dated at or after run start is dropped rather than
+  shown: it may carry a status the run could not have known, and omitting a line is the
+  conservative direction --
   the packet can be missing news, never carry news from after it was frozen. Both rules are
   written into `published_at_basis`, so the record says what its timestamp is.
 * **The hub contestant** -- `hub.models.ratings`, adopted in #446 (3): today that model is

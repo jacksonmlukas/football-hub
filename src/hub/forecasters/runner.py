@@ -11,7 +11,9 @@
 
 Eleven contestants: each LLM blind and line-aware, the hub's own model on the same snapshot
 (logging the commit that produced it), the home constant, and the coin flip. Every record
-carries this run's market snapshot id, and every probability is clipped to [0.01, 0.99].
+carries this run's market snapshot id and, where this run has a line for the game, its
+de-vigged home probability (`market_home_win_prob`, the benchmark `hub.forecasters.score` reads
+back); every contestant's probability is clipped to [0.01, 0.99], the betting market's is not.
 
 The model client is an interface; `hub.forecasters.providers` holds the provider clients
 behind it, and no real call is made until the maintainer sets `LLM_FORECASTS_ENABLED`. Tests
@@ -36,7 +38,7 @@ from typing import Any, Protocol
 from hub import atomic
 from hub.fetch import tavily
 from hub.forecasters import prompt, retrieval
-from hub.forecasters.config import UNSET, LlmSpec, StudyConfig
+from hub.forecasters.config import UNSET, LlmSpec, StudyConfig, analysis_gaps
 from hub.forecasters.packet import Condition, MarketBlock, Packet, packet_hash
 
 LOCK = ".run.lock"
@@ -119,8 +121,12 @@ def contestants(config: StudyConfig) -> list[str]:
 
 
 def require_pinned(config: StudyConfig) -> None:
-    """Refuse a config with any v0 placeholder, a non-positive cap, or no home rate."""
+    """Refuse a config with any v0 placeholder, a non-positive cap, or no home rate -- and
+    while delta or the H1 threshold is unset (#448, adopted 2026-10-22, item 8): a forecast
+    made before the analysis that will judge it is fixed is not a pre-registered one. The H2
+    implementation pin is `score.require_pinned`'s, since it names the scorer's commit."""
     gaps = [f"{m.name}.{k}" for m in config.llms for k, v in asdict(m).items() if v == UNSET]
+    gaps += analysis_gaps(config.analysis, implementation=False)
     gaps += [f"{m.name}.price" for m in config.llms
              if m.usd_per_mtok_in <= 0 or m.usd_per_mtok_out <= 0]
     if config.season_cap_usd <= 0:
@@ -369,11 +375,15 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyCo
                     prompt_digest = prompt.prompt_hash(Condition(condition))
                 if packet_digest is None and packet is not None:
                     packet_digest = packet_hash(packet)
+                quote = game.line_aware.market if game.line_aware is not None else None
                 _append(path, {
                     "game_id": game.game_id, "contestant": name, "condition": condition,
                     "model_version": model_version, "prompt_hash": prompt_digest,
                     "packet_hash": packet_digest,
                     "market_snapshot_id": snapshot_id, "p": p,
+                    # The benchmark scoring compares against (#448 item 10): this run's
+                    # snapshot, de-vigged, unclipped -- on every record of the game, blind too.
+                    "market_home_win_prob": None if quote is None else quote.home_win_prob,
                     "run_start": run_start, "finished_at": finished, "workflow_run_id": run_id,
                     "excluded": "finished_within_60min_of_kickoff"
                     if lead < config.min_lead_minutes else None,

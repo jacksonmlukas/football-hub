@@ -19,7 +19,7 @@ import pytest
 from forecasters_fixtures import KICKOFF, RUN_START, SNAPSHOT, _build
 
 from hub.forecasters import prompt, runner
-from hub.forecasters.config import LlmSpec, StudyConfig, load
+from hub.forecasters.config import Analysis, LlmSpec, StudyConfig, load
 from hub.forecasters.packet import Condition, packet_hash
 
 GID = "2026_06_BUF_KC"
@@ -34,7 +34,8 @@ def _spec(name: str = "m1", **kw) -> LlmSpec:
 
 def _config(*specs: LlmSpec, cap: float = 100.0) -> StudyConfig:
     return StudyConfig(llms=specs or (_spec(),), season_cap_usd=cap, home_rate=0.55,
-                       home_rate_seasons="2015-2025", est_input_tokens=1500)
+                       home_rate_seasons="2015-2025", est_input_tokens=1500,
+                       analysis=Analysis(0.02, 0.25, "hub.forecasters.score@abcdef0"))
 
 
 class FakeClient:
@@ -115,6 +116,34 @@ def test_a_record_carries_what_the_prereg_lists(tmp_path):
         assert k in r, k
     assert r["packet_hash"] == packet_hash(_build(Condition.LINE_AWARE))
     assert r["condition"] == "line_aware" and len(r["samples"]) == 5
+
+
+def test_every_record_carries_the_runs_market_probability_unclipped(tmp_path):
+    """#448 item 10: the benchmark scoring reads back is the run's de-vigged snapshot value,
+    on every record of the game (blind ones too), and is never clipped (item 2). Planted: a
+    market at 0.995, outside the contestants' clip."""
+    aware = _build(Condition.LINE_AWARE)
+    assert aware.market is not None
+    hot = replace(aware, market=replace(aware.market, home_win_prob=0.995))
+    _, out = _run(tmp_path, games=[_game(line_aware=hot)])
+    recs = _records(out)
+    assert {r["market_home_win_prob"] for r in recs} == {0.995}
+    _, none = _run(tmp_path / "partial", games=[_game(line_aware=None)])
+    assert {r["market_home_win_prob"] for r in _records(none)} == {None}
+
+
+def test_a_pinned_model_config_is_refused_while_delta_or_the_h1_threshold_is_unset():
+    """#448 item 8: `runner.require_pinned` refuses a model call while delta or the H1
+    threshold is TBD -- each named on its own -- and does not ask for the H2 pin."""
+    four = _config(*(_spec(f"m{i}") for i in range(4)))
+    for unset, gap in ((replace(four.analysis, delta=None), "analysis.delta"),
+                       (replace(four.analysis, h1_min_deviation_sd=None),
+                        "analysis.h1_min_deviation_sd")):
+        with pytest.raises(runner.NotPinned, match=gap) as exc:
+            runner.require_pinned(replace(four, analysis=unset))
+        assert "h2_implementation" not in str(exc.value)
+    runner.require_pinned(replace(four, analysis=replace(four.analysis,
+                                                         h2_implementation=None)))
 
 
 # --- the LLM call: settings, samples, parsing, retries ------------------------------------

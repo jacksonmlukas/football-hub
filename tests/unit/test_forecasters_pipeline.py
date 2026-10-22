@@ -33,7 +33,7 @@ from forecasters_slate import (
 
 from hub.fetch import odds
 from hub.forecasters import cli, pipeline, providers, qb, runner, sources
-from hub.forecasters.config import LlmSpec, StudyConfig
+from hub.forecasters.config import Analysis, LlmSpec, StudyConfig
 from hub.forecasters.inputs import QbSource, SourceStamp
 
 PROVIDERS = ("anthropic", "openai", "google", "google")
@@ -45,7 +45,8 @@ def _config() -> StudyConfig:
                          max_output_tokens=2000, usd_per_mtok_in=1.0, usd_per_mtok_out=5.0)
                  for i, p in enumerate(PROVIDERS))
     return StudyConfig(llms=llms, season_cap_usd=150.0, home_rate=0.547,
-                       home_rate_seasons="2016-2025", est_input_tokens=3000)
+                       home_rate_seasons="2016-2025", est_input_tokens=3000,
+                       analysis=Analysis(0.02, 0.25, "hub.forecasters.score@abcdef0"))
 
 
 class FakeClient:

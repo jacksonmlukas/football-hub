@@ -42,7 +42,7 @@ from forecasters_slate import (
 from hub.fetch import cached, odds, tavily
 from hub.forecasters import cli, pipeline, prompt, qb, retrieval, runner, sources
 from hub.forecasters import config as study_config
-from hub.forecasters.config import LlmSpec, RetrievalSpec, StudyConfig
+from hub.forecasters.config import Analysis, LlmSpec, RetrievalSpec, StudyConfig
 from hub.forecasters.inputs import QbSource, SourceStamp
 from hub.forecasters.packet import Condition, PacketRefused, packet_hash
 
@@ -323,7 +323,8 @@ def _config(**kw: Any) -> StudyConfig:
     spec = replace(RetrievalSpec(paired_with="llm1", season_credit_cap=1500,
                                  usd_per_credit=0.01), **kw)
     return StudyConfig(llms=llms, season_cap_usd=150.0, home_rate=0.547,
-                       home_rate_seasons="2016-2025", est_input_tokens=3000, retrieval=spec)
+                       home_rate_seasons="2016-2025", est_input_tokens=3000, retrieval=spec,
+                       analysis=Analysis(0.02, 0.25, "hub.forecasters.score@abcdef0"))
 
 
 def test_the_paired_contestant_is_named_after_its_twin():
