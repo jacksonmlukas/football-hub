@@ -12,6 +12,12 @@ export const weekList = ws => ws.map(w => `wk ${w}`).join(", ");
 
 export function ago(iso) {
   if (!iso) return "never";
+  // The store's timestamps are naive UTC ("2026-10-17 16:58:09"). `new Date` reads an
+  // offset-less string as the reader's local time, or rejects the space form outright, so
+  // a naive stamp is made explicit UTC first.
+  if (typeof iso === "string" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(iso)) {
+    iso = iso.replace(" ", "T") + "Z";
+  }
   const mins = Math.round((Date.now() - new Date(iso)) / 60000);
   if (!Number.isFinite(mins)) return "unknown";
   if (mins < 1) return "just now";

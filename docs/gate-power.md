@@ -5180,3 +5180,109 @@ in every ledger key, so **each gate's next run starts a new width-history series
 prediction row carries a new version string. That is the cost of `chosen` over `not_an_input`
 (the declaration `ALPHA`, `POWER` and `FDR_Q` carry, for "nothing here predicts"); it is named
 here for the maintainer rather than chosen silently.
+
+# Restated 2026-10-20 (#520): the SE under the t interval, the MDE and the power was biased low by sqrt((k-1)/k)
+
+ADOPTED (a) on #520, 2026-10-20: fix the SE first, as its own dated restatement; #375 builds on
+the corrected interval. `docs/method.md` rule 13: every figure above keeps its text; this section
+says what each one becomes.
+
+**The defect.** `summarise` paired `t(0.975, k-1)` with the standard deviation of the bootstrap's
+resampled cluster means (`draws.std(ddof=1)`). That SD estimates the *plug-in* standard error,
+`sqrt((k-1)/k) * s/sqrt(k)`, where the t reference assumes `s/sqrt(k)` (`s` the cluster means'
+`ddof=1` sd). Low by `sqrt((k-1)/k)`: two independent simulations on null data put the nominal-95%
+t interval at ~92.5% coverage at k=4, 93.6% at k=6 and 94.1% at k=14, and the MDE understated by
+~13% at k=4. The section *Restated 2026-09-07* above fixed the quantile and kept "the SE still
+comes from the same bootstrap"; that half is kept too — what changes is that the bootstrap's SD
+is now rescaled before the t reads it.
+
+**The fix** (`experiment._t_reference_se`): `se = draws.std(ddof=1) * sqrt(k/(k-1))`, the
+same draws. Chosen over `units.std(ddof=1)/sqrt(k)` because (i) the bootstrap stays the one
+mechanism every clustered SE in the module comes from (#311's option (a)), and (ii) it makes this
+restatement exact: on a re-run at the same seed the draws are byte-identical, so every SE, MDE
+and t half-width moves by precisely the factor below, with no Monte Carlo noise from swapping
+estimators. The percentile `lo`/`hi` — and so every ledger width in `state/gate-width.json`,
+which is `hi - lo` — are unchanged. `tests/unit/test_experiment.py::
+test_the_t_interval_covers_at_its_nominal_rate_at_four_seasons` holds it: 4,000 seeded nulls at
+k=4 through `summarise` cover at 0.9465 (0.920 on the old SE; planted red).
+
+**The factor, closed form** (SE, MDE and t half-width multiply by it; the mean, the percentile
+interval and the ceiling do not move):
+
+| k (clusters) | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 10 | 12 | 14 | 16 | 20 | 22 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| old SE / unbiased, `sqrt((k-1)/k)` | 0.7071 | 0.8165 | 0.8660 | 0.8944 | 0.9129 | 0.9258 | 0.9354 | 0.9487 | 0.9574 | 0.9636 | 0.9682 | 0.9747 | 0.9770 |
+| **restatement factor, `sqrt(k/(k-1))`** | **1.4142** | **1.2247** | **1.1547** | **1.1180** | **1.0954** | **1.0801** | **1.0690** | **1.0541** | **1.0445** | **1.0377** | **1.0328** | **1.0260** | **1.0235** |
+
+Achieved power is `Phi(|mean|/se - t)` and falls accordingly; no document publishes one for a
+verdict, so none is restated.
+
+**Every latest published gate figure, restated by the factor** (computed from the printed,
+rounded figures, so good to their last printed digit; the t interval is re-centred on its own
+midpoint):
+
+| gate (where published) | k | t interval, published → **restated** | MDE, published → **restated** | ceiling | verdict, and whether it moves |
+|---|---|---|---|---|---|
+| draft, #467 (this document, above; `pick-noise.md`) | 4 | [−21.32, −5.67] → **[−22.53, −4.46]** | 9.90 → **11.43** | +21.90 (ceiling/MDE 2.21 → **1.92**) | REMOVE 4 of 4 — **holds**; stage 2 still passes |
+| weekly gate, #381 (above; ADR-0016, ADR-0019) | 4 | [−2.032, −0.262] → **[−2.169, −0.125]** | 1.119 → **1.292** | +10.873 | REMOVE 3 resolved of 4 — **holds**, `t_hi` now −0.125 |
+| weekly blend, season-clustered (`weekly-blend-gate.md`) | 4 | [−1.611, −0.396] → **[−1.705, −0.302]** | 0.768 → **0.887** (SE 0.191 → **0.220**) | none measured | REMOVE 0 of 4 — **holds** |
+| weekly blend, restricted, post-#248 (`weekly-blend-gate.md`) | 4 | [−1.326, −0.323] → **[−1.404, −0.245]** | 0.634 → **0.732** | none measured | REMOVE 0 of 4 — **holds** |
+| injury retention, #360 (`weekly-injury.md`) | 3 | [−0.1889, +0.3135] → **[−0.2454, +0.3700]** | 0.3004 → **0.3679** | +0.1202 | NOT-RUNNABLE — **holds** (MDE further above the ceiling) |
+| injury type, #360 (`weekly-injury.md`) | 3 | [−0.0531, +0.1328] → **[−0.0740, +0.1537]** | 0.1111 → **0.1361** | +0.3852 | SHOW — **holds** |
+| spread `own_k`, #343/#381 (`player-spread.md`) | 5 | [+0.0029, +0.0102] → **[+0.0025, +0.0106]** | 0.0048 → **0.0054** | +0.0852 | SHOW, 0 resolved of 5 — **holds** (the interval half still excludes zero; the every-season half is what withholds ADOPT) |
+| spread `usage` (`player-spread.md`) | 5 | [−0.0342, +0.0325] → **[−0.0381, +0.0364]** | 0.0434 → **0.0485** | +0.0852 | SHOW — **holds** |
+| component calibration (`component-projection.md`) | 3 | [−0.142, +0.142] → **[−0.174, +0.174]** | 0.170 → **0.208** | +0.019 | NOT-RUNNABLE — **holds** |
+| TD dispersion refit (`td-dispersion.md`) | 6 | [+0.01087, +0.01380] → **[+0.01073, +0.01394]** | 0.00195 → **0.00214** | +0.01367 | ADOPT 6 of 6 — **holds**, `t_lo` still well above zero |
+| favourite-longshot (`margin-sd.md`) | 22 | (no t printed) | 0.00184 → **0.00188** | +0.00298 | SHOW, won 14 lost 8 — **holds** |
+| lookahead margin sd (`margin-sd.md`) | 4 | [−0.0012, +0.0003] → **[−0.0013, +0.0004]** | 0.0009 → **0.0010** | none | SHOW — **holds** |
+| interval shape, #292 (above; `weekly-coverage.md`) | 5 | [−0.0453, −0.0274] → **[−0.0464, −0.0263]** | 0.0117 → **0.0131** | +0.0081 | NOT-RUNNABLE — **holds** |
+| weekly forward, pre-registered (`weekly-forward.md`, not yet run) | 10 weeks | — | ≈2.2 → **≈2.3** | +10.80 | no verdict yet; stage 2 still passes |
+
+**No published verdict moves.** The closest is the weekly gate's REMOVE, whose `t_hi` goes from
+−0.262 to −0.125: still below zero. Every MDE-against-ceiling comparison lands on the side it was
+on. `paired_gain`'s pooled `t` (display-only: `weekly_projection._contrast`) takes the same factor
+— restated in `weekly-projection.md` — and the per-season tie test (`_disposition`'s `2 * se`) does
+not: see below.
+
+**Not restatable by arithmetic, and therefore stale until re-run** (rule 13: a re-run, not an
+argument). These are simulations through the shipped `experiment.gate`, whose ADOPT/REMOVE rates
+are not linear in the SE:
+
+1. #388's gate-horizon null and power table (this document, *Results*, the table and the
+   tie-mechanism shares) — `scripts/gate_horizon.py`.
+2. #381's (C) null and power table (this document, *Results (C)*) — `scripts/gate_horizon.py --rule-c`.
+3. `weekly-forward.md`'s power-at-the-horizon table (10,000 trials a cell) —
+   `scripts/weekly_forward_power.py`.
+4. ADR-0019's rule-16 combined-rule simulation (null 0.0113 / power 0.0324 draft; 0.0186 / 0.1925
+   blend) and its `gate-power.md` counterpart.
+
+Each will show a lower null ADOPT/REMOVE rate and lower power than published: the interval half is
+now wider by the factor at that table's k. None was re-run here (each is a heavy simulation on a
+shared machine); the size direction is conservative, so no published null size is understated by
+the correction.
+
+**What is deliberately not changed: the per-season tie test.** `_disposition` calls a season a
+win at `gain >= 2 * se` over its within-season clusters, with `se` the same raw bootstrap SD —
+biased by the same `sqrt((m-1)/m)`. It is left alone because the `2` is a chosen bar
+(ADR-0019's #335 amendment), not a quantile paired with a nominal coverage, and it only reads an
+SE at `m >= TIE_MIN_CLUSTERS = 12`, where the factor is at most 1.0445 (1.026 at the weekly gate's
+20 rosters). Correcting it would move dispositions — and every ledger row's season records — in
+every gate, which is a rule change for the maintainer, not a correction of an interval's stated
+coverage. Named here so that it is a decision, not an oversight.
+
+**Ledger and forward pin.** `hub.models.experiment` is `CLOSURE_EXEMPT` (`hub.closure`), so
+neither the ledger key's `code_digest` nor `weekly_forward.PINNED_ARM_MODULES` moves, and no
+pinned arm's output changes (the arm is the projection; this module is the rule that reads it).
+The ledger's `width` is the percentile `hi - lo` and is unchanged, so every recorded width still
+compares with the next run's. What the ledger key cannot see is a verdict computed on the old SE
+beside one on the new; the table above is the record that none differs.
+
+**What the suite's own pins said.** The block-sweep digest moved on MDE and power lines only;
+the seam-equivalence golden moved on `se`/`mde`/`t_lo`/`t_hi`/`power` and their report lines
+only, verdicts unchanged. Five synthetic fixtures had reached their branch (four ADOPT/REMOVE,
+one "excludes zero but the sign is not consistent") **only because of the bias**: three equal wins beside one season at or near zero, at k=4, has `mean = 3a/4`
+against an unbiased half-width of `3.18 * a/4`, so it can never clear the t; the fixtures were
+given a tie season further from zero or a fifth season, each noted at the fixture. On the
+margin module's three-season synthetic golden, two candidate lines move SHOW → NOT-RUNNABLE
+(MDE ×1.2247 now above that frame's ceiling), the decision unchanged. These are fixtures, not
+published results; they are the size of the change at small k made visible.

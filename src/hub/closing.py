@@ -427,7 +427,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             capture(a.season, publish_attempt=_commit_marker if a.commit_attempt else None)
         except (odds.QuotaFloor, odds.MultiplierRefused, CloseBudgetExceeded,
-                odds.SnapshotIncomplete, AttemptNotRecorded) as e:
+                odds.SnapshotIncomplete, odds.ScheduleUnavailable, AttemptNotRecorded) as e:
             print(f"hub.closing: {e}", file=sys.stderr)
             return 1
         except Exception as e:

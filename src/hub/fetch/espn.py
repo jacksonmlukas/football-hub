@@ -22,6 +22,7 @@ import requests
 from hub import atomic, jsonio
 from hub.config import SEASON_AHEAD
 from hub.contracts import ESPN_SCOREBOARD
+from hub.declare import not_an_input
 
 # As of Aug 2026 site.api.espn.com started 403ing scripted traffic; adding `.web`
 # to the host, or using a non-browser UA, resolves it. Try all four combinations.
@@ -411,6 +412,38 @@ def resolve_league_id(override: int | None = None) -> int:
             "is not shown here because it is a secret in CI logs.") from None
 
 
+# Seconds one `espn_api` request may wait on ESPN before it raises (#519). `requests` waits
+# forever by default and the library passes no timeout, so a stalled endpoint held the slate job
+# until its 45-minute cancel and the publish never ran. Per socket operation, as `requests`
+# counts it: a stalled connect or a stalled read raises `requests.Timeout`, an ordinary
+# exception, which the free-agent and roster callers already turn into last-good.
+ESPN_API_TIMEOUT = not_an_input(
+    30, "seconds a library ESPN request may stall before failing; it reaches no prediction")
+
+
+class _BoundedRequests:
+    """`requests`, with `ESPN_API_TIMEOUT` as the default for `get`.
+
+    Handed to `espn_api.requests.espn_requests` as its `requests` name, so the bound covers that
+    module's calls alone: `requests` itself, `socket` defaults and every other fetcher are
+    untouched. The timeout is read at call time, and a caller's own `timeout=` still wins.
+    """
+
+    def get(self, *args: Any, **kwargs: Any) -> requests.Response:
+        kwargs.setdefault("timeout", ESPN_API_TIMEOUT)
+        return requests.get(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(requests, name)
+
+
+def bound_espn_api_requests() -> None:
+    """Install the default timeout on every request `espn_api` makes. Idempotent."""
+    from espn_api.requests import espn_requests
+    if not isinstance(espn_requests.requests, _BoundedRequests):
+        setattr(espn_requests, "requests", _BoundedRequests())  # noqa: B010 - a module, not a type
+
+
 def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> LeagueView:
     """Read roster slots straight from your league instead of hardcoding them.
 
@@ -423,6 +456,7 @@ def league_settings(year: int = SEASON_AHEAD, league_id: int | None = None) -> L
     from dotenv import load_dotenv
     from espn_api.football import League
     load_dotenv()
+    bound_espn_api_requests()
     lg = League(
         league_id=resolve_league_id(league_id),
         year=year,

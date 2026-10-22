@@ -10,9 +10,12 @@ from datetime import UTC, date, datetime, timedelta
 import polars as pl
 import pytest
 
+from hub import atomic, publish
 from hub.fetch import consensus
 from hub.names import player_key
 from hub.season import lineup_journal as J
+from hub.season import lineup_rule
+from hub.season.roster import lock
 
 _REAL_NOW = J._now          # the autouse fixture below replaces it for every test
 SEASON, WEEK = 2026, 7
@@ -183,7 +186,7 @@ def test_settle_writes_each_lineups_realised_points_once(tmp_path):
     _rec(_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "cons")
     pts = {player_key(p[0]): p[2] for p in PLAYERS}               # everyone scores their mu
     pts[player_key("Tb Two")] = 30.0
-    assert _settle(SEASON, WEEK, pts, tmp_path / "j").endswith("scored")
+    assert _settle(SEASON, WEEK, pts, tmp_path / "j").startswith(f"week {WEEK}: scored")
     doc = json.loads(J.journal_path(SEASON, WEEK, tmp_path / "j").read_text())
     base = 20 + 18 + 17 + 16 + 15 + 14 + 13
     assert doc["scored"] is True
@@ -281,7 +284,7 @@ def test_a_partially_loaded_week_stays_unscored_with_a_reason(tmp_path):
     assert "1 of 2 games not final" in why
     doc = _doc(J.journal_path(SEASON, WEEK, tmp_path / "j"))
     assert doc["scored"] is False and doc["realised"]["mu"] is None
-    assert _settle(SEASON, WEEK, pts, tmp_path / "j").endswith("scored")     # then complete
+    assert _settle(SEASON, WEEK, pts, tmp_path / "j").startswith(f"week {WEEK}: scored")
 
 
 def test_settle_without_a_schedule_leaves_the_week_unscored(tmp_path):
@@ -351,3 +354,238 @@ def test_a_failed_realised_read_leaves_the_week_unscored(tmp_path, monkeypatch, 
     assert J.main(["--settle", "--roster", str(roster), "--out", str(base)]) == 0
     assert J.read(J.SEASON_AHEAD, base)[0]["scored"] is False
     assert "not settled" in capsys.readouterr().err
+
+
+# --- what was actually published (#517) ------------------------------------------------------
+#
+# The week is the season's switch week, read from the rule rather than written here, so it stays
+# a consensus week wherever the boundary sits. Wednesday has no capture at all, so the rule falls
+# back to `mu` (flex Rc Three); Friday's lineup capture ranks by ECR (flex Wd Four); Saturday's
+# publish sets that. A journal frozen on Wednesday scores Rc Three, whom nobody started.
+
+SW = lineup_rule.ECR_FROM_WEEK[SEASON]
+THU = date(2026, 10, 22) + timedelta(days=7 * (SW - 7))      # week 7: Thu 10-22, Sun 10-25
+SUN = THU + timedelta(days=3)
+WED_AM = datetime.combine(THU - timedelta(days=1), datetime.min.time(), UTC) + timedelta(hours=11)
+FRI_AM = WED_AM + timedelta(days=2, hours=2)
+SAT_AM = WED_AM + timedelta(days=3, hours=3)                 # 14:00 UTC, the roster's run
+SUN_START = consensus.lineup_deadline_for(SUN)               # 00:00 Eastern, Sunday
+MU_SET = {"Qa One", "Ra One", "Rb Two", "Wa One", "Wb Two", "Wc Three", "Ta One", "Rc Three"}
+
+
+def _week_schedule(final: bool = False) -> pl.DataFrame:
+    """The switch week: a Thursday game and a Sunday game."""
+    return pl.DataFrame(
+        [{"game_id": f"{SW}-{i}", "season": SEASON, "week": SW, "game_type": "REG",
+          "home_team": "A", "away_team": "B", "gameday": d.isoformat(),
+          "home_score": 20 if final else None, "away_score": 17 if final else None}
+         for i, d in enumerate((THU, SUN))],
+        schema_overrides={"home_score": pl.Int64, "away_score": pl.Int64})
+
+
+def _pub_roster(**cols) -> pl.DataFrame:
+    df = _roster(week=SW).with_columns(
+        pl.Series("starting", [p[0] in MU_SET for p in PLAYERS]),
+        pl.lit(False).alias("on_bye"), pl.lit("ACTIVE").alias("injury_status"),
+        pl.lit("BE").alias("slot"))
+    return df.with_columns(*[pl.Series(k, v) for k, v in cols.items()])
+
+
+def _ecr_rows(players=PLAYERS) -> pl.DataFrame:
+    return pl.DataFrame({"player": [p[0] for p in players], "pos": [p[1] for p in players],
+                         "team": ["XXX"] * len(players), "ecr": [p[3] for p in players]})
+
+
+def _friday_lineup_capture(base, rows=None) -> None:
+    consensus.write_lineup_capture(consensus.build_lineup(
+        SEASON, SW, _ecr_rows() if rows is None else rows, THU + timedelta(days=1),
+        THU - timedelta(days=2), THU, SUN, FRI_AM, "d"), base)
+
+
+@pytest.fixture
+def site(monkeypatch, tmp_path):
+    """The publisher pointed at a tmp site, journal and capture tree, on the switch week."""
+    from hub.season import stream, waiver
+    monkeypatch.setattr(consensus, "ROOT", tmp_path / "cons")
+    monkeypatch.setattr(J, "ROOT", tmp_path / "j")
+    monkeypatch.setattr(publish, "SITE", tmp_path / "site")
+    monkeypatch.setattr(J, "_schedule", lambda season: _week_schedule())
+    monkeypatch.setattr(publish, "_roster_stream", lambda df: stream.unavailable("stubbed"))
+    monkeypatch.setattr(publish, "_roster_waiver", lambda df: waiver.unavailable("stubbed"))
+    return tmp_path
+
+
+def _publish_at(tmp, when, monkeypatch) -> dict:
+    monkeypatch.setattr(J, "_now", lambda: when)
+    src = tmp / "roster.parquet"
+    _pub_roster().write_parquet(src)
+    publish.roster(path=src)
+    return json.loads((tmp / "site" / "roster.json").read_text())
+
+
+def _entry() -> dict:
+    return _doc(J.journal_path(SEASON, SW))
+
+
+def test_the_saturday_publish_is_journalled_and_settle_scores_it(site, monkeypatch):
+    """The acceptance case: the lineup capture lands after Wednesday, and the journal's
+    published lineup is Saturday's published roster -- not the Wednesday rule's."""
+    J.record(_pub_roster(), season=SEASON, now=WED_AM, schedule=_week_schedule())
+    wednesday = {k: v for k, v in _entry().items() if k != "published"}
+    _publish_at(site, WED_AM, monkeypatch)
+    assert _entry()["published"]["source"] == "mu"
+    _friday_lineup_capture(site / "cons")
+    art = _publish_at(site, SAT_AM, monkeypatch)
+    doc = _entry()
+    pub = doc["published"]
+    shown = sorted(r["player"] for r in art["rows"] if r["best_start"])
+    assert pub["lineup"] == shown and "Wd Four" in shown and "Rc Three" not in shown
+    assert pub["source"] == art["lineup_rule"]["source"] == "ecr"
+    assert pub["ecr_week"] == SW and pub["ecr_capture"]["purpose"] == consensus.LINEUP
+    assert pub["decided_at"] == SAT_AM.isoformat() and "locked" not in pub
+    # The Wednesday comparison is exactly as it was written: the publish touched none of it.
+    assert {k: v for k, v in doc.items() if k != "published"} == wednesday
+    assert doc["rule"]["source"] == "mu" and "Rc Three" in doc["rule"]["lineup"]
+    pts = {player_key(p[0]): p[2] for p in PLAYERS} | {player_key("Wd Four"): 3.0}
+    note = J.settle(SEASON, SW, pts, schedule=_week_schedule(final=True))
+    assert note == f"week {SW}: scored"
+    doc = _entry()
+    assert doc["set_scored_from"] == "published"
+    assert doc["realised"]["set"]["points"] == round(sum(pts[player_key(n)] for n in shown), 2)
+    assert doc["realised"]["set"]["points"] != doc["realised"]["mu"]["points"]
+
+
+def test_no_published_write_from_the_first_sunday_on(site, monkeypatch):
+    """Rule 18: the publish at the start of Sunday, Eastern, finds the decision frozen."""
+    _publish_at(site, SAT_AM, monkeypatch)
+    before = J.journal_path(SEASON, SW).read_text()
+    _friday_lineup_capture(site / "cons")                     # would change the decision
+    _publish_at(site, SUN_START, monkeypatch)
+    assert J.journal_path(SEASON, SW).read_text() == before
+    _publish_at(site, SUN_START - timedelta(minutes=1), monkeypatch)
+    assert J.journal_path(SEASON, SW).read_text() != before, "a minute earlier is in time"
+
+
+def test_record_published_refusals_say_why(tmp_path):
+    lk, rule = lineup_rule.decide(_pub_roster(), SEASON, captures=tmp_path / "none")
+    kw = {"base": tmp_path / "j", "now": SAT_AM}
+    assert "no scoring period" in J.record_published(SEASON, None, lk, rule, **kw)[1]
+    assert "no schedule" in J.record_published(SEASON, SW, lk, rule, schedule=None, **kw)[1]
+    thursday_only = _week_schedule().filter(pl.col("gameday") == THU.isoformat())
+    assert "no Sunday game" in J.record_published(SEASON, SW, lk, rule,
+                                                  schedule=thursday_only, **kw)[1]
+    got, why = J.record_published(SEASON, SW, lk, rule, schedule=_week_schedule(),
+                                  base=tmp_path / "j", now=SUN_START)
+    assert got is None and "has started" in why
+    assert not (tmp_path / "j").exists()
+
+
+def test_a_scored_week_keeps_its_published_decision(tmp_path):
+    lk, rule = lineup_rule.decide(_pub_roster(), SEASON, captures=tmp_path / "none")
+    kw = {"base": tmp_path / "j", "schedule": _week_schedule(), "now": SAT_AM}
+    path, _ = J.record_published(SEASON, SW, lk, rule, **kw)
+    assert path is not None
+    J.settle(SEASON, SW, {player_key("Qa One"): 1.0}, tmp_path / "j",
+             schedule=_week_schedule(final=True))
+    before = path.read_text()
+    _, why = J.record_published(SEASON, SW, lk, rule, **kw)
+    assert "already scored" in why and path.read_text() == before
+
+
+def test_a_publish_before_any_record_is_kept_when_record_adds_the_comparison(tmp_path):
+    """A week whose Wednesday `record` did not run: the publish writes its block alone, the
+    record then adds the comparison beside it, and settle scores an entry of either shape."""
+    lk, rule = lineup_rule.decide(_pub_roster(), SEASON, captures=tmp_path / "none")
+    kw = {"schedule": _week_schedule(), "now": WED_AM}
+    path, _ = J.record_published(SEASON, SW, lk, rule, base=tmp_path / "j", **kw)
+    assert path is not None and "sources" not in _doc(path)
+    alone = tmp_path / "alone"
+    J.record_published(SEASON, SW, lk, rule, base=alone, **kw)
+    J.settle(SEASON, SW, {player_key("Qa One"): 1.0}, alone, schedule=_week_schedule(True))
+    scored = _doc(J.journal_path(SEASON, SW, alone))
+    assert scored["realised"]["mu"] is None and scored["set_scored_from"] == "published"
+    published = _doc(path)["published"]
+    J.record(_pub_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "none", **kw)
+    doc = _doc(path)
+    assert doc["published"] == published and doc["sources"]["mu"]["lineup"]
+
+
+def test_the_locked_players_travel_with_the_published_decision(tmp_path):
+    df = _pub_roster(kicked_off=[p[0] == "Qa One" for p in PLAYERS])
+    lk, rule = lineup_rule.decide(df, SEASON, captures=tmp_path / "none")
+    assert lk.locked == ("Qa One",)
+    path, _ = J.record_published(SEASON, SW, lk, rule, base=tmp_path / "j",
+                                 schedule=_week_schedule(), now=SAT_AM)
+    assert path is not None and _doc(path)["published"]["locked"] == ["Qa One"]
+
+
+def test_an_old_format_week_falls_back_to_the_rule_block_and_says_so(tmp_path):
+    _rec(_roster(), season=SEASON, base=tmp_path / "j", captures=tmp_path / "x")
+    pts = {player_key(p[0]): p[2] for p in PLAYERS}
+    note = _settle(SEASON, WEEK, pts, tmp_path / "j")
+    assert "scored from the Wednesday `rule` block" in note and "#517" in note
+    doc = _doc(J.journal_path(SEASON, WEEK, tmp_path / "j"))
+    assert doc["set_scored_from"] == "rule"
+    assert doc["realised"]["set"]["points"] == round(
+        sum(pts[player_key(n)] for n in doc["rule"]["lineup"]), 2)
+
+
+def test_a_publish_into_a_scratch_directory_is_not_journalled(site, monkeypatch):
+    src = site / "roster.parquet"
+    _pub_roster().write_parquet(src)
+    monkeypatch.setattr(J, "_now", lambda: SAT_AM)
+    publish.roster(out=site / "scratch", path=src)
+    assert (site / "scratch" / "roster.json").exists()
+    assert not J.journal_path(SEASON, SW).exists()
+
+
+def test_a_journal_that_cannot_be_written_never_fails_the_publish(site, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("read-only")
+    monkeypatch.setattr(J, "record_published", boom)
+    lk, rule = lineup_rule.decide(_pub_roster(), SEASON)
+    assert "not journalled (OSError)" in publish._roster_journal(SW, lk, rule)
+
+
+def test_players_on_bye_are_in_no_sources_candidate_pool(tmp_path):
+    """Rule 18: Wd Four is ECR's flex; on bye he is no source's, as he is not `lock`'s."""
+    _capture(tmp_path / "cons")
+    ecr = J.ecr_ranks(SEASON, WEEK, tmp_path / "cons")
+    open_ = J.lineups(_roster(), *ecr, *J.espn_weekly(_roster()))
+    assert "Wd Four" in open_["ecr"]["lineup"], "off bye he is ECR's flex"
+    df = _roster().with_columns(pl.Series("on_bye", [p[0] == "Wd Four" for p in PLAYERS]))
+    got = J.lineups(df, *ecr, *J.espn_weekly(df))
+    assert all(v["lineup"] and "Wd Four" not in v["lineup"] for v in got.values())
+    assert "Wd Four" not in lock(df, ranks=ecr[0]).best_lineup
+
+
+def test_a_full_entry_stays_well_under_the_state_cap(tmp_path):
+    """`tests/contracts/test_quota_state_survives_a_runner.py` holds a journal entry to a
+    counter's 4,096 bytes; the `published` block must leave room under its headroom: long
+    names, all three sources answering, a lineup capture's label and a locked player."""
+    long = [(f"{p[0]} Longsurname-Doubleteam", *p[1:]) for p in PLAYERS]
+    df = pl.DataFrame({
+        "player": [p[0] for p in long], "key": [player_key(p[0]) for p in long],
+        "pos": [p[1] for p in long], "nfl_team": ["XXX"] * len(long),
+        "mu": [p[2] for p in long], "sd": [5.0] * len(long),
+        "projected": [True] * len(long), "can_start": [True] * len(long),
+        "available": [True] * len(long),
+        "starting": [p[0].rsplit(" ", 1)[0] in MU_SET for p in long],
+        "espn_week": [SW] * len(long), "espn_week_proj": [p[4] for p in long],
+        "kicked_off": [p[0].startswith("Qa") for p in long]},
+        schema_overrides={"espn_week": pl.Int64})
+    cons = tmp_path / "cons"
+    cap = consensus.build(SEASON, SW, _ecr_rows(long), THU - timedelta(days=2), THU, WED_AM, "d")
+    atomic.write_text(consensus.capture_path(SEASON, SW, WED_AM, cons),
+                      json.dumps(cap, sort_keys=True) + "\n")
+    _friday_lineup_capture(cons, _ecr_rows(long))
+    path, _ = J.record(df, season=SEASON, base=tmp_path / "j", now=WED_AM,
+                       schedule=_week_schedule(), captures=cons)
+    lk, rule = lineup_rule.decide(df, SEASON, SW, cons, ecr={}, ecr_reason="stale")
+    J.record_published(SEASON, SW, lk, rule, base=tmp_path / "j", schedule=_week_schedule(),
+                       now=SAT_AM)
+    assert path is not None
+    doc = _doc(path)
+    assert all(doc["sources"][s]["lineup"] for s in J.SOURCES)
+    assert doc["published"]["ecr_capture"] and doc["published"]["locked"]
+    assert len(json.dumps(doc)) < 0.8 * 4096, len(json.dumps(doc))

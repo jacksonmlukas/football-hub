@@ -255,7 +255,7 @@ def _coverage_stats():
 def _coverage_gate_run():
     from hub.models import coverage
     run, _, _ = coverage.shape_law(_coverage_stats(),
-                                   ledger=Ledger(Path("/nonexistent/control.json")))
+                                   ledger=Ledger(Path("/nonexistent/control.json"), write=False))
     return run
 
 
@@ -364,8 +364,12 @@ def _threshold_run():
 def _tie_run():
     """One season with a gain of exactly zero and a genuine (non-sign-only) bootstrap SE --
     a tie under #335's rule -- among three real wins, so ADOPT is blocked by the one season
-    that cannot resolve rather than by a losing one."""
-    return _battery_gate_run([1.0, 1.1, 0.0, 1.2], ceiling=5.0, seed=4)
+    that cannot resolve rather than by a losing one.
+
+    #520 (2026-10-20): was `[1.0, 1.1, 0.0, 1.2]`. At k=4 a season at exactly zero beside three
+    wins of ~1 cannot clear the unbiased t (mean 0.825 against a half-width ~0.89); the biased
+    SE was what let it ADOPT. A fifth win keeps the case about the abstention."""
+    return _battery_gate_run([1.0, 1.1, 0.0, 1.2, 1.0], ceiling=5.0, seed=4)
 
 
 def _not_runnable_run():
@@ -457,6 +461,17 @@ def test_margin_shape_verdict_runs():
 # unchanged by it. #464: the -0.54 -> +13.72 is a fixture artefact of arm B's tie reshuffle at
 # the fixture's 2x10 budget, not a material change of the objective (season level -1.56, within
 # noise; verdict stays REMOVE, ceiling +21.90).
+#
+# Re-captured 2026-10-20 for #520 (the t-reference SE is the draws' SD x sqrt(k/(k-1))). Diffed
+# case by case before writing: in every case that moved, only `se`, `mde`, `t_lo`, `t_hi` and
+# (where the effect is not saturated) `power` moved in the summary, and only the MDE, t CI and
+# achieved-power lines in the report; no verdict, season row, mean or percentile interval moved.
+# `draft`, `draft_sensitivity`, `lineup` and `quarterback` are byte-identical. `battery_tie`
+# moved as a fixture (a fifth season, see `_tie_run`) and is still ADOPT. The two margin
+# goldens were re-captured with it: on this three-season synthetic frame both candidate lines of
+# `margin_verdict` move SHOW -> NOT-RUNNABLE (the MDE, x1.2247 at k=3, now exceeds the frame's
+# ceiling) and the decision (KEEP, winner `incumbent`) does not; `margin_shape_verdict` moves
+# only its printed se (0.00521 -> 0.00639), decision KEEP the Gaussian unchanged.
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_the_gate_run_is_byte_identical_to_the_golden_capture(name):
     assert _reduce(CASES[name]()) == GOLDEN[name]

@@ -142,8 +142,11 @@ def test_the_coverage_artifacts_cap_and_its_comment_agree_with_the_file():
 
 # #432: one capture of the weekly consensus page, a few hundred ranked players, is a record of
 # what could have been read before a week's first game and is the only thing that can ever say
-# so. Bigger than a counter by design; still one small JSON document a file.
+# so. Bigger than a counter by design; still one small JSON document a file. The lineup capture
+# (`state/consensus/<season>/lineup/wk<NN>/lineup-*.json`) is the same page's rows under a few
+# more envelope fields (`purpose`, `first_sunday`, `scrape_floor`), so the same cap fits it.
 CAPTURE_CAP = 131072
+CAPTURE_PREFIX = "state/consensus/"
 
 # #434: the content-addressed input sets under `state/inputs/`, one file per distinct set of
 # pins a gate run read (identical sets share a file). A file is a small dict of
@@ -190,7 +193,9 @@ def test_the_state_directory_carries_no_third_party_payload():
 
     A second (#432): `state/consensus/` holds one week's FantasyPros `weekly-op` page, as
     redistributed by DynastyProcess, taken before kickoff because a ranking that is not kept
-    cannot be shown to have been read in time. That source's terms have **not** been checked the
+    cannot be shown to have been read in time -- `<season>/wk<NN>/cap-*.json` -- and, under
+    `<season>/lineup/wk<NN>/lineup-*.json`, the same page taken after Thursday's games for
+    setting Sunday's lineup only. Both are one page's rows under `CAPTURE_CAP`. That source's terms have **not** been checked the
     way The Odds API's were; the repo is private, and `state/README.md` says to re-examine this
     directory first if it is ever made public."""
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "state"],
@@ -203,7 +208,7 @@ def test_the_state_directory_carries_no_third_party_payload():
         body = json.loads((ROOT / f).read_text())
         assert isinstance(body, dict), f"{f} is not a small bookkeeping record"
         stored_set = f.startswith(INPUTS_PREFIX)
-        capture = f.startswith("state/consensus/")
+        capture = f.startswith(CAPTURE_PREFIX)
         snapshot = f.startswith(ODDS_PREFIX)
         journal = f.startswith(STREAM_JOURNAL_PREFIX)
         cap = (INPUTS_FILE_CAP if stored_set else CAPTURE_CAP if capture
@@ -215,6 +220,21 @@ def test_the_state_directory_carries_no_third_party_payload():
                 else "one week's streaming ranking (32 teams, two lists)" if journal
                 else "an append-only ledger's budget" if f in LEDGER_CAPS else "a counter")
         assert len(json.dumps(body)) < cap, f"{f} is over {cap} bytes, too large for {what}"
+
+
+def test_the_lineup_capture_is_filed_under_the_capture_cap():
+    """The lineup capture's path is inside the prefix the capture cap is applied by, so a file
+    there is held to a page's size and not let through as a 4,096-byte counter -- or, if the
+    layout moved out from under the prefix, to nothing written for it at all.
+
+    Mutation (observed): `lineup_path` filing under `root.parent / "consensus_lineup"` is red."""
+    from hub.fetch import consensus
+    path = consensus.lineup_path(2026, 8, datetime(2026, 10, 23, 15, tzinfo=UTC),
+                                 ROOT / "state" / "consensus")
+    assert path.relative_to(ROOT).as_posix().startswith(CAPTURE_PREFIX)
+    assert path.relative_to(ROOT).as_posix() == (
+        "state/consensus/2026/lineup/wk08/lineup-20261023T150000.json")
+    assert consensus.ROOT.relative_to(consensus.ROOT.parents[1]).as_posix() + "/" == CAPTURE_PREFIX
 
 
 def test_the_odds_snapshot_cap_holds_a_full_slate_and_not_a_cached_payload():

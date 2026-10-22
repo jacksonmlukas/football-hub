@@ -50,8 +50,11 @@ could_not_run () { printf 'push gate -- COULD NOT RUN (this is the environment, 
 
 printf '%s' "$EVENT" | grep -Eq '"tool_name"[[:space:]]*:[[:space:]]*"Bash"' || exit 0
 printf '%s' "$EVENT" | grep -Eq '\bgit([[:space:]]+-[A-Za-z-]+([[:space:]=][^[:space:]]+)?)*[[:space:]]+push\b' || exit 0
-# A dry run pushes nothing and is how a caller asks what *would* be pushed.
-printf '%s' "$EVENT" | grep -Eq '\bgit\b[^&|;]*\bpush\b[^&|;]*--dry-run' && exit 0
+# A dry run pushes nothing and is how a caller asks what *would* be pushed. Exempt only when
+# *every* push in the command is one: `git push --dry-run && git push` matched the old
+# any-segment test and its real push went through ungated (found 2026-10-20).
+pushes=$(printf '%s' "$EVENT" | grep -Eo '\bgit\b[^&|;]*\bpush\b[^&|;]*' || true)
+if [ -n "$pushes" ] && ! printf '%s\n' "$pushes" | grep -vq -- '--dry-run'; then exit 0; fi
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || could_not_run "git rev-parse --show-toplevel" "not inside a git repository, so the contracts cannot be located"
 cd "$ROOT" || could_not_run "cd $ROOT" "cannot enter the repository root"

@@ -20,7 +20,7 @@ he would replace has value <= 0 and is never recommended.
 **Which projection, and why that one.** Not `mu` (the board blend), not the weekly ECR. `mu` is
 a per-week number for the players the board scoped, and a free agent is by construction mostly
 outside that scope, so a subtraction of `mu` would compare two different instruments. The
-weekly ECR (which #492 decided sets lineups provisionally from week 8) is a rank, not points,
+weekly ECR (which #492 decided sets lineups provisionally from week 7) is a rank, not points,
 and cannot be subtracted: it is shown beside each name and never sorted on. ESPN's projection
 exists for every player the league lists and is the only rest-of-season number on one basis for
 both sides.

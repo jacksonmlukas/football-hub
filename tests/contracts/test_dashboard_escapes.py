@@ -148,6 +148,20 @@ def test_the_table_escapes_every_cell_without_being_asked(node):
     assert "&lt;script&gt;" in out
 
 
+def test_a_naive_store_timestamp_is_read_as_utc_in_any_reader_timezone(node):
+    """`predicted_at` arrives naive UTC ("2026-10-17 16:58:09"). Read as local time, a reader in
+    Los Angeles saw "locked" off by their UTC offset (found 2026-10-20). Planted: without the
+    normalisation in `ago` this test fails."""
+    body = (f"import {{ ago }} from {_mod('format.js')};\n"
+            "const t = new Date(Date.now() - 2 * 3600e3).toISOString();\n"
+            "console.log(ago(t.slice(0, 19).replace('T', ' ')), ago(t.slice(0, 19)), ago(t));")
+    for tz in ("America/Los_Angeles", "Asia/Tokyo", "UTC"):
+        got = subprocess.run([node, "--input-type=module", "-e", body], capture_output=True,
+                             text=True, timeout=30, env={**os.environ, "TZ": tz})
+        assert got.returncode == 0, got.stderr
+        assert got.stdout.split() == ["2h", "ago"] * 3, f"{tz}: {got.stdout!r}"
+
+
 def test_a_missing_value_renders_as_nothing_not_as_undefined(node):
     assert _run(node, f"import {{ esc }} from {_mod('format.js')};\n"
                       "console.log('[' + esc(null) + esc(undefined) + ']');") == "[]"
@@ -1876,12 +1890,13 @@ SWAP_ROSTER = {
 
 
 def _roster_with_gain() -> dict:
-    """The committed roster mutated to a known positive gain: its own rows, one swap between
-    two of them. The committed call is whatever this week's optimiser said -- once the set
-    lineup is already optimal there is no gain and no swap to render -- so a test of the
+    """A roster at a known positive gain, built here: SWAP_ROSTER's rows with one swap between
+    two available ones. Nothing is read off the committed roster -- whether it has two available
+    rows, or any gain at all, is whatever this week's optimiser said, and a test of the
     positive-gain panel cannot lean on it."""
-    ros = json.loads((SITE / "data" / "roster.json").read_text())
+    ros = json.loads(json.dumps(SWAP_ROSTER))
     out, inn = [r["player"] for r in ros["rows"] if r.get("available", True)][:2]
+    assert (out, inn) == ("Slow WR", "Fast WR"), "the fixture must offer two available rows"
     ros.update(gain=11.5, set_total=80.0, optimal_total=91.5, sit=[out], start=[inn])
     return ros
 
@@ -1966,7 +1981,11 @@ def test_the_committed_roster_renders_the_call_first_in_its_panel(node):
     """Either valid branch of the committed call, whichever this week's optimiser landed on."""
     ros = json.loads((SITE / "data" / "roster.json").read_text())
     body = _render(node)["panels"]["p-lineup"]["body"]
-    if ros["gain"] is not None and ros["gain"] > 0.05:
+    by_rank = (ros.get("lineup_rule") or {}).get("source") == "ecr"
+    if by_rank and ros["gain"] is not None and (ros["start"] or ros["sit"]):
+        assert body.startswith('<p class="lineup-call">Consensus rank calls'), body[:120]
+        _call_first_with_names(body, ros)
+    elif not by_rank and ros["gain"] is not None and ros["gain"] > 0.05:
         assert body.startswith('<div class="lineup-gain">+'), body[:120]
         _call_first_with_names(body, ros)
     else:
@@ -1983,6 +2002,68 @@ def test_a_roster_with_a_gain_renders_the_call_first_with_pos_and_team_on_every_
     assert '<ul class="swaps">' in body
     flat = _render(node, {"roster": dict(ros, gain=0.0)})["panels"]["p-lineup"]["body"]
     assert flat.startswith('<p class="lineup-call">The set lineup is already'), flat[:120]
+
+
+# --- what set the lineup: mu through week 6, weekly consensus rank from week 7 (#492) ----------
+#
+# Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and is
+# negative whenever the model rates the consensus swap lower -- which is exactly the week the old
+# headline would have said "already the best available one" over a lineup it was changing.
+
+ECR_RULE = {"source": "ecr", "rule": "ecr", "label": "provisional", "week": 7,
+            "ecr_from_week": 7, "ecr_week": 7, "reason": None}
+ECR_ROSTER = dict(SWAP_ROSTER, withheld=[], sit=["Weak RB"], start=["Strong RB"],
+                  gain=-2.0, set_total=80.0, optimal_total=78.0, lineup_rule=ECR_RULE)
+
+
+def test_a_consensus_lineup_calls_its_swaps_even_when_mu_rates_them_lower(node):
+    out = _headline(node, ECR_ROSTER)
+    assert out.startswith('<p class="lineup-call">Consensus rank calls 1 swap.</p>'), out[:120]
+    assert "lineup-gain" not in out and "already the best" not in out
+    assert out.count("<li>") == 1 and _who("Strong RB", "RB", "SF") in out
+    assert "mu projects set lineup 80.0 &rarr; consensus lineup 78.0" in out
+
+
+def test_a_consensus_lineup_is_labelled_a_provisional_rule_and_never_an_edge(node):
+    out = _headline(node, ECR_ROSTER)
+    assert '<p class="legend lineup-rule">Lineup set by weekly consensus rank (ECR):' in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    flat = _headline(node, dict(ECR_ROSTER, sit=[], start=[]))
+    assert flat.startswith('<p class="lineup-call">The set lineup is already the consensus lineup.')
+    assert "a provisional rule (ADR-0014)" in flat
+
+
+def test_a_lineup_not_set_by_the_weeks_own_consensus_says_why_in_the_unconfirmed_state(node):
+    stale = dict(ECR_RULE, ecr_week=6, reason=f"no capture for week 7 {HOSTILE}")
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=stale))
+    assert "(week 6's capture)" in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no capture for week 7 &lt;script&gt;' in out
+    assert "<script>" not in out
+    mu = dict(ECR_RULE, source="mu", label="model", ecr_week=None, reason="no ECR at all")
+    out = _headline(node, dict(SWAP_ROSTER, lineup_rule=mu))
+    assert out.startswith('<div class="lineup-gain">+11.5'), "mu keeps the gain headline"
+    assert "Lineup set by the model's projection (mu)." in out
+    assert f'<p class="{STATE_CLASSES["unconfirmed"]}">no ECR at all.</p>' in out
+
+
+def test_a_lineup_set_on_the_lineup_capture_says_when_its_ranks_are_from(node):
+    """Ranks taken after Thursday's games set the lineup with the date beside the rule -- never
+    shown as a pre-kickoff capture -- and the provisional caveat stays."""
+    note = "consensus ranks as of Fri 2026-10-23, taken after Thursday's games"
+    late = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "scrape_date": "2026-10-23",
+                                       "note": note})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=late))
+    assert ("Lineup set by weekly consensus rank (ECR) (consensus ranks as of Fri 2026-10-23, "
+            "taken after Thursday&#39;s games):") in out
+    assert "a provisional rule (ADR-0014)" in out and "not a measured edge" in out
+    hostile = dict(ECR_RULE, ecr_capture={"purpose": "lineup", "note": HOSTILE})
+    out = _headline(node, dict(ECR_ROSTER, lineup_rule=hostile))
+    assert "<script>" not in out and "&lt;script&gt;" in out
+    assert "taken after" not in _headline(node, ECR_ROSTER), "a strict capture says nothing"
+
+
+def test_an_artifact_from_before_the_switch_says_nothing_about_the_rule(node):
+    assert "lineup-rule" not in _headline(node, SWAP_ROSTER)
 
 
 def test_the_lineup_call_heads_zone_one_ahead_of_the_board_and_everything_else():
@@ -2379,14 +2460,27 @@ def test_the_page_renders_the_statement_once_under_the_header_before_every_zone(
     assert len([i for i in layout if i.startswith("st-")]) == 1
 
 
-def test_the_committed_record_renders_a_frozen_statement_of_both_counts(node):
-    """The committed artifact carries a pre-registered count above zero (#422), so the live
-    page is on the far side of the flip. Its figures are read back off the file."""
+def test_a_record_with_preregistered_predictions_renders_a_frozen_statement_of_both_counts(node):
+    """#422 made `n_preregistered` a computed count, so the page has a far side of the flip.
+    The record is built here with a count above zero rather than read off the committed file,
+    which sits on whichever side the season's git history puts it."""
+    tr = _tr(n_scored=80, n_preregistered=64)
+    got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
+    assert STATE_CLASSES["frozen"] in got["cls"].split()
+    assert "64 pre-registered, 80 scored" in got["body"]
+
+
+def test_the_committed_record_renders_the_statement_its_own_counts_call_for(node):
+    """Holds for every valid committed state: frozen once any prediction is pre-registered,
+    unconfirmed while none is, and either way the figures are the file's own."""
     tr = _fresh_record()
     got = _render(node, {"track_record": tr})["panels"]["st-backtest"]
-    assert tr["n_preregistered"] > 0
-    assert STATE_CLASSES["frozen"] in got["cls"].split()
-    assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    if tr["n_preregistered"] > 0:
+        assert STATE_CLASSES["frozen"] in got["cls"].split()
+        assert f"{tr['n_preregistered']} pre-registered, {tr['n_scored']} scored" in got["body"]
+    else:
+        assert STATE_CLASSES["unconfirmed"] in got["cls"].split()
+        assert f"{tr['n_scored']} predictions scored retrospectively, 0 pre-registered" in got["body"]
 
 
 def test_the_rendered_statement_is_unconfirmed_while_nothing_is_preregistered(node):
@@ -2600,3 +2694,33 @@ def test_a_page_that_ignores_the_manifests_weeks_turns_the_archive_red(node, tmp
     ]:
         got = _run_module_against(_plant(node, tmp_path, name, "js/artifacts.js", old, new))
         assert expected in _failed(got), f"{name}: expected {expected}, got {sorted(_failed(got))}"
+
+
+
+# --- #516: a player whose game has kicked off is shown as locked, never as a swap -----------
+
+def test_the_headline_names_the_locked_players_with_position_and_team(node):
+    ros = dict(SWAP_ROSTER, locked=["Thu QB"],
+               rows=[*SWAP_ROSTER["rows"], _row("Thu QB", "QB", "DAL", locked=True)])
+    out = _headline(node, ros)
+    note = out[out.index("Locked, game started: "):]
+    assert _who("Thu QB", "QB", "DAL") in note[:note.index("</p>")]
+    assert out.index("Locked, game started") < out.index('class="swaps"')
+
+
+def test_a_week_with_nobody_locked_renders_no_lock_note(node):
+    assert "Locked" not in _headline(node, SWAP_ROSTER)
+
+
+def test_a_hostile_locked_name_is_escaped(node):
+    out = _headline(node, dict(SWAP_ROSTER, locked=[HOSTILE],
+                               rows=[*SWAP_ROSTER["rows"], _row(HOSTILE, "QB", HOSTILE)]))
+    assert "<script>" not in out and out.count("&lt;script&gt;") >= 2
+
+
+def test_the_roster_table_says_locked_rather_than_out(node):
+    rows = [_row("Thu QB", "QB", "DAL", locked=True, available=False, missing_games=2),
+            _row("Hurt Back", "RB", "MIA", available=False, missing_games=3)]
+    out = _run(node, f"import {{ rosterBody }} from {_mod('panels/roster.js')};\n"
+                     f"console.log(rosterBody({json.dumps(rows)}));")
+    assert "locked: game started" in out and "out 3 gm" in out and "out 2 gm" not in out

@@ -99,6 +99,8 @@ matched through the `pfr_id`→`gsis_id` crosswalk on 99.8%.
 > > sentences now read "0 resolved of 5, 5 abstained (won 0, tied 5, lost 0 of 5 seasons)".
 > > Ledger: `player_spread`, both candidates, 2026-10-06, `resolved: 0, abstained: 5`.
 
+> **Restated 2026-10-20 (#520).** The SE under the t interval, MDE and power was the bootstrap draws' SD, low by `sqrt((k-1)/k)`; it is now rescaled by `sqrt(k/(k-1))` on the same draws (the percentile interval and the mean do not move). At k=5 (x1.1180): `own_k` t [+0.0029, +0.0102] → **[+0.0025, +0.0106]**, MDE +0.0048 → **+0.0054**; `usage` t [−0.0342, +0.0325] → **[−0.0381, +0.0364]**, MDE +0.0434 → **+0.0485**; both against +0.0852; **SHOW holds** for both. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
 ## The part that actually closes the question
 
 A candidate failing is weak evidence; the ceiling is strong evidence. The outcome being

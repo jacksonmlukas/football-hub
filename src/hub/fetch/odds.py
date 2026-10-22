@@ -90,6 +90,10 @@ ROOT = Path(__file__).resolve().parents[3]
 # the header read back from each response was written to a file the next run could not see.
 # A guard that cannot fire reads as a guard.
 STATE = STATE_DIR / "odds.json"
+# Where a paid response is kept if recording it fails (#518). The gitignored raw-data area,
+# like `nflverse.RAW`: a vendor payload is not a small record, and `state/` is committed to
+# main and holds none (`test_the_state_directory_carries_no_third_party_payload`).
+RAW = ROOT / "data" / "raw" / "odds"
 
 BASE = "https://api.the-odds-api.com/v4"
 SPORT = "americanfootball_nfl"
@@ -184,6 +188,15 @@ class MultiplierRefused(Exception):
 
 class QuotaFloor(Exception):
     """Stored balance is below the floor. Refused before spending a credit."""
+
+
+class ScheduleUnavailable(Exception):
+    """The schedule the snapshot joins to could not be had, so no credit was spent (#518).
+
+    The schedule load can raise during an nflverse outage, and it used to run after the paid
+    call: the response was lost and a retry spent another credit. It is resolved first now, and
+    this is what a failure there raises -- before a request is formed.
+    """
 
 
 class MarketUnreachable(Exception):
@@ -347,6 +360,37 @@ def _http_get(params: Mapping[str, Any], key: str) -> tuple[Any, Mapping[str, st
                      params={**params, "apiKey": key})
     r.raise_for_status()
     return r.json(), r.headers
+
+
+# The golden suite's one paid call (#527). A golden run is part of the local gate list and
+# `.worktreeinclude` carries `.env` into every agent worktree, so "a key is on the machine"
+# is true of every lane; keying the paid call on the key alone spent credits nobody recorded.
+# It now takes an explicit flag, and when it runs its spend lands in `STATE` like any poll's.
+LIVE_CHECK_FLAG = "GOLDEN_SPEND_ODDS_CREDIT"
+
+
+def live_check_skip_reason(env: Mapping[str, str] | None = None) -> str | None:
+    """Why the golden live odds check must not spend a credit, or None if it may."""
+    e = os.environ if env is None else env
+    if e.get(LIVE_CHECK_FLAG) == "1":
+        return None
+    return (f"the live odds check spends a paid credit; set {LIVE_CHECK_FLAG}=1 to opt in "
+            f"(off by default so a local or lane golden run cannot spend one unrecorded)")
+
+
+def live_check_fetch(key: str, *, state_path: Path | None = None,
+                     when: datetime | None = None) -> Any:
+    """One paid poll for the golden shape check, its spend recorded where `snapshot` records."""
+    before = credits_remaining(state_path)
+    payload, headers = _http_get({"markets": MARKET, "regions": REGION}, key)
+    hdr = headers.get("x-requests-remaining")
+    remaining = int(float(hdr)) if hdr is not None else None
+    cost = (before - remaining
+            if before is not None and remaining is not None and before >= remaining else None)
+    _write_state(state_path, remaining, when or datetime.now(UTC), cost=cost,
+                 declared=len(MARKET.split(",")) * len(REGION.split(",")),
+                 asked=f"golden live check: {MARKET} x {REGION}")
+    return payload
 
 
 def _game_date(commence_time: str) -> str:
@@ -1090,6 +1134,16 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
     if not key:
         raise QuotaFloor("no ODDS_API_KEY set; cannot fetch")
 
+    # Everything that can fail for free is resolved before the one thing that costs (#518): the
+    # schedule load refreshes from nflverse and raises in an outage, and after the paid call
+    # that lost the response and made a retry spend again.
+    try:
+        index = _game_index(season)
+    except Exception as exc:
+        raise ScheduleUnavailable(
+            f"no credit spent: the nflverse schedule could not be loaded "
+            f"({type(exc).__name__}: {exc}). The betting market was not asked.") from exc
+
     # The reach for the source, and the only part of this function that is one. Its errors
     # are the betting market's and are reported as such; everything below has answered.
     try:
@@ -1101,20 +1155,38 @@ def snapshot(season: int = SEASON_AHEAD, *, markets: str = ",".join(MARKETS),
 
     try:
         return _record(payload, headers, season, when, state_path, base, floor,
-                       before=have, declared_cost=declared_cost, asked=markets)
+                       before=have, declared_cost=declared_cost, asked=markets, index=index)
     except Exception as exc:
+        kept = _keep_raw(payload, headers, when, base)
         raise SnapshotIncomplete(
             f"the betting market answered and a credit was spent, then "
             f"{type(exc).__name__}: {exc}. "
+            f"{'The raw response is kept at ' + str(kept) + '. ' if kept else ''}"
             f"Retrying spends another credit against a problem that is not the "
             f"betting market's."
         ) from exc
 
 
+def _keep_raw(payload: Any, headers: Mapping[str, str], when: datetime,
+              base: Path | None) -> Path | None:
+    """Write a paid response that a later step failed to record, atomically, under `RAW`
+    (`data/raw/odds/`, gitignored; `<base>/_raw/odds/` for a scratch store). Never under
+    `state/`, which is committed and carries no third-party payload. Never raises: the
+    original failure is the one to report."""
+    try:
+        root = RAW if base is None else Path(base) / "_raw" / "odds"
+        p = root / f"raw-{when:%Y%m%dT%H%M%S}.json"
+        return atomic.write_text(p, json.dumps(
+            {"captured_at": when.isoformat(), "headers": dict(headers), "payload": payload},
+            indent=1, sort_keys=True) + "\n")
+    except Exception:
+        return None
+
+
 def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetime,
             state_path: Path | None, base: Path | None, floor: int, *,
             before: int | None = None, declared_cost: int | None = None,
-            asked: str | None = None) -> pl.DataFrame:
+            asked: str | None = None, index: _GameIndex | None = None) -> pl.DataFrame:
     """Everything after the betting market has answered: the credit, join, check and write.
 
     Split out so the guard above spans the reach for the source and nothing else. It is one
@@ -1145,7 +1217,8 @@ def _record(payload: Any, headers: Mapping[str, str], season: int, when: datetim
     if remaining is not None and remaining < floor:
         print(f"  WARNING: below the floor of {floor}; the next pull will refuse")
 
-    index = _game_index(season)
+    if index is None:
+        index = _game_index(season)
 
     rows, no_game, no_line, no_total, no_price = [], 0, 0, 0, 0
     for ev in payload or []:
@@ -1466,7 +1539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         snapshot(a.season, state_path=spath)
-    except (QuotaFloor, MultiplierRefused, SnapshotIncomplete) as e:
+    except (QuotaFloor, MultiplierRefused, SnapshotIncomplete, ScheduleUnavailable) as e:
         # The first two are this repo refusing to spend; the third is this repo failing
         # after it already has. None is the betting market being unreachable, and saying so
         # names the one source that worked -- then sends the operator to retry, which spends

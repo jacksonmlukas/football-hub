@@ -41,7 +41,7 @@ from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
 from hub.paths import ROSTER_PARQUET
-from hub.season.roster import degenerate, lock, withheld_reason
+from hub.season.roster import degenerate, withheld_reason
 
 if TYPE_CHECKING:
     # Typing only. `survivor` imports the real module locally, the way every other
@@ -942,6 +942,24 @@ def _roster_waiver(df: pl.DataFrame) -> dict[str, Any]:
         return waiver_mod.unavailable(f"the ranking could not be built ({type(e).__name__})")
 
 
+def _roster_journal(week: int | None, lk: Any, rule: Any) -> str:
+    """Write the decision this roster publish made into the week's lineup journal entry, as
+    its `published` block (#517); a seam for tests, which must not reach the schedule's network
+    source or write the committed journal. Never raises: the publish has already landed, and a
+    journal that cannot be written says why."""
+    from hub.season import lineup_journal
+    try:
+        return lineup_journal.record_published(
+            SEASON_AHEAD, week, lk, rule, schedule=lineup_journal._schedule(SEASON_AHEAD),
+            now=lineup_journal._now())[1]
+    except Exception as e:  # unattended: say which failure, never raise
+        return f"the published decision was not journalled ({type(e).__name__})"
+
+
+# Why a locked player is neither started nor sat (#516), on the artifact and the panel.
+LOCKED_REASON = "locked: game started"
+
+
 def roster(out: Path | None = None,
            path: Path | None = None) -> dict[str, Any] | Kept | None:
     """Serialise the roster and the lock decision. Does not *make* the decision.
@@ -965,7 +983,20 @@ def roster(out: Path | None = None,
     # `test_publish.py` stay green. An empty frame falls through to `_publish`, which is the
     # one place this rule is meant to live; `hub.season.roster.write` refuses to create the
     # empty parquet in the first place.
-    lk = lock(df)
+    # Which source sets the lineup this week (#492): `mu` through week 6, weekly consensus rank
+    # from week 7 as a provisional rule (ADR-0014), read off the roster's own scoring period so
+    # a replayed week publishes the lineup it published then. Never raises: a missing capture
+    # is served last-good, or falls back to `mu`, and `lineup_rule` says which and why.
+    from hub.names import player_key
+    from hub.season import lineup_journal, lineup_rule
+    wk = lineup_journal.roster_week(df)
+    ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
+    lk, rule = lineup_rule.decide(df, SEASON_AHEAD, wk, ecr=ecr_by_key, ecr_reason=ecr_reason)
+    if rule.ecr_capture is not None and wk is not None:
+        # Set on the week's lineup capture (taken after Thursday): the `ecr` column shows the
+        # ranks that set it, and `lineup_rule.ecr_capture.note` says when they are from.
+        ecr_by_key, _ = lineup_rule.lineup_ecr(SEASON_AHEAD, wk)
+        ecr_reason = None
     # The lock's own lineup, read rather than rebuilt. This used to reconstruct it from the
     # two deltas -- the set starters, less those to sit, plus those to start -- which agrees
     # with the lock wherever it priced a comparison and says nothing at all where it did not.
@@ -979,10 +1010,6 @@ def roster(out: Path | None = None,
 
     # The other two sources beside `mu` (#492): weekly consensus rank and ESPN's projection for
     # the scoring period. Null with a reason, never zero, when either is missing.
-    from hub.names import player_key
-    from hub.season import lineup_journal
-    wk = lineup_journal.roster_week(df)
-    ecr_by_key, ecr_reason = lineup_journal.ecr_ranks(SEASON_AHEAD, wk)
     _, espn_reason = lineup_journal.espn_weekly(df)
 
     # The weekly distribution, the swaps and who is unprojected (#479): read off the same
@@ -1013,6 +1040,13 @@ def roster(out: Path | None = None,
             # His team has no game this week (#490): the mechanical half of `can_start`.
             "on_bye": r.get("on_bye", False),
         })
+    # Whose game has kicked off (#516): kept as set, never in `start`/`sit`, and said so on the
+    # row and beside the lists. Only when someone is locked, so a week nobody has played yet
+    # publishes byte-for-byte what it did before the lock existed.
+    if lk.locked:
+        shut = set(lk.locked)
+        for row in rows:
+            row["locked"] = row["player"] in shut
     held = set(lk.withheld)
     # Dated from the parquet, not from this run. The roster CLI serves last-good when ESPN is
     # unreachable and no longer rewrites the file, so this mtime is the last *successful*
@@ -1025,6 +1059,10 @@ def roster(out: Path | None = None,
                         set_total=lk.set_total, optimal_total=lk.best_total, gain=lk.gain,
                         withheld=lk.withheld, start=lk.start, sit=lk.bench,
                         week=wk, ecr_reason=ecr_reason, espn_week_reason=espn_reason,
+                        # What set `start`/`sit`/`best_start` this week and why (#492): `mu` or
+                        # weekly ECR, labelled `provisional` when ECR (ADR-0014), with the reason
+                        # whenever it is not the week's own ECR. `gain` stays in `mu` points.
+                        lineup_rule=rule.as_dict(),
                         # Why each withheld player is: "bye", "on injured reserve", or ESPN's
                         # missed-games projection (#490). Beside `withheld`, not inside it, so
                         # readers of the list of names are unchanged.
@@ -1050,6 +1088,11 @@ def roster(out: Path | None = None,
                         # snap trend and weekly ECR shown beside and never sorted on. Last-good
                         # pool, labelled; a missing pool is `missing` with the command to run.
                         waiver=_roster_waiver(df))
+    if lk.locked:
+        # Appended after the envelope's fields, as keywords: `test_page_reads` finds a
+        # conditional field's producer by its keyword name.
+        payload.update(locked=list(lk.locked),
+                       locked_reasons=dict.fromkeys(lk.locked, LOCKED_REASON))
     # The new fields' own contract (#479): a malformed one is a stale call with the reason,
     # served as last-good, like every other call the lock cannot stand behind.
     from hub.contracts import ContractViolation, check_roster_artifact
@@ -1068,7 +1111,16 @@ def roster(out: Path | None = None,
             return kept
         _publish(dest, "roster", payload)
         return Kept(f"{bad}; published once so the page has a file to read")
-    return _publish(out or SITE, "roster", payload)
+    dest = out or SITE
+    got = _publish(dest, "roster", payload)
+    # What this publish set, journalled as the week's `published` decision (#517): the Friday
+    # lineup capture lands after the Wednesday entry is frozen, so the entry's own `rule` block
+    # is not what the Saturday publish decided. Only a call that reached the site's own
+    # directory is the site's decision -- a publish into a scratch `out` is not -- and only one
+    # that published; refused from the week's first Sunday inside `record_published`.
+    if dest == SITE and not isinstance(got, Kept):
+        print(f"  lineup journal: {_roster_journal(wk, lk, rule)}", flush=True)
+    return got
 
 
 # --- everything, plus a manifest -----------------------------------------

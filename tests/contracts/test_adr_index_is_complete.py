@@ -94,6 +94,7 @@ WORDS = {
     "twenty-four": 24,
     "twenty-five": 25,
     "twenty-six": 26,
+    "twenty-seven": 27,
 }
 
 # "twenty-three decision records", "Fourteen decisions", "23 files". The noun is required:

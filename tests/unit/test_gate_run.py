@@ -244,21 +244,26 @@ def test_the_width_history_is_keyed_by_the_gate_s_name():
 
 
 def test_the_ledger_entry_and_the_run_carry_the_abstention_count():
-    """#381 (C): three seasons that win and one whose diffs are all exactly zero (an
+    """#381 (C): four seasons that win and one whose diffs are all exactly zero (an
     Abstention: the sign fallback reads exact zero as a tie). The verdict, the run's counts and
-    the recorded entry must all say 3 resolved of 4, 1 abstained -- the same numbers in three
+    the recorded entry must all say 4 resolved of 5, 1 abstained -- the same numbers in three
     places, so a verdict on fewer seasons than were run cannot lose that fact on its way to
-    the record. Rule 18: with the entry's two fields dropped this fails on the ledger line."""
-    rows = [{"season": 2022 + s, "draft": k, "diff": 0.0 if s == 3 else 3.0 + 0.01 * (k % 3)}
-            for s in range(4) for k in range(6)]
+    the record. Rule 18: with the entry's two fields dropped this fails on the ledger line.
+
+    #520 (2026-10-20): this was three wins and the zero over four seasons. Three equal gains
+    beside an exact zero cannot ADOPT at k=4 under the unbiased t-reference SE (mean `3a/4`
+    against a half-width of `3.18 * a/4`); the biased SE was what let it, so a fifth season
+    was added rather than the interval weakened."""
+    rows = [{"season": 2022 + s, "draft": k, "diff": 0.0 if s == 4 else 3.0 + 0.01 * (k % 3)}
+            for s in range(5) for k in range(6)]
     ledger = Ledger(path=None)
     got = _run(pl.DataFrame(rows), ledger=ledger, ceiling=Ceiling("x", np.array([1e6])))
     assert got.verdict[0] == "ADOPT", got.verdict
-    assert "3 resolved of 4, 1 abstained" in got.verdict[1]
-    assert (got.resolved, got.abstained) == (3, 1)
+    assert "4 resolved of 5, 1 abstained" in got.verdict[1]
+    assert (got.resolved, got.abstained) == (4, 1)
     recorded = ledger._read()
     assert recorded is not None
-    assert (recorded[-1].resolved, recorded[-1].abstained) == (3, 1)
+    assert (recorded[-1].resolved, recorded[-1].abstained) == (4, 1)
     assert recorded[-1].verdict == "ADOPT"
 
 
