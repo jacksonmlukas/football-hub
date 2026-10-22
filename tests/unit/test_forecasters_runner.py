@@ -301,6 +301,16 @@ def test_a_refused_packet_is_forecast_by_no_one_and_logged(tmp_path):
     assert "injury_published" in log.read_text()
 
 
+def test_a_refused_game_is_logged_once_and_stays_settled(tmp_path):
+    refused = _game(blind=None, line_aware=None, refusal="[injury_published] late")
+    _run(tmp_path, games=[refused])
+    client = FakeClient()
+    _, out = _run(tmp_path, client=client, games=[refused])
+    _run(tmp_path, client=client, games=[_game()])                 # packets now build: still out
+    assert len((out / runner.EXCLUSIONS).read_text().splitlines()) == 1
+    assert runner.excluded(out) == {GID} and client.calls == [] and _records(out) == []
+
+
 def test_no_line_means_no_line_aware_forecast_but_the_rest_still_run(tmp_path):
     _, out = _run(tmp_path, games=[_game(line_aware=None)])
     names = {r["contestant"] for r in _records(out)}

@@ -13,8 +13,10 @@ Eleven contestants: each LLM blind and line-aware, the hub's own model on the sa
 (logging the commit that produced it), the home constant, and the coin flip. Every record
 carries this run's market snapshot id, and every probability is clipped to [0.01, 0.99].
 
-The model client is an interface; the provider clients are not written yet and no real call
-is made until the maintainer says so. Tests use a fake.
+The model client is an interface; `hub.forecasters.providers` holds the provider clients
+behind it, and no real call is made until the maintainer sets `LLM_FORECASTS_ENABLED`. Tests
+use a fake. `snapshot_id` is `None` only on a run whose market snapshot failed, which writes
+no line-aware or hub record (`hub.forecasters.pipeline`).
 """
 from __future__ import annotations
 
@@ -224,6 +226,22 @@ def _written(out_dir: Path) -> tuple[set[tuple[str, str]], float]:
     return seen, spent
 
 
+def written(out_dir: Path) -> set[tuple[str, str]]:
+    """Every (game, contestant) already in the log."""
+    return _written(out_dir)[0] if out_dir.exists() else set()
+
+
+def excluded(out_dir: Path) -> set[str]:
+    """Every game already logged as refused. A refused packet is forecast by no one (the
+    prereg's exclusions table), so the game is settled: a rerun neither forecasts it nor
+    logs it twice."""
+    path = out_dir / EXCLUSIONS
+    if not path.exists():
+        return set()
+    return {json.loads(line)["game_id"] for line in path.read_text().splitlines()
+            if line.strip()}
+
+
 def _append(path: Path, record: dict[str, Any]) -> None:
     """Add one record to the log, landing whole (`hub.atomic`).
 
@@ -259,13 +277,14 @@ def _lock(out_dir: Path) -> Iterator[None]:
 
 # --- the run ------------------------------------------------------------------------------
 
-def run(games: Sequence[GameInputs], *, snapshot_id: str, config: StudyConfig, client: Client,
-        hub: HubModel, out_dir: Path, run_start: datetime, run_id: str,
+def run(games: Sequence[GameInputs], *, snapshot_id: str | None, config: StudyConfig,
+        client: Client, hub: HubModel, out_dir: Path, run_start: datetime, run_id: str,
         clock: Callable[[], datetime]) -> Path:
     """Forecast every unwritten (game, contestant) and append it to this run's file."""
     path = out_dir / f"{run_start:%Y}" / f"{run_start:%Y-%m-%d}.jsonl"
     with _lock(out_dir):
         seen, spent = _written(out_dir)
+        refused = excluded(out_dir)
 
         def todo(gid: str, name: str) -> bool:
             return (gid, name) not in seen
@@ -279,10 +298,12 @@ def run(games: Sequence[GameInputs], *, snapshot_id: str, config: StudyConfig, c
                                   f"this run's worst case ${worst:.4f}; no model called")
 
         for g in games:
+            # A game logged as refused is settled: forecast by no one, logged once (#447).
+            if g.game_id in refused:
+                continue
             if g.refusal is not None:
-                if todo(g.game_id, "*refused*"):
-                    _append(out_dir / EXCLUSIONS, {"game_id": g.game_id, "run_start": run_start,
-                                                   "reason": g.refusal, "workflow_run_id": run_id})
+                _append(out_dir / EXCLUSIONS, {"game_id": g.game_id, "run_start": run_start,
+                                               "reason": g.refusal, "workflow_run_id": run_id})
                 continue
 
             def write(name: str, *, condition: str | None, model_version: str | None,
