@@ -1,7 +1,7 @@
 """The study's market benchmark: a de-vigged moneyline from the hub's own feed.
 
 `docs/prereg/llm-forecasters.md`, *Market benchmark*: the same odds feed as the hub's market
-prior -- The Odds API, `hub.fetch.odds` -- snapshotted in the forecast run itself, so the market
+prior -- The Odds API, `hub.fetch.odds` -- snapshotted in the forecast run itself, so the benchmark
 and the models see one moment. Each book is de-vigged on its own (proportional: decimal odds,
 implied probabilities normalised to sum to 1), *then* the median home probability is taken
 across books; taking each side's median first can pair prices no single book offered.
@@ -98,7 +98,7 @@ def _book_home_spread(book: Mapping[str, Any], home: str) -> float | None:
 
 def quote(event: Mapping[str, Any]) -> Quote | None:
     """The game's market, or None when no book quotes a usable moneyline (a missing line,
-    which the prereg leaves out of every comparison against the market)."""
+    which the prereg leaves out of every comparison against the benchmark)."""
     home, away = event.get("home_team", ""), event.get("away_team", "")
     books = event.get("bookmakers") or []
     probs = [p for b in books if (p := _book_home_prob(b, home, away)) is not None]

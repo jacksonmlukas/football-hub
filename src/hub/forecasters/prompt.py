@@ -8,7 +8,7 @@ that update is a deviations-log row.
 
 The packet is shown as JSON with its `stamp` block, `run_start` and schema bookkeeping removed:
 fetch times are the record's evidence for the as-of rule, not information about the game, and
-the market's snapshot id and time are the record's too. What remains is exactly the prereg's
+the odds snapshot's id and time are the record's too. What remains is exactly the prereg's
 field table for the condition.
 """
 from __future__ import annotations

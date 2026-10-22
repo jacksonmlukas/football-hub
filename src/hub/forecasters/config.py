@@ -25,7 +25,7 @@ class LlmSpec:
     name: str                       # the contestant's short name, e.g. "claude"
     provider: str
     model_version: str              # the exact version string the API is called with
-    training_cutoff: str            # the provider's stated cutoff, reported beside blind results
+    training_cutoff: str            # the provider's stated knowledge date, beside blind results
     temperature: float | None
     reasoning_effort: str | None
     max_output_tokens: int
