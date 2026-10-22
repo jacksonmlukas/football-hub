@@ -1,0 +1,58 @@
+# LLM forecasters vs. the market -- the settings `prereg-llm-v0` pins.
+# docs/prereg/llm-forecasters.md, "Before v0". Every "TBD" must be replaced before the tag;
+# `hub.forecasters.runner.require_pinned` refuses to call a model while any remains.
+# A change after v0 is a row in the prereg's deviations log, not just an edit here.
+#
+# temperature: a number only where the model's API accepts one; "none" otherwise.
+# reasoning_effort: the provider's own value for a reasoning model; "none" otherwise.
+# Prices are USD per million tokens, as published by the provider on the pin date.
+
+[study]
+season_cap_usd = 0.0          # TBD: the cap the code enforces (the prereg's spending cap)
+home_rate = 0.0               # TBD: historical P(home win)
+home_rate_seasons = "TBD"     # TBD: the seasons it comes from
+est_input_tokens = 2000       # upper estimate of one rendered prompt, for the guard
+
+[[llm]]
+name = "llm1"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm2"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm3"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0
+
+[[llm]]
+name = "llm4"
+provider = "TBD"
+model_version = "TBD"
+training_cutoff = "TBD"
+temperature = "none"
+reasoning_effort = "none"
+max_output_tokens = 400
+usd_per_mtok_in = 0.0
+usd_per_mtok_out = 0.0

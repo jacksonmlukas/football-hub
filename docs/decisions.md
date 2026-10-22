@@ -1048,7 +1048,7 @@ pre-kickoff *forecast* as the free replacement. Not built tonight -- it is a new
 (a weather API, not another nflverse table) and out of this ticket's scope, which was the
 four pieces already on disk under `hub.fetch.nflverse` and `hub.store`.
 
-**Odds credit floor raised 50 -> 75 (2026-10-06, maintainer).** The LLM-forecaster study
+**Odds credit floor raised 50 -> 75 -> 100 (2026-10-06, maintainer).** The LLM-forecaster study
 (`docs/prereg/llm-forecasters.md`) pulls moneylines (`h2h`, one region, 1 credit a call) on the
 same Odds API key: one snapshot per forecast-run day and one per distinct kickoff time for the
 closing line, about 10-14 credits a week, 45-61 a month. The maintainer's rule is that the
@@ -1056,6 +1056,18 @@ hub's polls hit their floor before those jobs do, so `CREDIT_FLOOR` is the study
 month (61) plus its own floor (~10), rounded up. Combined spend is about 100-115 of 500 a month,
 so at normal cadence neither floor binds; the ordering matters only if something burns credits.
 The two entries above that cite a floor of 50 are left as written: they were true on their date.
+
+*Same day, 75 -> 100.* A line-aware packet carries the spread from this run's snapshot (the
+prereg's as-of rule), so the forecast pull asks for `h2h,spreads` -- 2 credits, not 1. Worst
+week: five forecast run days x 2 + ten distinct kickoff times x 1 = 20; a 31-day month of those
+is 89 (`hub.forecasters.market.WORST_MONTH_CREDITS`). Above the study's own floor of 10 that is
+99, so 100. Typical spend is 12-15 credits a week for the study and ~52 a month for the hub,
+about 110-140 of 500 combined. The inequality is a test, not this paragraph.
+
+*Landed 2026-10-21 (#444).* The floor of 100 reached main after the #495 entry below,
+which states its headroom against the floor of 75 as it stood on its date. Against 100 the
+same budget leaves 143 or more typical and 103 worst (500 - 100 - 257 or 297), and the
+study's worst month is still 89. The ordering is unchanged: the hub's polls stop first.
 
 **`starter_change` split at the event seam (2026-10-08, #346, architecture review candidate 5).**
 `hub.models.starter_events` holds the Starter change construction (the events, the play-by-play
