@@ -17,7 +17,11 @@ needs:
    the injury report and the starting-QB source -- the latest nfeloqb commit before run start
    (`qb.qb_source_at`), not the pin. A refused packet becomes an `exclusions.jsonl` line.
 6. **The hub contestant** over `hub.models.ratings` (#446), logging its commit.
-7. **`runner.run`**: lock, idempotency, the spending guard, then the models.
+7. **`runner.run`**: lock, idempotency, the spending guard, then the models -- and, for the
+   paired retrieval arm (#511, `hub.forecasters.retrieval`), each game's news searches, made
+   lazily inside the lock so a rerun or a refused budget spends no Tavily credit. The Tavily
+   client is built in step 1 with the model clients, so a missing `TAVILY_API_KEY` refuses
+   before the snapshot too. Its credit count is the study's own file, `TAVILY_STATE`.
 
 **Graceful degradation.** A failed schedule, injury or QB fetch serves the last good copy
 (`last_good.serve`), which still has to pass the as-of checks. A failed market snapshot does
@@ -40,8 +44,8 @@ from typing import Any
 import polars as pl
 
 from hub import paths
-from hub.fetch import odds
-from hub.forecasters import days, last_good, market, qb, runner, sources
+from hub.fetch import odds, tavily
+from hub.forecasters import days, last_good, market, qb, retrieval, runner, sources
 from hub.forecasters.config import StudyConfig
 from hub.forecasters.inputs import (
     GameInfo,
@@ -54,6 +58,8 @@ from hub.forecasters.packet import Condition, PacketRefused, build_packet
 
 # The study's own Odds API balance file, relative to the `forecasts` checkout (#445 (a)).
 ODDS_STATE = Path("state") / "odds.json"
+# The study's Tavily credit count, beside it (#511): credits are not dollars.
+TAVILY_STATE = retrieval.CREDITS_STATE
 LAST_GOOD = paths.PROCESSED / "forecasters"
 
 
@@ -80,6 +86,10 @@ class Deps:
     team_names: Callable[[Mapping[str, GameInfo]], Mapping[str, str]]
     odds_get: market.Get | None = None
     odds_key: str | None = None
+    # The retrieval arm's search client, built (and keyed) with the model clients. The default
+    # is the real one, so a config with the arm and no key refuses rather than skipping it.
+    make_searcher: Callable[[StudyConfig], retrieval.Searcher] = field(
+        default=lambda cfg: tavily.Client())
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     run_id: str = "local"
     last_good_root: Path = LAST_GOOD
@@ -106,6 +116,7 @@ def _left(due: list[str], config: StudyConfig, out: Path) -> bool:
 def run_day(day: date, out: Path, *, config: StudyConfig, deps: Deps) -> Outcome:
     """Forecast `day`'s games into `out` (the `forecasts` checkout)."""
     client = deps.make_client(config)                       # 1. keys, before any spend
+    searcher = deps.make_searcher(config) if runner.paired_spec(config) is not None else None
     run_start = deps.clock().astimezone(UTC)
     season = sources.season_of(day)
 
@@ -165,10 +176,19 @@ def run_day(day: date, out: Path, *, config: StudyConfig, deps: Deps) -> Outcome
 
     week = max(i.week for i in games.values())
     hub = deps.make_hub(season, week)                       # 6. the hub contestant
+    retriever = None
+    if searcher is not None and config.retrieval is not None:
+        full = {abbr: name for name, abbr in deps.team_names(games).items()}
+        retriever = retrieval.Retriever(searcher, full_names=full, state_path=out / TAVILY_STATE,
+                                        season_credit_cap=config.retrieval.season_credit_cap,
+                                        clock=deps.clock)
     path = runner.run(inputs, snapshot_id=snap.snapshot_id if snap else None, config=config,
                       client=client, hub=hub, out_dir=out, run_start=run_start,
-                      run_id=deps.run_id, clock=deps.clock)  # 7.
+                      run_id=deps.run_id, clock=deps.clock, retriever=retriever)  # 7.
     excluded = tuple(g.game_id for g in inputs if g.refusal is not None)
+    if retriever is not None and retriever.exhausted:
+        why = "; ".join(w for w in (why, "retrieval arm stopped: Tavily credit cap reached")
+                        if w)
     return Outcome("partial" if snap is None else "done", tuple(due),
                    snap.snapshot_id if snap else None, path, excluded, why)
 

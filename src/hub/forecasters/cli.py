@@ -7,8 +7,8 @@ that fails leaves none, so the next trigger in the window retries and the runner
 fills only the gaps.
 
 Exit codes: 0 ok (including nothing due and nothing left), 2 bad arguments, 3 the config is not
-pinned for v0, 4 a source failed with no last-good copy, 5 a provider's key is missing,
-6 partial (no market snapshot: the blind half ran, the line-aware half waits for the next
+pinned for v0, 4 a source failed with no last-good copy, 5 a provider's (or Tavily's) key is
+missing, 6 partial (no market snapshot: the blind half ran, the line-aware half waits for the next
 trigger), 7 another run holds the lock, 8 the spending guard refused. Each refusal is one
 sentence, and only 6 follows any model call.
 """
@@ -21,12 +21,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 from hub import atomic
+from hub.fetch import tavily
 from hub.forecasters import config as study_config
 from hub.forecasters import days, last_good, pipeline, providers, runner
 
 # The refusals `run` answers with one sentence and an exit code, never a traceback.
 REFUSALS: tuple[tuple[type[Exception], int], ...] = (
-    (last_good.NoLastGood, 4), (providers.MissingKey, 5), (runner.Locked, 7),
+    (last_good.NoLastGood, 4), (providers.MissingKey, 5), (tavily.MissingKey, 5),
+    (runner.Locked, 7),
     (runner.BudgetExhausted, 8))
 
 
