@@ -260,7 +260,7 @@ def test_a_stale_page_is_refused_and_the_latest_valid_capture_is_the_one_used():
     wrong = dataclasses.replace(_cap(6), scrape_date=date(2026, 10, 7))
     assert "not week 6's page" in wf.admit([wrong], DAYS, FLOORS, first_commit=_known).refused[6]
     early, later = _cap(7, hours_before=60), _cap(7, hours_before=5)
-    assert wf.admit([early, later], DAYS, FLOORS, first_commit=_known).admitted[7].captured_at == later.captured_at
+    assert wf.admit([early, later], DAYS, FLOORS, first_commit=_known).admitted[7][0].captured_at == later.captured_at
     # one bad capture does not veto a good one of the same week
     adm = wf.admit([_cap(7, scrape_days_before=9), later], DAYS, FLOORS, first_commit=_known)
     assert 7 in adm.admitted and 7 not in adm.refused
@@ -318,6 +318,139 @@ def test_first_commit_at_reads_git_and_says_none_where_it_cannot(tmp_path):
     assert wf.first_commit_at(f) == datetime(2026, 10, 7, 12, 0, tzinfo=UTC)   # the first add
     (tmp_path / "new.json").write_text("{}")
     assert wf.first_commit_at(tmp_path / "new.json") is None                    # untracked
+
+
+# --- in time per player (ADR-0027, #515) ---------------------------------------------------------
+#
+# A schedule with teams and kickoffs, Eastern as nflverse spells them: Thursday DAL@PHI 20:15,
+# Sunday KC@BUF 13:00 and SF@SEA 16:25 (SF and SEA on a bye in week 7), Monday NYJ@MIA 20:15.
+
+def _timed_schedule() -> pl.DataFrame:
+    rows = []
+    for w in range(1, 19):
+        thu = date(2026, 9, 10) + timedelta(days=7 * (w - 1))
+        games = [(0, "DAL", "PHI", "20:15"), (3, "KC", "BUF", "13:00"),
+                 (4, "NYJ", "MIA", "20:15")]
+        if w != 7:
+            games.append((3, "SF", "SEA", "16:25"))
+        for off, away, home, t in games:
+            rows.append({"season": 2026, "week": w, "game_type": "REG", "away_team": away,
+                         "home_team": home, "gameday": (thu + timedelta(days=off)).isoformat(),
+                         "gametime": t})
+    return pl.DataFrame(rows)
+
+
+TIMED = _timed_schedule()
+KICKS = consensus.kickoffs(TIMED)
+TEAMS = {"Thu Guy": "PHI", "Sun Guy": "KC", "Mon Guy": "MIA", "Bye Guy": "SF", "Nobody": "FA"}
+
+
+def _friday(week: int, *, hour_utc: int = 15, players: dict[str, str] = TEAMS,
+            name: str = "lineup-fri.json") -> Capture:
+    """The Friday capture of `week`'s page, as `read_every_capture` hands it over."""
+    thu = DAYS[week]
+    fri = thu + timedelta(days=1)
+    return Capture(
+        season=2026, week=week, captured_at=datetime(fri.year, fri.month, fri.day, hour_utc,
+                                                     tzinfo=UTC),
+        first_game_day=thu, deadline=consensus.lineup_deadline_for(thu + timedelta(days=3)),
+        scrape_date=fri, digest="d", purpose=consensus.LINEUP,
+        rows=pl.DataFrame({"player": list(players), "pos": ["WR"] * len(players),
+                           "team": list(players.values()),
+                           "ecr": [float(i + 1) for i in range(len(players))]}),
+        path=Path(f"state/consensus/2026/lineup/wk{week:02d}/{name}"))
+
+
+def _players(caps) -> set[str]:
+    return {p for c in caps for p in c.rows["player"].to_list()}
+
+
+def test_a_friday_capture_is_in_time_for_sunday_players_and_not_for_thursdays():
+    """ADR-0027: in time for a player means taken before *his* kickoff. Friday's page counts for
+    Sunday's and Monday's players and for a player on a bye (no game to have seen), and not for
+    Thursday's, nor for one the schedule cannot place."""
+    adm = wf.admit([_friday(7)], DAYS, FLOORS, first_commit=_known, kickoffs=KICKS)
+    assert 7 in adm.admitted and 7 not in adm.refused
+    assert _players(adm.admitted[7]) == {"Sun Guy", "Mon Guy", "Bye Guy"}
+    assert adm.excluded == {7: 2}                                   # Thu Guy and Nobody
+    assert any("week 7: 2 ranked player(s) left out" in ln for ln in wf._admission_lines(adm))
+    # a capture in time for none of the players it ranks admits nothing and says why
+    only_thursday = _friday(7, players={"Thu Guy": "PHI", "Nobody": "FA"})
+    none = wf.admit([only_thursday], DAYS, FLOORS, first_commit=_known, kickoffs=KICKS)
+    assert 7 not in none.admitted and "2 ranked, none in time" in none.refused[7]
+
+
+def test_the_comparison_leaves_thursdays_players_out_of_the_week():
+    """The frame the gate reads has no row for a Thursday player under a Friday capture, so he is
+    outside `priced_by_both` for both arms that week. With a week capture taken on Wednesday too,
+    each player is read from the newest capture in time for him: Thursday's from Wednesday's
+    page, everyone else from Friday's."""
+    from hub.names import player_key
+
+    frame = wf.consensus_frame(
+        wf.admit([_friday(7)], DAYS, FLOORS, first_commit=_known, kickoffs=KICKS).admitted)
+    assert player_key("Thu Guy") not in frame["key"].to_list()
+    assert player_key("Sun Guy") in frame["key"].to_list()
+    wed = dataclasses.replace(_cap(7, players=("Thu Guy", "Sun Guy")),
+                              rows=_friday(7, players={"Thu Guy": "PHI", "Sun Guy": "KC"}).rows)
+    adm = wf.admit([wed, _friday(7)], DAYS, FLOORS, first_commit=_known, kickoffs=KICKS)
+    fri_cut, wed_cut = adm.admitted[7]
+    assert fri_cut.purpose == consensus.LINEUP and wed_cut.captured_at == wed.captured_at
+    assert set(wed_cut.rows["player"]) == {"Thu Guy"}
+    assert "Sun Guy" in set(fri_cut.rows["player"]) and adm.excluded == {7: 1}   # Nobody
+
+
+def test_a_capture_committed_after_sundays_kickoff_is_in_time_only_for_mondays_players():
+    """The commit is the timestamp: a Friday file first committed at Sunday 18:00 UTC (after the
+    13:00 ET kickoff, 17:00 UTC) is not in time for Sunday's players whatever it says of itself."""
+    sunday_late = datetime(2026, 10, 25, 18, tzinfo=UTC)
+    adm = wf.admit([_friday(7)], DAYS, FLOORS, first_commit=lambda _p: sunday_late,
+                   kickoffs=KICKS)
+    assert _players(adm.admitted[7]) == {"Mon Guy", "Bye Guy"}
+    after_monday = datetime(2026, 10, 27, 4, tzinfo=UTC)          # 00:00 ET Tuesday
+    gone = wf.admit([_friday(7)], DAYS, FLOORS, first_commit=lambda _p: after_monday,
+                    kickoffs=KICKS)
+    assert 7 not in gone.admitted and "in time for no player" in gone.refused[7]
+
+
+def test_weeks_before_the_adoption_are_replayed_by_the_rule_they_were_registered_under():
+    """Replay invariance: weeks 5 and 6 were played before ADR-0027 was adopted (2026-10-20), so
+    the per-player rule does not reach back into them. Their Friday captures are refused exactly
+    as the per-week rule refused them, with or without kickoff times; week 7 is the first read
+    per player."""
+    caps = [_friday(5), _friday(6), _friday(7)]
+    timed = wf.admit(caps, DAYS, FLOORS, first_commit=_known, kickoffs=KICKS)
+    untimed = wf.admit(caps, DAYS, FLOORS, first_commit=_known)
+    assert wf.PER_PLAYER_FROM_WEEK == 7
+    for week in (5, 6):
+        assert week not in timed.admitted and week not in untimed.admitted
+        assert timed.refused[week] == untimed.refused[week]
+        assert "at or after the deadline" in timed.refused[week]
+    assert 7 in timed.admitted and 7 not in untimed.admitted
+    # and a week read by the per-week rule is read off its newest capture alone, as it was:
+    # an older capture's extra players are not merged in
+    early = _cap(6, hours_before=60, players=("A", "B", "Only Early"))
+    late = _cap(6, hours_before=5, players=("A", "B"))
+    adm = wf.admit([early, late], DAYS, FLOORS, first_commit=_known, kickoffs=KICKS)
+    assert len(adm.admitted[6]) == 1 and adm.admitted[6][0].captured_at == late.captured_at
+    assert adm.admitted[6][0].rows.equals(late.rows) and adm.excluded == {}
+
+
+def test_a_forward_reading_on_friday_captures_runs_without_thursdays_players():
+    """End to end through `read_forward`: eight Friday captures (weeks 7-14) are enough weeks to
+    read, and what `assemble` is handed holds no Thursday player in any week."""
+    seen: dict = {}
+
+    def assemble(admitted):
+        seen.update(admitted)
+        return _paired(0.0, weeks=range(7, 15)), None
+
+    r = _read(as_of=AFTER_HORIZON, schedule=TIMED,
+              captures=[_friday(w) for w in range(7, 15)], assemble=assemble)
+    assert r.status not in {"NOT-RUNNABLE", "NOT-YET", "REFUSED"}
+    assert sorted(seen) == list(range(7, 15))
+    assert all("Thu Guy" not in _players(caps) for caps in seen.values())
+    assert any("ranked player(s) left out" in ln for ln in r.lines)
 
 
 # --- too few weeks: the exemption is named -------------------------------------------------------
@@ -427,8 +560,8 @@ def test_the_week_component_is_the_disattenuated_fit(power):
 # --- the captures become the frame the gate reads ------------------------------------------------
 
 def test_the_captures_become_the_consensus_frame_the_gate_reads():
-    frame = wf.consensus_frame({5: _cap(5, players=("Patrick Mahomes II", "Star One")),
-                                6: _cap(6, players=("Star One",))})
+    frame = wf.consensus_frame({5: (_cap(5, players=("Patrick Mahomes II", "Star One")),),
+                                6: (_cap(6, players=("Star One",)),)})
     assert set(frame.columns) >= {"season", "week", "key", "ecr", "lead_days"}
     assert sorted(frame["week"].unique().to_list()) == [5, 6]
     assert frame.filter(pl.col("week") == 5).height == 2

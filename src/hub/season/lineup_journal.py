@@ -15,7 +15,7 @@ the capture week it was set on, and the reason whenever that was not the week's 
 block is part of the pre-kickoff comparison and is first-write-wins with the rest of it.
 
 **What was actually published (#517) is a separate block, `published`.** The week's lineup is
-set by whatever the roster publish decides, and the Friday lineup capture (and a late strict
+set by whatever the roster publish decides, and the Friday capture (and a late week
 capture) lands after the Wednesday entry is frozen, so the Saturday publish can decide
 differently. Each roster publish up to the week's first Sunday kickoff therefore writes its own
 decision -- source, rule, consensus week and capture, lineup, `decided_at`, and the players whose
