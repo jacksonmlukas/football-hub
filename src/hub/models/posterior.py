@@ -69,6 +69,11 @@ REVERSIBLE: frozenset[str] = chosen(frozenset({"td_dispersion", "injury_type"}))
 # (0.9585) that any bar at or above it could never reach (docs/gate-power.md, #375).
 P_COSTLY = chosen(0.95)
 
+# The reversible tier's switching cost, in each gate's own unit: ADOPT when `E[delta] > it`,
+# REMOVE when `< -it`. Zero is the linear-utility action at no friction (#364's form), as
+# pre-registered; a gate whose swap has a real cost belongs in the costly tier instead.
+SWITCHING_COST = chosen(0.0)
+
 # The prior-sd multipliers every posterior is refitted under and printed beside; they decide
 # nothing. `tau_scale` is not scaled.
 SENSITIVITY: tuple[float, ...] = chosen((0.5, 0.25))
@@ -85,6 +90,9 @@ GRID_SPAN = not_an_input(
 _BISECT = not_an_input(
     80, "bisection steps for the credible interval's endpoints; each halves a bracket of "
         "twenty posterior sds, far below any printed digit")
+_BRACKET = not_an_input(
+    10.0, "the credible interval's bisection bracket, in posterior sds either side of the "
+          "mixture's extreme components; it contains every endpoint, so no number moves")
 _CHUNK = not_an_input(
     256, "rows fitted per vectorised block in fit_many; bounds memory, changes no number")
 
@@ -195,8 +203,8 @@ def _cdf(mix: _Mixture, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
 
 
 def _quantile(mix: _Mixture, q: float) -> npt.NDArray[np.float64]:
-    lo = (mix.m - 10.0 * mix.sd).min(axis=1)
-    hi = (mix.m + 10.0 * mix.sd).max(axis=1)
+    lo = (mix.m - _BRACKET * mix.sd).min(axis=1)
+    hi = (mix.m + _BRACKET * mix.sd).max(axis=1)
     for _ in range(_BISECT):
         mid = 0.5 * (lo + hi)
         below = _cdf(mix, mid) < q
@@ -265,7 +273,7 @@ def action_codes(mean: npt.ArrayLike, p_positive: npt.ArrayLike, *,
                  costly: bool) -> npt.NDArray[np.int64]:
     """`posterior_action`, vectorised, as +1 ADOPT / -1 REMOVE / 0 SHOW."""
     stat = np.asarray(p_positive, dtype=float) - 0.5 if costly else np.asarray(mean, dtype=float)
-    bar = P_COSTLY - 0.5 if costly else 0.0
+    bar = P_COSTLY - 0.5 if costly else SWITCHING_COST
     return np.where(stat > bar, 1, np.where(stat < -bar, -1, 0)).astype(np.int64)
 
 
@@ -276,8 +284,8 @@ _WORD = {1: "ADOPT", -1: "REMOVE", 0: "SHOW"}
 def posterior_action(post: Posterior, *, costly: bool) -> str:
     """The expected-utility action the pre-registration names, per tier.
 
-    **Reversible** (switching cost zero): ADOPT when `E[delta] > 0`, REMOVE when `< 0`, SHOW at
-    exactly zero -- the linear-utility action at no friction (#364's form). Its null ADOPT rate
+    **Reversible** (`SWITCHING_COST`, zero): ADOPT when `E[delta] > 0`, REMOVE when `< 0`, SHOW
+    at exactly zero -- the linear-utility action at no friction (#364's form). Its null ADOPT rate
     is 1/2 by construction, which is why its check is regret and not size.
     **Costly**: ADOPT when `P(delta > 0) > P_COSTLY`, REMOVE when `< 1 - P_COSTLY`, SHOW
     between -- the action under a loss where a wrong switch costs nineteen times a right

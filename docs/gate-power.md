@@ -5211,6 +5211,24 @@ the gates." It closes the 2026-10-18 amendment's finding 1, on that amendment's 
   clusters (≤ 4.5% at `m ≥ TIE_MIN_CLUSTERS`, more below it). Whether the likelihood should read
   the rescaled SE is a likelihood amendment for the maintainer, not part of this one.
 
+## Amended 2026-10-22: two review findings on the code against this section
+
+From the two-axis review (standards, spec) of the lane before it merged. Neither changes a
+number this section's checks produced.
+
+- **`SWITCHING_COST` is now declared.** "The constants" above pre-register the reversible
+  tier's switching cost as `chosen(0.0)`; the code had written that zero inline in
+  `action_codes`, so it was in no digest. It is now `posterior.SWITCHING_COST = chosen(0.0)`
+  and read there. `fitted_digest` `f893f282` → `0446c2c5`, `config_digest` `e90a851d` →
+  `7da635ca` (re-pinned in `tests/unit/test_config.py`); the value, and so every action, is
+  unchanged.
+- **The normal CDF is not `math.erf`.** "The engine" above says it is, "as `hub.models.margin`
+  already does it". The code uses Abramowitz & Stegun 7.1.26, vectorised in numpy, absolute
+  error under 1.5e-7: a per-element `math.erf` over the batched fits the checks run is the
+  slow path the quadrature exists to avoid. So the reported numbers are exact up to the grid
+  *and* that 1.5e-7 — far below every printed digit and both thresholds (0.95 and the sign at
+  zero). Recorded rather than changed.
+
 # Restated 2026-10-20 (#520): the SE under the t interval, the MDE and the power was biased low by sqrt((k-1)/k)
 
 ADOPTED (a) on #520, 2026-10-20: fix the SE first, as its own dated restatement; #375 builds on

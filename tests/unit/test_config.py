@@ -1133,8 +1133,15 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     `posterior.P_COSTLY` 0.9 -> 0.95 (ADOPTED by the maintainer: 0.9's null ADOPT rate was
     7-10% under heterogeneity). **Not a model change**, as above: no prediction reads it.
     Restoring 0.9 reproduces `58da3a91`, so no other declared constant moved.
+
+    **Moved again 2026-10-22 (#375): `e90a851d` -> `7da635ca`**, `fitted_digest` `f893f282` ->
+    `0446c2c5`, sixty covered declarations to sixty-one. Exactly one name entered:
+    `posterior.SWITCHING_COST` (`chosen`, 0.0), the reversible tier's switching cost the
+    pre-registration had declared and the code had written inline (review of 2026-10-22).
+    **Not a model change**: no prediction reads it, and its value is the 0.0 the rule already
+    used. Removing that one name reproduces `f893f282`, so no other declared constant moved.
     """
-    assert config_digest(HubConfig()) == "e90a851d"
+    assert config_digest(HubConfig()) == "7da635ca"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 
