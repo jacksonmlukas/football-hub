@@ -228,7 +228,9 @@ def test_the_journal_records_what_was_published_and_scores_it(tmp_path):
     points = {player_key(n): 10.0 for n in CORE} | {player_key(ECR_FLEX): 3.0}
     lineup_journal.settle(SEASON, FIRST, points, tmp_path / "j", schedule=sched)
     doc = json.loads(path.read_text())
-    assert doc["realised"]["set"] == {"points": 73.0, "n_no_row": 0}
+    # A switch week (#530): the number names the lineup it scores -- here the Wednesday rule's,
+    # since no publish was journalled.
+    assert doc["realised"]["set"] == {"points": 73.0, "n_no_row": 0, "scores": "rule.lineup"}
 
 
 # --- the week's Friday capture: after the week capture, before last-good ------------------
