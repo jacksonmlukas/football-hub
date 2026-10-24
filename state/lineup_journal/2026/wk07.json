@@ -1,5 +1,31 @@
 {
  "disagree": false,
+ "published": {
+  "decided_at": "2026-10-24T17:19:50.014780+00:00",
+  "ecr_capture": {
+   "captured_at": "2026-10-24T12:26:39.439273+00:00",
+   "note": "consensus ranks as of Fri 2026-10-23, taken after Thursday's games, so in time only for players whose game had not started",
+   "purpose": "lineup",
+   "scrape_date": "2026-10-23"
+  },
+  "ecr_from_week": 7,
+  "ecr_week": 7,
+  "label": "provisional",
+  "lineup": [
+   "Denzel Boston",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "reason": null,
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 7
+ },
  "realised": {
   "ecr": null,
   "espn": null,

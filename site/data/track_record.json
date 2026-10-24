@@ -1,13 +1,13 @@
 {
   "name": "track_record",
   "source": "preds+results",
-  "generated_at": "2026-10-21T15:49:37+00:00",
+  "generated_at": "2026-10-24T17:19:47+00:00",
   "shape": "summary",
-  "n_scored": 108,
+  "n_scored": 109,
   "n_tied": 1,
-  "n_preregistered": 92,
+  "n_preregistered": 93,
   "is_backtest": true,
-  "note": "92 of 108 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
+  "note": "93 of 109 scored predictions were committed before kickoff; the other 16 were scored after the fact and are a backtest. A prediction counts only once its commit predates kickoff -- see docs/track-record.md.",
   "late_game_ids": [
     "2025_18_ARI_LA",
     "2025_18_BAL_PIT",
@@ -30,7 +30,7 @@
   "seasons": [
     {
       "season": 2026,
-      "n_scored": 92,
+      "n_scored": 93,
       "scored_game_ids": [
         "2026_01_ARI_LAC",
         "2026_01_ATL_PIT",
@@ -123,10 +123,11 @@
         "2026_06_PIT_TB",
         "2026_06_SEA_DEN",
         "2026_06_TEN_IND",
-        "2026_06_WAS_SF"
+        "2026_06_WAS_SF",
+        "2026_07_NE_CHI"
       ],
-      "log_loss": 0.6591403532474738,
-      "brier": 0.23254601919734674,
+      "log_loss": 0.6576704102145894,
+      "brier": 0.23182604644834684,
       "bins": [
         {
           "bin": "0.0-0.1",
@@ -175,12 +176,12 @@
         },
         {
           "bin": "0.5-0.6",
-          "n": 20,
-          "predicted": 0.5761661877566988,
-          "actual": 0.55,
-          "gap": -0.026166187756698767,
-          "lo": 0.372207707552935,
-          "hi": 0.7158765087109688
+          "n": 21,
+          "predicted": 0.5769713343075955,
+          "actual": 0.5714285714285714,
+          "gap": -0.00554276287902411,
+          "lo": 0.3958936317688703,
+          "hi": 0.7306590459121685
         },
         {
           "bin": "0.6-0.7",
@@ -222,15 +223,15 @@
       "baselines": {
         "coin_flip": {
           "p": 0.5,
-          "n": 92,
-          "log_loss": 0.6931471805599454,
+          "n": 93,
+          "log_loss": 0.6931471805599453,
           "brier": 0.25
         },
         "home_constant": {
           "p": 0.5503453289712832,
-          "n": 92,
-          "log_loss": 0.6960459874947975,
-          "brier": 0.25144018847593796,
+          "n": 93,
+          "log_loss": 0.694983227703748,
+          "brier": 0.2509106092791853,
           "source_seasons": [
             2016,
             2017,
@@ -246,7 +247,7 @@
           "source_n_games": 2751
         }
       },
-      "n_preregistered": 92,
+      "n_preregistered": 93,
       "n_backtest": 0
     },
     {
@@ -443,12 +444,12 @@
     },
     {
       "bin": "0.5-0.6",
-      "n": 20,
-      "predicted": 0.5761661877566988,
-      "actual": 0.55,
-      "gap": -0.026166187756698767,
-      "lo": 0.372207707552935,
-      "hi": 0.7158765087109688
+      "n": 21,
+      "predicted": 0.5769713343075955,
+      "actual": 0.5714285714285714,
+      "gap": -0.00554276287902411,
+      "lo": 0.3958936317688703,
+      "hi": 0.7306590459121685
     },
     {
       "bin": "0.6-0.7",
@@ -487,20 +488,20 @@
       "hi": null
     }
   ],
-  "log_loss": 0.6591403532474738,
-  "brier": 0.23254601919734674,
+  "log_loss": 0.6576704102145894,
+  "brier": 0.23182604644834684,
   "baselines": {
     "coin_flip": {
       "p": 0.5,
-      "n": 92,
-      "log_loss": 0.6931471805599454,
+      "n": 93,
+      "log_loss": 0.6931471805599453,
       "brier": 0.25
     },
     "home_constant": {
       "p": 0.5503453289712832,
-      "n": 92,
-      "log_loss": 0.6960459874947975,
-      "brier": 0.25144018847593796,
+      "n": 93,
+      "log_loss": 0.694983227703748,
+      "brier": 0.2509106092791853,
       "source_seasons": [
         2016,
         2017,
@@ -824,9 +825,9 @@
       "definition": "close_prob(pick) - published_prob(pick), in probability points, on the side the published probability favours; the close is the last capture at or before kickoff, with its lead time stated",
       "close_probability": "normal conversion of the close spread at the published margin sd",
       "true_close_lead_minutes": 30,
-      "n": 19,
+      "n": 20,
       "n_true_close": 11,
-      "n_early_close": 8,
+      "n_early_close": 9,
       "n_no_pick": 0,
       "n_published_after_close": 73,
       "true_close": {
@@ -836,21 +837,21 @@
         "hi": 0.009258686318027915
       },
       "early_close": {
-        "n": 8,
-        "mean": 0.0015458127506318697,
-        "lo": -0.0048327381981258105,
-        "hi": 0.00792436369938955,
-        "median_lead_minutes": 321.0083333333333
+        "n": 9,
+        "mean": 0.0013740557783394397,
+        "lo": -0.004261361450226345,
+        "hi": 0.007009473006905224,
+        "median_lead_minutes": 388.3833333333333
       },
       "log_loss": {
-        "n": 19,
-        "published": 0.7507860861991598,
-        "close": 0.7580112670258303
+        "n": 20,
+        "published": 0.7393685644486626,
+        "close": 0.7462324862339997
       },
-      "n_h2h_close": 12,
+      "n_h2h_close": 13,
       "h2h_log_loss": {
-        "n": 12,
-        "close": 0.7112637202205682
+        "n": 13,
+        "close": 0.6972702221092892
       }
     }
   ]
