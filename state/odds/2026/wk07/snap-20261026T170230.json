@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-10-26T17:02:30.897955",
+ "rows": [
+  {
+   "captured_at": "2026-10-26T17:02:30.897955",
+   "close_spread": -4.5,
+   "close_total": 44.5,
+   "game_id": "2026_07_DAL_PHI",
+   "ml_home_prob": 0.3403141361256544,
+   "polls_unmoved": 1,
+   "spread_price": -112.00000000000001,
+   "total_price": -105.0,
+   "unmoved_since": "2026-10-26T17:02:30.897955"
+  }
+ ],
+ "season": 2026,
+ "week": 7
+}
