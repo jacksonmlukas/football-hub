@@ -1,0 +1,90 @@
+{
+ "disagree": true,
+ "published": {
+  "decided_at": "2026-10-28T16:59:05.955489+00:00",
+  "ecr_from_week": 7,
+  "ecr_week": null,
+  "label": "model",
+  "lineup": [
+   "Bhayshul Tuten",
+   "Brenton Strange",
+   "Denzel Boston",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "KC Concepcion"
+  ],
+  "reason": "no pre-kickoff consensus capture for week 8; no earlier capture to serve as last-good; the model's lineup (mu) is served instead",
+  "rule": "ecr",
+  "source": "mu",
+  "week": 8
+ },
+ "realised": {
+  "ecr": null,
+  "espn": null,
+  "mu": null
+ },
+ "recorded_at": "2026-10-28T16:58:52.115945+00:00",
+ "rule": {
+  "basis": "the model's weekly mean (mu): the board's blend of ESPN's season average and last season's xFP per game; best legal lineup by summed mu",
+  "caveat": null,
+  "ecr_from_week": 7,
+  "ecr_week": null,
+  "label": "model",
+  "lineup": [
+   "Bhayshul Tuten",
+   "Brenton Strange",
+   "Denzel Boston",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "KC Concepcion"
+  ],
+  "reason": "no pre-kickoff consensus capture for week 8; no earlier capture to serve as last-good; the model's lineup (mu) is served instead",
+  "rule": "ecr",
+  "source": "mu",
+  "week": 8
+ },
+ "scored": false,
+ "season": 2026,
+ "sources": {
+  "ecr": {
+   "lineup": null,
+   "n_unranked": 11,
+   "reason": "no pre-kickoff consensus capture for week 8",
+   "superseded_by": "published",
+   "superseded_reason": "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the consensus lineup is the one published off the Friday lineup capture, scored at settle as `realised.consensus` (#530)"
+  },
+  "espn": {
+   "lineup": [
+    "Bhayshul Tuten",
+    "Denzel Boston",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "Ollie Gordon II",
+    "T.J. Hockenson"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  },
+  "mu": {
+   "lineup": [
+    "Bhayshul Tuten",
+    "Brenton Strange",
+    "Denzel Boston",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "KC Concepcion"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  }
+ },
+ "week": 8
+}

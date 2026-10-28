@@ -27,9 +27,18 @@
   "week": 7
  },
  "realised": {
-  "ecr": null,
+  "consensus": {
+   "n_no_row": 0,
+   "points": 121.66,
+   "scores": "published.lineup"
+  },
   "espn": null,
-  "mu": null
+  "mu": null,
+  "set": {
+   "n_no_row": 0,
+   "points": 121.66,
+   "scores": "published.lineup"
+  }
  },
  "recorded_at": "2026-10-21T15:49:28.958618+00:00",
  "rule": {
@@ -44,13 +53,16 @@
   "source": "mu",
   "week": 7
  },
- "scored": false,
+ "scored": true,
  "season": 2026,
+ "set_scored_from": "published",
  "sources": {
   "ecr": {
    "lineup": null,
    "n_unranked": 10,
-   "reason": "no pre-kickoff consensus capture for week 7"
+   "reason": "no pre-kickoff consensus capture for week 7",
+   "superseded_by": "published",
+   "superseded_reason": "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the consensus lineup is the one published off the Friday lineup capture, scored at settle as `realised.consensus` (#530)"
   },
   "espn": {
    "lineup": null,

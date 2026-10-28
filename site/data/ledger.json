@@ -1,7 +1,7 @@
 {
   "name": "ledger",
   "source": "docs/adr + docs front matter + docs/signal-screens.md",
-  "generated_at": "2026-10-24T17:19:50+00:00",
+  "generated_at": "2026-10-28T16:59:06+00:00",
   "shape": "rows",
   "n": 13,
   "rows": [
