@@ -34,6 +34,7 @@ from typing import Any
 
 import polars as pl
 
+from hub import atomic
 from hub.forecasters import config as study_config
 from hub.forecasters import score
 from hub.forecasters.config import Analysis, StudyConfig
@@ -125,7 +126,7 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
     doc = build(games, score.load_forecasts(args.forecasts), analysis=an, burn_in=burn_in,
                 snapshot_ids=_snapshot_ids(args.forecasts), refused=len(refused), seed=args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(doc, sort_keys=True, indent=1) + "\n")
+    atomic.write_text(args.out, json.dumps(doc, sort_keys=True, indent=1) + "\n")
     echo(f"wrote {args.out}: interim leaderboard through Week {doc['through_week']}, "
          f"{len(doc['contestants'])} contestants")
     return OK
