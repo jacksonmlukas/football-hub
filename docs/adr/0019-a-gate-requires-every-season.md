@@ -21,7 +21,7 @@ amendment is set out in full below.
 
 ## The question
 
-`CONTEXT.md` defines a Gate exactly — *does this beat the simplest thing that already works?* —
+`GLOSSARY.md` defines a Gate exactly — *does this beat the simplest thing that already works?* —
 and three modules answered it with three copies of the same three branches. They had diverged.
 `hub.season.weekly_gate` required the sign to hold in every held-out season before adopting.
 `hub.season.lineup_gate` and `hub.draft.backtest` adopted on the pooled interval alone.
@@ -85,7 +85,7 @@ Ten functions in this repo are called `verdict` and only three are this rule. Th
 different tests and flattening them would erase distinctions that are load-bearing:
 
 - a **Screen** asks *is this real?* against a pre-stated sign (`weekly_screen`), and
-  `CONTEXT.md` is explicit that a signal can pass one and fail the other;
+  `GLOSSARY.md` is explicit that a signal can pass one and fail the other;
 - a walk-forward error comparison with ties to the incumbent (`margin`), an every-round MAE
   test (`component_error`), an every-season-plus-`MIN_SE` fit selection (`spread`).
 
@@ -569,7 +569,7 @@ reads a different rule on purpose and is not a call site of `gate`.
 cover **Screens**. `weekly_screen.verdict` is a Screen, and a Screen is not held to the
 every-season adoption bar or to the NOT-RUNNABLE precondition above.
 
-**Why, and it is not a loophole.** `CONTEXT.md` separates the two tests and says they are not
+**Why, and it is not a loophole.** `GLOSSARY.md` separates the two tests and says they are not
 interchangeable: a Screen asks "is this real?" and a Gate asks "is this better than what it
 replaces?". The rule this ADR centralises is an *adoption* rule — it decides whether a candidate
 replaces the thing already working, which is the Gate's question and only the Gate's. A Screen
@@ -578,7 +578,7 @@ that sign holds in every season and the pooled statistic clears `MIN_SE`, and al
 pre-stated-null branch (`sign="0"`) that a Gate has no analogue of. Routing it through `gate`
 would make a screening question answer an adoption one: the Screen has no arm to beat and no
 ceiling to run against, so the precondition has nothing to read. Merging the two would be the
-confusion `CONTEXT.md` warns about, written into code.
+confusion `GLOSSARY.md` warns about, written into code.
 
 **The other verdicts that bypass `gate` are not covered by this amendment.** They are Gates (or
 are meant to read one) and are handled by their own tickets, not excused here:
@@ -646,7 +646,7 @@ seasons.
 
 ## The rule
 
-A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md, 2026-10-06).
+A season has one **Disposition**: a win, a loss, or an **Abstention** (GLOSSARY.md, 2026-10-06).
 A season with a win or a loss is *resolved*. An Abstention is a fact about the season's evidence,
 not about the effect, and is never counted as a win.
 

@@ -44,7 +44,7 @@ and the decision is not re-decided here; see below.
 > (#520)*.)* The evidence did not move, the rule did; the action was pre-registered
 > (`weekly_gate.ACTIONS.remove`), so it is honoured. Its text says to delete the module rather
 > than ship it as an option. **The maintainer decided on 2026-10-06 to honour it the repo's way:
-> the module becomes an Exhibit** (CONTEXT.md, *Exhibit*), not a deletion, because the one
+> the module becomes an Exhibit** (GLOSSARY.md, *Exhibit*), not a deletion, because the one
 > honest test this ADR's *What would change it* names -- a 2026 season measured forward,
 > `docs/weekly-forward.md` -- needs the projection to exist.
 >

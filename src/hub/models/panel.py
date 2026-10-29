@@ -136,7 +136,7 @@ CONSENSUS_MAX_LEAD_DAYS = 8
 OUTCOME = "fantasy_points_ppr"
 
 
-# **Usage**, in the `CONTEXT.md` sense: the count vector a week produces. The panel carries
+# **Usage**, in the `GLOSSARY.md` sense: the count vector a week produces. The panel carries
 # each of these and its own season-to-date mean, so a feature can be screened against the
 # counts and not only against the total. That is the premise of the multiplier form -- a
 # feature that moves points without moving counts cannot be applied as a Usage multiplier.

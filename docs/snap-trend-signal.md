@@ -34,7 +34,7 @@ errors that produced it:
 
 ## It survives the control that matters
 
-`CONTEXT.md` requires a signal be screened for predictive power **beyond ECR**. Controlling
+`GLOSSARY.md` requires a signal be screened for predictive power **beyond ECR**. Controlling
 only for a player's own scoring answers a weaker question. So both were run: partial r against
 season-to-date PPG, and against PPG *plus* the rest-of-season consensus rank as it stood on the
 last gameday of week *w*.

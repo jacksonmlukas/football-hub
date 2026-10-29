@@ -12,7 +12,7 @@ season-setup loop was byte-identical in both; and each asked `nflverse` for its 
 
 What lives here is the protocol, not the experiment. The arms stay with the harness that owns
 the question -- a gate is only meaningful against a specific incumbent, and hiding that behind
-a generic interface would be the mistake `CONTEXT.md` warns about when it separates a screen
+a generic interface would be the mistake `GLOSSARY.md` warns about when it separates a screen
 from a gate.
 
 `hub.models.measure` was folded in on 2026-08-27. It held `realised_ppg` and `summarise`, and
@@ -770,7 +770,7 @@ class Field(Enum):
     """What a summary has to say about one of its fields. Three states, three answers.
 
     `NO_SLOT` names a dictionary key that is not there. That is this summary's own slot and
-    not `CONTEXT.md`'s draft **Slot**, which is a pick position.
+    not `GLOSSARY.md`'s draft **Slot**, which is a pick position.
     """
 
     VALUE = "value"        # a number, a measured zero included
@@ -1166,7 +1166,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     its own in `tests/contracts/test_every_check_has_a_positive_control.py` -- it is behind
     the seam, and `gate`'s registry entry names the frame-in controls that exercise it.
 
-    `CONTEXT.md` defines a **Gate** as exactly that question, and three modules answered it
+    `GLOSSARY.md` defines a **Gate** as exactly that question, and three modules answered it
     with three copies of these branches. They had diverged: the weekly gate required the sign
     to hold in every held-out season, the lineup gate and the draft backtest adopted on the
     pooled interval alone. Nobody chose that.
@@ -1229,7 +1229,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     #335's (A) a tie blocked **both** directions: ADOPT needed a win in every season and REMOVE
     a loss in every season, so one abstaining season forced SHOW and the rule's power was about
     0.0008 weekly and 0.0075 draft at k=4 (`docs/gate-power.md`, #388/#418). The every-season
-    half now reads the *resolved* seasons -- those with a win or a loss (CONTEXT.md,
+    half now reads the *resolved* seasons -- those with a win or a loss (GLOSSARY.md,
     **Disposition**) -- and an **Abstention** is never counted as a win: ADOPT needs at least
     one resolved season and every resolved season a win; REMOVE the mirror. **With no resolved
     season a Gate can neither adopt nor remove** (SHOW, "0 resolved of k, k abstained"; not
@@ -1285,7 +1285,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     t_hi = summary.get("t_hi", float("nan"))
     has_interval = reading(summary, "t_lo") is Field.VALUE
     # The tally keeps its `tied` word (the code's `ties` field and every recorded sentence
-    # say it); `count` is the sentence #381 requires beside every verdict, in CONTEXT.md's
+    # say it); `count` is the sentence #381 requires beside every verdict, in GLOSSARY.md's
     # words: a Gate never prints a bare ADOPT or REMOVE, and never a bare SHOW either.
     tally = f"won {won}, tied {tied}, lost {lost} of {total} seasons"
     count = f"{resolved} resolved of {total}, {tied} abstained"
@@ -1358,7 +1358,7 @@ class GateRun(NamedTuple):
     lines: list[str]
     stamped: pl.DataFrame
     # #381: how many of the seasons were *resolved* (a win or a loss) and how many abstained
-    # (CONTEXT.md, **Abstention**). `None` on a `GateRun` a caller hand-builds without a
+    # (GLOSSARY.md, **Abstention**). `None` on a `GateRun` a caller hand-builds without a
     # seasons frame to count (`starter_change`'s degraded return); `gate` always sets both.
     resolved: int | None = None
     abstained: int | None = None

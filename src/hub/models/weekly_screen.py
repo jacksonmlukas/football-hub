@@ -1,6 +1,6 @@
 """Does any week-level feature predict a player's week *beyond what consensus already knows*?
 
-A **screen**, in the sense `CONTEXT.md` defines: it asks "is this real?", never "is this better
+A **screen**, in the sense `GLOSSARY.md` defines: it asks "is this real?", never "is this better
 than what it replaces?". Nothing here adopts anything. The gate that decides whether a Weekly
 projection sets lineups is a different question with a different incumbent, and
 [ADR-0015](../../../docs/adr/0015-the-weekly-gate-is-a-decision-not-an-accuracy-test.md) records

@@ -85,7 +85,7 @@ class Reading(NamedTuple):
     three states were decoded at four sites and no two the same way: `Artifact.record` built
     the manifest entry inline, two CLI branches ran their own three-way cascade over
     different count keys, and the `live` branch checked two states and relied on whoever
-    read it already knowing the third could not arrive. `CONTEXT.md` is explicit that the
+    read it already knowing the third could not arrive. `GLOSSARY.md` is explicit that the
     manifest's `reason` is all a reader gets, so four decodings of one answer were four
     chances for the panel to say the wrong sentence about why it is not current.
 

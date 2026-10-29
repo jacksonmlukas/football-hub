@@ -1,7 +1,7 @@
 """The survivor pool's state, read off the pool host instead of retyped each week (#85).
 
 `hub.season.pool` prices a pick against the field: how many entries are live, what the pot
-is, and which teams each entry has already spent -- its **Ledger**, in `CONTEXT.md`'s sense,
+is, and which teams each entry has already spent -- its **Ledger**, in `GLOSSARY.md`'s sense,
 one per entry. Until this module those three were typed on the command line from a browser
 tab. This reads them from the host's JSON resource, replaces every member's identity with an
 index, and keeps the last state it read under `data/processed/` so a host that is down on a

@@ -4,7 +4,7 @@ Written 2026-08-24, after the draft path was frozen-ready. Every item below is g
 something checked in this repo, not in general advice. Where a number appears, it was computed
 here. Ordered by evidence strength, not by size.
 
-Two rules from `CONTEXT.md` govern what "done" means for each: a **signal** is screened for
+Two rules from `GLOSSARY.md` govern what "done" means for each: a **signal** is screened for
 predictive power beyond consensus; a **model** is gated against the simplest thing that already
 works. Every item names which it is.
 
@@ -875,7 +875,7 @@ way to ask a different one.
 statistic and the verdict and is now 329 lines. Both function-local imports are ordinary
 module-level ones. `build_panel`'s five boolean flags became one `PanelSpec`, so a call site
 reads back as the shape it asked for instead of as a flag combination the reader has to decode.
-The screen's 49 tests split 26/23 by what they exercise, and `Panel` went into `CONTEXT.md` —
+The screen's 49 tests split 26/23 by what they exercise, and `Panel` went into `GLOSSARY.md` —
 it is a domain concept, not an implementation detail.
 
 Two more restatements of the same literal fell out and are collapsed rather than moved:

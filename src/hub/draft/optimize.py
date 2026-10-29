@@ -702,7 +702,7 @@ def market_pick(pool: pl.DataFrame, counts: dict[str, int],
     `by` names which market. `adp` is the **draft market** -- where your room actually takes
     a player -- and is what draft night uses. `ecr` is **consensus**, and is what a replay of
     a past season has to use, because ESPN publishes ADP for the current season only. Both
-    are lower-is-better rankings, so one rule covers them; see `CONTEXT.md`, which keeps the
+    are lower-is-better rankings, so one rule covers them; see `GLOSSARY.md`, which keeps the
     two markets apart on purpose.
     """
     if pool.height == 0 or by not in pool.columns:

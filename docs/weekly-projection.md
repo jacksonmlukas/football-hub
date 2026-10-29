@@ -121,7 +121,7 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > row is its figure and the first and third are contrasts against an arm that is gone.
 > `--fit` prints the rebuild alone now. The +0.074 that
 > [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) and
-> `CONTEXT.md` cite as the projection's accuracy gain is the third row; the figure that
+> `GLOSSARY.md` cite as the projection's accuracy gain is the third row; the figure that
 > describes the shipped projection is the second, +0.0634. ADR-0016's decision does not move
 > here: its gate scored the fitted arm at −0.304 and is re-run once after this lands, by the
 > maintainer, to record what the arm now scores — the number is not on this page.
@@ -188,7 +188,7 @@ whether this ships is the lineup ([ADR-0015](adr/0015-the-weekly-gate-is-a-decis
 > does not clear the corrected bar, and 2024 abstains.
 >
 > **Also restated, in the same terms.** The `+0.074` that
-> [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) and `CONTEXT.md`
+> [ADR-0016](adr/0016-the-weekly-projection-is-shown-and-never-ranked-on.md) and `GLOSSARY.md`
 > cite is the third row: +0.0749, t = +6.18 on 3 df. Under `--expected`
 > ([expected-and-routes.md](expected-and-routes.md), same filtered panel) the week is +0.0129
 > (t = +6.16, p 0.009), the rebuild +0.0589 (**t = +2.73, p 0.072**, won 4 of 4) and both

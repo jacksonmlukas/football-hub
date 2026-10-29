@@ -1021,7 +1021,7 @@ def test_the_three_named_pre_kickoff_exceptions_stay_usable_as_week_w_informatio
                                                                                   tmp_path):
     """The line, the injury report and the opponent are week-*w* information by the rule.
 
-    `docs/method.md` rule #2 and `CONTEXT.md`'s **Panel** entry both name them: they are
+    `docs/method.md` rule #2 and `GLOSSARY.md`'s **Panel** entry both name them: they are
     published *for* week w and are legitimately available before kickoff. A tightening that
     put them out of a caller's reach would have broken the Panel rather than tightened it --
     a screen with no line, no injury report and no opponent measures nothing this repo asks.

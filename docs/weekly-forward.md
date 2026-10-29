@@ -66,7 +66,7 @@ move is not.
 > **Amendment, 2026-10-07 (#430): the arm is re-pinned. Prior text above kept.** The move
 > happened: `hub/models/weekly.py` is now `hub/exhibits/weekly_projection.py`, and
 > `shipped_quantiles` is now `parametric_quantiles` (the word *shipped* names the page's
-> conformalised interval and nothing else, CONTEXT.md). **This is a pure move and rename.** What
+> conformalised interval and nothing else, GLOSSARY.md). **This is a pure move and rename.** What
 > the projection computes is unchanged, and the proof is
 > `tests/unit/test_weekly_projection_move.py::test_the_moved_projection_computes_exactly_what_the_pinned_arm_computed`:
 > it freezes `project` (bare, under each fitted `Shrink`, and under a fixed one), `fit_shrink`
