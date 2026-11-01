@@ -378,3 +378,31 @@ def test_the_committed_artifact_renders_a_sentence(node):
     if above:
         top = max(above, key=lambda b: b["n"])
         assert f"({top['n']} games)." in _text(body)
+
+
+# --- the two scales that drew a wrong picture without a test going red -----------
+
+def test_a_dot_with_more_games_is_drawn_larger_and_its_radius_follows_the_count(node):
+    """charts.js: r = 4 + 8 * sqrt(n / maxN). Two bins of 4 and 16 games are 8.0 and 12.0 wide."""
+    tr = _tr()
+    tr["seasons"][0]["bins"] = [_bin("0.5-0.6", 4, 0.5), _bin("0.6-0.7", 16, 0.6)]
+    newest = _body(node, tr).split("<details", 1)[0]
+    radii = [float(r) for r in re.findall(r'class="bin-filled"[^>]*? r="([\d.]+)"', newest)]
+    assert radii == [8.0, 12.0], radii
+    assert radii[0] < radii[1]
+
+
+def _band_of(html: str) -> list[tuple[float, float]]:
+    return [(float(x), float(w)) for x, w in
+            re.findall(r'class="rb-band" x="([\d.]+)" y="0" width="([\d.]+)"', html)]
+
+
+def test_the_bullet_tolerance_band_spans_claim_minus_band_to_claim_plus_band(node):
+    """The scale is 50%-100% over 300 units: a value v sits at (v - 0.5) / 0.5 * 300."""
+    for claim, band in ((0.80, 0.02), (0.80, 0.05), (0.70, 0.03)):
+        tr = _tr()
+        tr["interval_coverage"]["gate_claim"] = claim
+        tr["interval_coverage"]["band"] = band
+        x, w = _band_of(_body(node, tr))[0]
+        left, right = (claim - band - 0.5) / 0.5 * 300, (claim + band - 0.5) / 0.5 * 300
+        assert (x, x + w) == (pytest.approx(left, abs=0.06), pytest.approx(right, abs=0.06)), (claim, band)
