@@ -4739,6 +4739,66 @@ it.
   pre-registered; both are estimated from one weekly run and one draft frame whose SEs bracket but
   do not equal #376's.
 
+### Restated 2026-11-01 (#529): the table re-run on the corrected SE (rule 13; the text above is kept)
+
+`scripts/gate_horizon.py --table --trials 40000 --workers 6`, no code change (the harness drives
+the shipped `experiment.gate`, so #520's `sqrt(k/(k-1))` is in it), same seeds
+`SeedSequence([388, cell_index])`, 81 cells, 7,973 s on 6 workers. Each cell's interval half is now
+wider by the factor at its k (1.1547 at k=4 down to 1.0690 at k=8); the tie test is unchanged
+by decision (#520, 2026-10-21), so **every tie rate reproduces to the third decimal** (0.807 for
+weekly k=4, 260 rows, and so on), which is the control that nothing but the interval moved.
+
+**One thing a reader of the raw output must know.** `gate` ships (C) since #381 (2026-10-06, the
+same day as this table), so the harness's "shipped" column re-run today reads (C), not the (A)
+rule this section's table was computed under. A re-run read as-is shows null ADOPT 0.0098 and
+power 0.0613 at weekly k=4, 260 rows — *higher* than the 0.0000 / 0.0007 above — and that is the
+rule change, not the correction. Like-for-like is the (A) column the same run carries (`abstain`);
+the tables below are read from it, and (C) is restated under *Results (C)*.
+
+**(A), the rule this section published — old → new** (null ADOPT; power at δ=0.3 and 0.5 weekly,
+δ=2.0 draft; the interval half alone, the column the correction acts on, beside):
+
+| k | rows | weekly null | weekly power δ=0.3 | weekly power δ=0.5 | interval alone δ=0.3: old → new | interval alone δ=0.5: old → new |
+|---|---|---|---|---|---|---|
+| 4 | 220 | 0.0000 → 0.0000 | 0.0005 → 0.0005 | 0.0024 → 0.0024 | 0.1241 → **0.0916** | 0.2435 → **0.1848** |
+| 4 | 260 | 0.0000 → 0.0000 | 0.0007 → 0.0007 | 0.0043 → 0.0043 | 0.1379 → **0.1004** | 0.2601 → **0.1993** |
+| 4 | 280 | 0.0001 → 0.0001 | 0.0010 → 0.0010 | 0.0046 → 0.0046 | 0.1409 → **0.1046** | 0.2673 → **0.2046** |
+| 5 | 260 | 0.0000 → 0.0000 | 0.0002 → 0.0002 | 0.0014 → 0.0014 | 0.1636 → **0.1272** | 0.3352 → **0.2732** |
+| 6 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0004 → 0.0004 | 0.1916 → **0.1539** | 0.4000 → **0.3421** |
+| 7 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0001 → 0.0001 | 0.2175 → **0.1822** | 0.4724 → **0.4163** |
+| 8 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.2412 → **0.2085** | 0.5306 → **0.4812** |
+
+| k | rooms | draft null | draft power δ=2.0 | interval alone δ=2.0: old → new |
+|---|---|---|---|---|
+| 4 | 20 | 0.0014 → 0.0014 | 0.0076 → 0.0075 | 0.0922 → **0.0670** |
+| 4 | 40 | 0.0040 → 0.0040 | 0.0180 → 0.0175 | 0.0968 → **0.0708** |
+| 4 | 80 | 0.0094 → **0.0087** | 0.0379 → **0.0355** | 0.0993 → **0.0726** |
+| 5 | 20 | 0.0003 → 0.0003 | 0.0020 → 0.0020 | 0.1056 → **0.0811** |
+| 6 | 20 | 0.0001 → 0.0001 | 0.0008 → 0.0008 | 0.1145 → **0.0912** |
+| 7 | 20 | 0.0000 → 0.0000 | 0.0001 → 0.0001 | 0.1282 → **0.1040** |
+| 8 | 20 | 0.0000 → 0.0000 | 0.0002 → 0.0002 | 0.1415 → **0.1187** |
+
+The remaining 8 weekly and 8 draft rows reproduce the same way (every (A) cell inside 0.0001).
+The fifth-season rows (k=5 with 4 or 14 weeks of 2026) are
+0.0000 / 0.0001 / 0.0004 and 0.0000 / 0.0001 / 0.0012 for (A), as before.
+
+**What moved, and what did not.** The headline the correction was expected to move did: the
+interval half alone loses 0.03 to 0.06 of power (weekly δ=0.3, k=4, 260 rows: 0.138 → 0.100;
+δ=0.5: 0.260 → 0.199; draft k=4, 20 rooms: 0.092 → 0.067). The (A) column is, for the weekly path,
+**unchanged to the printed digit** and for the draft path within 0.0024: under (A) one Abstention
+vetoes both directions and 96–100% of frames have one, so the rule's ADOPT rate was ~0 and
+stays ~0 — the correction narrows a half of the rule that the other half already shut. The pre-#335
+column at k=4 now equals the interval alone (0.1004 at weekly 260 rows, against 0.1356 / 0.1379
+before): a frame whose corrected t interval excludes zero has all four seasons on one side.
+The tie mechanism's share of the gap to 0.80 at k=4, read off (A): weekly δ=0.3 **12%** (was 17%),
+weekly δ=0.5 **25%** (was 32%), draft **8%** (was 10–11%): still a minority, **k owns 88% / 75% /
+92%**, so "What it answers for #381" holds, with shares a few points lower.
+
+**(C), read off the same re-run** (the `ship` column; k=4 weekly 260 rows, draft 20 rooms): null
+**0.0098**, power δ=0.3 **0.0613**, δ=0.5 **0.1498**, draft null **0.0194**, power **0.0608**. The
+full (C) table and its comparison with the (C) figures first published are under *Results (C)*
+below.
+
 ---
 
 # Pre-registered 2026-10-06: (C), the verdict over resolved seasons, before it lands (#381)
@@ -4908,6 +4968,54 @@ read off the same frames. null is ADOPT at δ=0.
 - The harness reads (C) from `gate`'s own summary and seasons rather than from a `gate` that
   implements it, because `gate` was not to change before this section. The inclusion control and
   the `ship` column are what hold the harness's conjunction to the code that lands.
+
+### Restated 2026-11-01 (#529): (C)'s table re-run on the corrected SE (rule 13; the text above is kept)
+
+`scripts/gate_horizon.py --rule-c --trials 40000 --workers 6`, no code change, the same 38 cells and
+seeds as the run above, 2,973 s. The tie test is unchanged by decision, so **P(0 resolved) and the
+resolved-seasons-of-k columns reproduce to the digit** (0.4225 and 0.77 at weekly k=4, 260 rows);
+the interval half is wider by the factor at each k, so every (C) rate that needs it to exclude zero
+is lower. Old (above) → new:
+
+| weekly, k | rows | null (C) | power δ=0.3 (C) | power δ=0.5 (C) | interval alone δ=0.3 |
+|---|---|---|---|---|---|
+| 4 | 220 | 0.0129 → **0.0091** | 0.0757 → **0.0554** | 0.1747 → **0.1307** | 0.1286 → **0.0959** |
+| 4 | 260 | 0.0140 → **0.0095** | 0.0829 → **0.0599** | 0.2003 → **0.1513** | 0.1313 → **0.0966** |
+| 4 | 280 | 0.0145 → **0.0095** | 0.0920 → **0.0664** | 0.2111 → **0.1598** | 0.1420 → **0.1054** |
+| 5 | 260 | 0.0167 → **0.0120** | 0.1167 → **0.0901** | 0.2822 → **0.2300** | 0.1622 → **0.1269** |
+| 6 | 260 | 0.0194 → **0.0148** | 0.1510 → **0.1231** | 0.3619 → **0.3066** | 0.1908 → **0.1563** |
+| 7 | 260 | 0.0219 → **0.0167** | 0.1795 → **0.1504** | 0.4311 → **0.3827** | 0.2149 → **0.1799** |
+| 8 | 260 | 0.0232 → **0.0186** | 0.2105 → **0.1820** | 0.4926 → **0.4475** | 0.2420 → **0.2079** |
+
+| draft, k | rooms | null (C) | power δ=2.0 (C) | interval alone |
+|---|---|---|---|---|
+| 4 | 20 | 0.0291 → **0.0204** | 0.0828 → **0.0596** | 0.0919 → **0.0662** |
+| 4 | 40 | 0.0317 → **0.0230** | 0.0958 → **0.0685** | 0.0982 → **0.0703** |
+| 4 | 80 | 0.0351 → **0.0239** | 0.0974 → **0.0719** | 0.0983 → **0.0726** |
+| 5 | 20 | 0.0316 → **0.0231** | 0.0983 → **0.0751** | 0.1027 → **0.0786** |
+| 6 | 20 | 0.0321 → **0.0243** | 0.1143 → **0.0916** | 0.1180 → **0.0941** |
+| 7 | 20 | 0.0307 → **0.0244** | 0.1232 → **0.1024** | 0.1303 → **0.1064** |
+| 8 | 20 | 0.0285 → **0.0243** | 0.1258 → **0.1078** | 0.1390 → **0.1163** |
+
+The (A) columns reproduce as before (weekly k=4, 260 rows: null 0.0001, power 0.0008 / 0.0039;
+draft k=4, 20 rooms: 0.0014 / 0.0076), and the three inclusions hold again on every frame (0 / 0 / 0
+violations). **Direction as expected from #520: every null and every power is lower; no null is
+higher, so the pre-registered stop condition (null ADOPT above 0.05) still did not fire, with
+more room.** The largest
+null anywhere in the grid is now **0.0244** (draft, k=7), down from 0.0351. The
+sentences that quote the old figures read as follows with the new:
+
+- (C)'s power at k=4 is **0.060** (weekly δ=0.3), **0.151** (weekly δ=0.5) and **0.060** (draft
+  δ=2.0), against (A)'s 0.0008 / 0.0039 / 0.0076 — still a factor of about 75 (weekly δ=0.3) and 8
+  (draft) on (A), where it was about 100 and 11.
+- (C) recovers **62%** (weekly δ=0.3: 0.0599 of 0.0966) and **90%** (draft: 0.0596 of 0.0662) of
+  what the interval half alone reaches, where it was 63% and 90%: the share of the interval's
+  power that (C) keeps does not move, because both fall together.
+- 42% of weekly frames at δ=0.3 still have no resolved season at all (P(0 resolved) is unchanged).
+- (C) is still not powerful: 0.06 at k=4, and it reaches 0.45 at weekly δ=0.5 only at k=8 (0.49
+  before).
+- The sentence "(C) raises the null by a factor of over 100 (weekly) and 20 (draft) on a base that
+  was effectively zero" reads **about 95 and 15** (0.0095 and 0.0204 against 0.0001 and 0.0014).
 
 ## Amended 2026-10-09 (#467): the draft gate's 2025 season priced absence at zero; restated (prior text kept)
 
@@ -5308,6 +5416,53 @@ Each will show a lower null ADOPT/REMOVE rate and lower power than published: th
 now wider by the factor at that table's k. None was re-run here (each is a heavy simulation on a
 shared machine); the size direction is conservative, so no published null size is understated by
 the correction.
+
+**Re-run 2026-11-01 (#529), all four, one at a time, no code change** (the text above is kept).
+Where each restatement lives: 1. *Restated 2026-11-01 (#529)* after #388's *Results*; 2. the same
+heading after *Results (C)*; 3. `docs/weekly-forward.md`, *Re-run 2026-11-01 (#529)* below the
+2026-10-20 amendment; 4. ADR-0019, the paragraph after the 2026-10-06 (#418) restatement of the
+rule-16 table. Two things the list above did not foresee. (i) **"Lower null and lower power" holds
+for (C) and for the interval half, not for the raw output of items 1 and 4**: `gate` ships (C)
+since #381, so the harness's "shipped" column and `rule16_combined_power.py` read (C) today and
+come out *higher* than the (A)-era figures they were published against; like-for-like, the (A)
+read of the same frames is lower or equal everywhere (item 4: draft 0.0113 / 0.0324 → 0.0103 /
+0.0300; weekly blend 0.0186 / 0.1925 → 0.0168 / 0.1669). (ii) Under (A) the weekly path moved by
+nothing at four decimals (the rule was already shut by Abstentions); the correction shows in the
+interval-alone column (weekly δ=0.3, k=4, 260 rows: 0.138 → 0.100) and in (C).
+
+**Decisions that rested on a figure that moved — named, none changed.**
+
+- *`MIN_WEEKS = 6`* (`docs/weekly-forward.md`): chosen where "P(ADOPT) at +2.0 points a team-week
+  is under 0.47" at 6 weeks. Printed 0.4658; re-run **0.4105**. The justification holds, more
+  strongly.
+- *The #431 hold, flagged to the maintainer* ("14 weeks, all counted, gets P(ADOPT) = 0.35 at
+  +1.0"): re-run **0.3263**. The flag's direction is unchanged and stronger: the measurement
+  releases the held tickets on ADOPT even less often.
+- *The per-player amendment's cost of Thursday games* (`weekly-forward.md`, 2026-10-20, the most
+  weeks admissible falling to 8): P(ADOPT) at 8 weeks and +2.0 points was 0.6172, re-run
+  **0.5723** (0.2154 → **0.1865** at +1.0). #515's "stale" mark is now resolved; the direction the
+  amendment argued ("lower than at 9 or 10, SHOW likelier") holds.
+- *(C)'s adoption on #381* (ADR-0019, 2026-10-06): its stop condition was null ADOPT above 0.05
+  at k=4; 0.0140 / 0.0291 are now **0.0095 / 0.0204** (grid maximum 0.0351 → 0.0244). It passed
+  and passes with more room. The power cited for it (0.083 / 0.083, "about a hundredfold weekly,
+  tenfold draft") is now **0.060 / 0.060**, about seventy-five-fold and eightfold. The ADR's
+  conclusion (a Gate able to adopt, not a repaired one) stands.
+- *The draft ADOPT branch's rule-16 exemption* (ADR-0019 2026-09-21, restated #418 at 0.0075): the
+  corrected figure at the gate's own precision is 0.0075, and the stand-in figure it was first
+  stated at moved 0.0324 → 0.0300 (A). The exemption does not move.
+- *#388's "tie mechanism owns a minority of the k=4 gap"* (answer to #381): the share read off (A) is
+  12% / 25% weekly and 8% draft (was 17% / 32% and 10–11%): still a minority, k owns 75–92%. The
+  recommendation it fed (the pre-registered (C) options) is unchanged.
+- **Stale text left in `src/`, not edited here** (a docstring, no behaviour):
+  `src/hub/models/experiment.py` ~line 1244 quotes the (C) null and power "(0.014 weekly, 0.029
+  draft at k=4) and power (0.083 / 0.083)"; the corrected figures are 0.0095 / 0.0204 and 0.060 /
+  0.060. Not changed so that this ticket stays documentation-only (a `src/` edit calls for the full
+  combined gate run); a one-line follow-up.
+- **Not re-run, and not on the list:** #418's `gate_horizon.py --rule16` table (the attribution
+  table with its 0.0001 / 0.0008 and 0.0014 / 0.0075) is a fifth heavy simulation through the same
+  `gate`; its (A)-rule headline cells are reproduced by this ticket's #388 re-run (weekly 0.0001 /
+  0.0007–0.0008, draft 0.0014 / 0.0075), but its factor-by-factor attribution percentages (73% / 19% /
+  5% / 2%) were not recomputed.
 
 **What is deliberately not changed: the per-season tie test.** `_disposition` calls a season a
 win at `gain >= 2 * se` over its within-season clusters, with `se` the same raw bootstrap SD —

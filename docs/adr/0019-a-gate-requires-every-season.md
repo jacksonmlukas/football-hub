@@ -312,6 +312,30 @@ exemption below stands at 0.0075 rather than 0.0324. No rule, constant or verdic
 Attribution, table and control: `docs/gate-power.md`, *What contradicts a published figure*,
 #418.
 
+**Restated 2026-11-01 (#529, rule 13; the table above and the 2026-10-06 paragraph are not
+edited).** Re-run on the t interval corrected by #520 (`se` times `sqrt(k/(k-1))`, 1.1547 at
+k=4), `scripts/rule16_combined_power.py` (10,000 trials, bootstrap 200, same seeds, no code change)
+no longer reproduces the table, for two stacked reasons, separated here by reading the same frames
+two ways. The script calls `gate`, and `gate` ships (C) since #381 (2026-10-06, the day this table
+was computed under (A)); the script's own output today is draft **0.0245 / 0.0560** and weekly
+blend **0.0270 / 0.1961**, which is (C) on the corrected SE and is *higher* than the table
+because (C) is a weaker conjunction than (A). Read as (A), the rule this table was computed
+under, on those frames:
+
+| gate | (A), published | (A), corrected SE | (C), corrected SE (script output) | interval half alone, corrected |
+|---|---|---|---|---|
+| draft, null / power | 0.0113 / 0.0324 | **0.0103 / 0.0300** | 0.0245 / 0.0560 | 0.0250 / 0.0562 |
+| weekly blend, null / power | 0.0186 / 0.1925 | **0.0168 / 0.1669** | 0.0270 / 0.1961 | 0.0270 / 0.1961 |
+
+So under the rule the table is about, null and power are both lower, as #520 predicted (draft
+0.0324 → 0.0300, weekly 0.1925 → 0.1669; nulls 0.0113 → 0.0103 and 0.0186 → 0.0168). The (C)
+figures are the ones a reader of the script gets today, and (C) sits at or within 0.0005 of the
+interval alone here because at the stand-in's tiny season SE almost every season resolves. The conclusions the table was
+cited for hold: both nulls under `ALPHA`; combined power below unanimity-alone's (0.136, 0.378,
+themselves #357's figures on the old SE and not re-derived here) at both cells; and the
+draft gate's ADOPT-branch exemption, which rests on the #418 figure at the gate's own precision
+(0.0076 as published; 0.0075 on the corrected SE in the re-run of #388's table), not on this table.
+
 **Both null sizes sit comfortably under `ALPHA` (0.05)** — the tie requirement can only make
 the conjunction rarer than the interval-alone test, never more permissive, and the simulation
 confirms it rather than assuming it.
@@ -703,6 +727,23 @@ weekly and tenfold draft and is **not** a repaired gate: 0.08 is nowhere near `P
 42% of weekly frames at δ=0.3 still have no resolved season at all. (C) makes a Gate *able* to adopt and
 says so on the page when it could not decide. The (A) column reproduces #388's within 1 SE; the
 inclusions (A) ⊆ (C) ⊆ interval-alone hold on every one of 1.5 million frames.
+
+**Restated 2026-11-01 (#529, rule 13; the table and sentences above are not edited).** Re-run on
+the SE corrected by #520 (same harness, cells and seeds; `gate-power.md`, *Restated 2026-11-01
+(#529)* under *Results (C)*), k=4:
+
+| k=4 | null ADOPT (A) | **null ADOPT (C)** | power (A) | **power (C)** | interval half alone |
+|---|---|---|---|---|---|
+| weekly, δ=0.3 (260 rows) | 0.0001 | **0.0095** (was 0.0140) | 0.0008 | **0.0599** (was 0.0829) | 0.0966 (was 0.1313) |
+| weekly, δ=0.5 | 0.0001 | 0.0095 | 0.0039 | **0.1513** (was 0.2003) | |
+| draft, δ=2.0 (20 rooms) | 0.0014 | **0.0204** (was 0.0291) | 0.0076 | **0.0596** (was 0.0828) | 0.0662 (was 0.0919) |
+
+The stop condition did not fire then and does not now (largest null in the grid 0.0244, was
+0.0351). "A hundredfold weekly and tenfold draft" reads about seventy-five and eight; the claim
+that (C) makes a Gate able to adopt and is not a repaired gate stands (0.06 against `POWER` 0.80;
+42% of weekly frames with no resolved season, unchanged). (C) was adopted with the 0.014 / 0.029
+nulls in front of the maintainer; the corrected nulls are lower, so nothing in that choice
+rested on a figure that moved against it.
 
 ## What moves
 
