@@ -219,3 +219,22 @@ def test_no_model_means_no_claim():
     out = burn_in.simulate_power([0.5, 0.6], {}, delta=0.02, games_per_week=16, weeks=9,
                                  simulations=10)
     assert out == {"all": {"noise": 0.0, "parity": 0.0}}
+
+
+def test_without_week_the_burn_in_week_is_the_preregistered_week_nine(tmp_path):
+    """#448 (adopted 2026-10-21): the burn-in is week 9, the first scored week 10. Run without
+    `--week`, the CLI must read week 9. Found by the 2026-11-01 goal-check (default 9->10
+    survived)."""
+    lines: list[str] = []
+    dest = tmp_path / "prereg" / "burn-in.json"
+    rc = burn_in.main(["--forecasts", str(_forecasts(tmp_path)), "--out", str(dest)],
+                      echo=lines.append, config=CFG, analysis=PINNED,
+                      schedule=_schedule(), simulations=200)
+    assert rc == 0
+    assert json.loads(dest.read_text())["burn_in_week"] == 9
+    assert score.load_burn_in(dest).first_scored_week == 10
+
+
+def test_the_power_line_says_it_is_not_preregistered(tmp_path):
+    _, lines, _ = _run(tmp_path)
+    assert any("not pre-registered" in ln for ln in lines)
