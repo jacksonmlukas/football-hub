@@ -90,11 +90,12 @@ def _hub_hook(tmp_path: Path, league: str, hub_due: int) -> tuple[list[str], lis
 
 
 @pytest.mark.parametrize(("league", "hub_due", "hub_dispatched"),
-                         [("cfb", 0, []), ("nfl", 1, []), ("nfl", 0, ["odds-close.yml"])])
-def test_the_study_hook_runs_in_every_leagues_loop_and_leaves_the_hubs_alone(
+                         [("cfb", 0, ["odds-close.yml"]), ("cfb", 1, []), ("nfl", 1, []),
+                          ("nfl", 0, ["odds-close.yml"])])
+def test_the_study_hook_and_the_hubs_both_run_in_every_leagues_loop(
         tmp_path, league, hub_due, hub_dispatched):
     """A December Saturday NFL game is played in the college loop, so the study is asked in
-    every loop; the hub's own dispatch is unchanged (its positive control is the last case)."""
+    every loop, and so is the hub's (#532): its answer, not the league, decides."""
     study, hub = _hub_hook(tmp_path, league, hub_due)
     assert study == ["asked"] and hub == hub_dispatched
 
