@@ -197,8 +197,8 @@ def report_lines(rec: Mapping[str, object], power: Mapping[str, Mapping[str, flo
     n_in = sum(1 for sd in sds.values() if sd >= threshold)
     lines.append(f"  H1 family fixed at {n_in} of {len(sds)} line-aware models")
     lines.append(f"H2 power at delta {delta:g} nats/game: SIMULATION, not a measurement and "
-                 f"not pre-registered ({simulations} simulated windows of {weeks} weeks x {games_per_week} "
-                 f"games; deviations ~ Normal(0, burn-in SD), outcomes follow the betting market)")
+                 f"not pre-registered ({simulations} simulated windows of {weeks} weeks x "
+                 f"{games_per_week} games; deviations ~ Normal(0, burn-in SD), outcomes follow the betting market)")
     for name in sds:
         p = power[name]
         lines.append(f"  {name}: power {p['noise']:.2f} if its deviations are noise, "
