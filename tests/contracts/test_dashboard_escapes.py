@@ -929,7 +929,7 @@ def test_every_stale_warning_goes_through_the_one_stale_note():
     text = _source()
     assert len(re.findall(r"`[^`]*Stale:", text)) == 1
     sites = re.findall(r"stale: staleOf\(", text)
-    assert len(sites) == 7, f"expected the seven panel exits that can be stale, got {len(sites)}"
+    assert len(sites) == 8, f"expected the eight panel exits that can be stale, got {len(sites)}"
 
 
 def _style() -> str:
@@ -1367,7 +1367,7 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
 #
 # Since #478 each zone is the one zone of a view (`v-week`, `v-games`, `v-record`, ...), and the
 # slate has moved out of This week into Games: the router shows one view at a time.
-WEEK_ZONE = ("p-lineup", "p-board", "p-roster", "p-survivor")
+WEEK_ZONE = ("p-lineup", "p-board", "p-best", "p-roster", "p-survivor", "p-health")
 GAMES_ZONE = ("p-slate",)
 RECORD_ZONE = ("p-record",)
 ZONES = ("z-week", "z-games", "z-record", "z-study", "z-ledger")

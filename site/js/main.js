@@ -8,12 +8,13 @@ import { panel } from "./dom.js";
 import { ago, cap, pct } from "./format.js";
 import { boardBody } from "./panels/board.js";
 import { statusLine, statusRecords } from "./panels/footer.js";
-import { lineupHeadline } from "./panels/lineup.js";
+import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
 import { chooseWeek, isArchived, renderSlate } from "./panels/slate.js";
 import { backtestStatement } from "./panels/statement.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
+import { bestLineupBody, healthBody, weekHeading } from "./panels/week.js";
 import { mount } from "./router.js";
 import { STATE, failureWarn, staleOf } from "./state.js";
 
@@ -89,6 +90,16 @@ export async function render() {
     document.getElementById("p-lineup").hidden = false;
     panel("p-lineup", { age: `synced ${ago(ros.generated_at)}`, stale: staleOf(rArt),
                         html: lineupHeadline(ros, staleOf(rArt)) });
+    // The rebuilt view (#484): the heading that states the decision, and the best lineup drawn
+    // 20 ways. An artifact without `swaps` or `quantiles` keeps the body above and shows neither.
+    const rebuilt = isRebuilt(ros);
+    const head = document.getElementById("week-head");
+    head.hidden = !rebuilt;
+    head.textContent = rebuilt ? weekHeading(ros, man) : "";
+    document.getElementById("p-best").hidden = !rebuilt;
+    if (rebuilt) {
+      panel("p-best", { age: "", stale: staleOf(rArt), html: bestLineupBody(ros) });
+    }
     panel("p-roster", {
       // Synced, not published. `generated_at` on this artifact is the roster parquet's own
       // date, because the CLI serves last-good without rewriting it -- so this is when ESPN
@@ -100,6 +111,8 @@ export async function render() {
     });
   } else {
     document.getElementById("p-lineup").hidden = true;
+    document.getElementById("week-head").hidden = true;
+    document.getElementById("p-best").hidden = true;
     panel("p-roster", {
       age: "",
       warn: failureWarn(rArt, "No roster yet. Run `python -m hub.season.roster --write`."),
@@ -158,6 +171,15 @@ export async function render() {
       warn: sArt?.reason ? cap(sArt.reason) : "No survivor plan published.",
       html: `<p class="empty">The panel stays so the gap is visible rather than silently absent.</p>`,
     });
+  }
+
+  // --- pipeline health: every manifest artifact as a state chip with its age. On this view it
+  // replaces the footer's status line (the stylesheet hides the footer here). Guarded like the
+  // footer, so a record that cannot be read costs this panel and nothing else.
+  try {
+    panel("p-health", { age: "", html: healthBody(statusRecords(man)) });
+  } catch {
+    panel("p-health", { age: "", warn: "Pipeline health unavailable: an artifact record could not be read." });
   }
 
 }
