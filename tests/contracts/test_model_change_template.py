@@ -45,3 +45,13 @@ def test_weekly_slate_names_the_pinned_model_check():
 def test_a_removed_field_is_detected():
     broken = TEMPLATE.read_text().replace("id: reason", "id: why")
     assert not FIELDS <= set(_fields(broken))
+
+
+def test_the_h1_h2_options_follow_the_prereg_deprecation_rule():
+    """A deprecated model's contestant ends and leaves H1 and H2; no substitute counts toward the
+    confirmatory tests (docs/prereg/llm-forecasters.md, exclusions table and Contestants). Found
+    by the 2026-11-01 goal-check: the first wording offered "stays in" and "record restarts"."""
+    text = TEMPLATE.read_text()
+    assert "leaves H1 and H2" in text
+    assert "record restarts" not in text and "stays in the family" not in text
+    assert "No substitute counts" in text

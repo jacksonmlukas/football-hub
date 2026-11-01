@@ -48,16 +48,22 @@ body:
     id: leaves_holm_family
     attributes:
       label: H1 consequence - leaves the Holm family?
-      description: The family is fixed at the burn-in; a member that cannot be scored stays in with p = 1.
-      options: [no - stays in the family, yes - leaves the family, undecided]
+      description: >-
+        Per the prereg's exclusions table, a deprecated model's contestant ends when the deprecation
+        is announced and leaves H1 and H2, which then cover the models still running. (The "stays in
+        with p = 1" rule is for a fit that fails on the scored games, not for a deprecation.)
+      options: [yes - deprecated, the contestant ends and leaves H1 and H2, no - not a deprecation (outage or alias resolved to the same model), undecided]
     validations:
       required: true
   - type: dropdown
     id: resets_contestant
     attributes:
-      label: H2 consequence - resets the contestant?
-      description: Does the contestant's scored record restart under the new model, or rerun the burn-in?
-      options: [no - record continues, yes - record restarts, undecided]
+      label: H2 consequence - does a substitute count?
+      description: >-
+        No substitute counts toward the confirmatory tests (prereg, Contestants). A replacement model's
+        games are reported as exploratory only, unless the maintainer reruns the burn-in before
+        prereg-llm-v1 and records it as a deviation.
+      options: [no - the substitute is exploratory only, burn-in rerun before v1 (logged deviation), undecided]
     validations:
       required: true
   - type: textarea
