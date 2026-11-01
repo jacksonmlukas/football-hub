@@ -87,6 +87,10 @@ MARKET_COLUMNS: dict[str, str] = {
     "close_total": "contracts.ODDS_SNAPSHOT.required",
     "spread_price": "contracts.ODDS_SNAPSHOT.required",
     "total_price": "contracts.ODDS_SNAPSHOT.required",
+    # The other side of each price (#512): a vig is a function of the market, and so is these.
+    "spread_price_away": "contracts.ODDS_SNAPSHOT.required",
+    "ml_home_price": "contracts.ODDS_SNAPSHOT.required",
+    "ml_away_price": "contracts.ODDS_SNAPSHOT.required",
 }
 
 # Importing one of these is reaching for the betting market whatever it then names. Neither
