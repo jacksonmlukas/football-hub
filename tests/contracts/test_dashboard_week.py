@@ -150,7 +150,8 @@ def test_the_best_lineup_plots_the_published_quantiles_and_tints_incoming(node):
     assert 'x1="140.0"' in html, "the projection line sits at mu = 14 on the same axis"
     assert best.count("bl-incoming") == 2
     bench = html[html.index("<details"):html.index("</details>")]
-    assert "<details class" in bench and " open" not in bench[:20]
+    tag = bench[:bench.index(">") + 1]
+    assert tag.startswith("<details class") and " open" not in tag, "the bench starts collapsed"
     assert "Bench Guy" in bench and "Chase" not in bench
     assert "Kicker K" in html and "outside the board" in html
 
@@ -209,3 +210,16 @@ def test_the_pipeline_health_chips_every_artifact_with_its_age(node):
 def test_the_footer_status_line_gives_way_to_the_health_on_this_view():
     css = (SITE / "index.html").read_text()
     assert re.search(r"main:has\(#v-week:not\(\[hidden\]\)\)\s*>\s*footer\s*\{\s*display:\s*none", css)
+
+
+def test_a_hostile_name_in_the_best_lineup_plot_is_escaped(node):
+    """The plot's aria-label carries the player's name; it goes through esc like every other feed
+    value. Found by the 2026-11-01 goal-check (removing esc there survived)."""
+    ros = json.loads(json.dumps(ROSTER))
+    for r in ros["rows"]:
+        if r.get("best_start"):
+            r["player"] = HOSTILE
+            break
+    html = _run(node, f"import {{ bestLineupBody }} from {_mod('panels/week.js')};\n"
+                      f"console.log(bestLineupBody({json.dumps(ros)}));")
+    assert "<script>" not in html and "&lt;script&gt;" in html
