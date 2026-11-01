@@ -1,13 +1,13 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-10-31T23:56:36+00:00",
+  "generated_at": "2026-11-01T07:49:31+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 9,
   "deadline": {
-    "id": "2026-10-31T2100Z",
-    "name": "gameday-late"
+    "id": "2026-11-01T0130Z",
+    "name": "evening"
   },
   "fetched": true,
   "stale": true,
@@ -28,7 +28,7 @@
   },
   "lines": {
     "rows": 114,
-    "captured_at": "2026-10-31T23:56:36+00:00",
+    "captured_at": "2026-11-01T07:49:30+00:00",
     "why": null
   },
   "missed": {
@@ -56,10 +56,10 @@
       "2026-10-04T0130Z"
     ]
   },
-  "archive_rows": 45,
+  "archive_rows": 47,
   "quota": {
-    "month": "2026-10",
-    "used": 48,
+    "month": "2026-11",
+    "used": 1,
     "limit": 1000
   }
 }
