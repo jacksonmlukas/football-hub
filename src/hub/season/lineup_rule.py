@@ -116,22 +116,57 @@ def rule_for(season: int, week: int | None) -> str:
     return ECR
 
 
+def _last_good_pick(season: int, week: int, base: Path | None = None
+                    ) -> tuple[bool, Any] | None:
+    """`(is_lineup_capture, capture)` last-good serves for `week`, or None: the newest *earlier*
+    week's, a week capture before a lineup capture of the same week (it is in time for every
+    player). A week capture must not be late; lineup captures come through
+    `consensus.read_lineup_captures`, so only those that pass `consensus.lineup_problem` are
+    here (#533: since #515 and ADR-0027 only Friday lineup captures are written, so week
+    captures alone would never be found)."""
+    from hub.fetch import consensus
+    caps: list[tuple[int, int, Any]] = []            # (week, 1 = week capture, capture)
+    try:
+        caps += [(c.week, 1, c) for c in consensus.read_captures(season, base)
+                 if c.week < week and not consensus.is_late(c.captured_at, c.first_game_day)]
+    except Exception:                                # graceful degradation, per CLAUDE.md
+        pass
+    try:
+        caps += [(c.week, 0, c) for c in consensus.read_lineup_captures(season, base)
+                 if c.week < week]
+    except Exception:
+        pass
+    if not caps:
+        return None
+    _, kind, cap = max(caps, key=lambda t: (t[0], t[1], t[2].captured_at))
+    return kind == 0, cap
+
+
 def last_good_ecr(season: int, week: int,
                   base: Path | None = None) -> tuple[dict[str, float], int | None]:
-    """`{player_key: ecr}` from the newest week capture of an *earlier* week, or `({},
-    None)`. Each such capture was taken before its own week began, so before this one."""
-    from hub.fetch import consensus
+    """`{player_key: ecr}` from the newest capture of an *earlier* week (`_last_good_pick`), or
+    `({}, None)`. Each such capture was taken before its own week's lineup was set, so before
+    this one."""
     from hub.season.lineup_journal import ranks_of
-    try:
-        caps = consensus.read_captures(season, base)
-    except Exception:                                # graceful degradation, per CLAUDE.md
+    pick = _last_good_pick(season, week, base)
+    if pick is None:
         return {}, None
-    ok = [c for c in caps if c.week < week
-          and not consensus.is_late(c.captured_at, c.first_game_day)]
-    if not ok:
-        return {}, None
-    cap = max(ok, key=lambda c: (c.week, c.captured_at))
-    return ranks_of(cap.rows), cap.week
+    return ranks_of(pick[1].rows), pick[1].week
+
+
+def last_good_source(season: int, week: int, base: Path | None = None) -> str:
+    """How last-good's capture is named in a reason: `"week 6's capture"` for a week capture,
+    `"week 6's lineup capture of 2026-10-23"` (its scrape date) for a Friday one."""
+    pick = _last_good_pick(season, week, base)
+    if pick is None:
+        return ""
+    is_lineup, cap = pick
+    return (f"week {cap.week}'s lineup capture of {cap.scrape_date.isoformat()}"
+            if is_lineup else f"week {cap.week}'s capture")
+
+
+def _named(old_week: int | None, season: int, week: int, base: Path | None) -> str:
+    return last_good_source(season, week, base) or f"week {old_week}'s capture"
 
 
 def lineup_ecr(season: int, week: int, base: Path | None = None
@@ -203,9 +238,11 @@ def decide(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None = None
     if old:
         got = lock(df, ranks=old)
         if got.best_lineup:
+            src = _named(old_week, season, wk, captures)
             return got, Decision(ECR, want, wk, start, old_week,
-                                 f"{reasons[0]}; set on week {old_week}'s capture (last-good)")
-        reasons.append(f"week {old_week}'s capture (last-good) ranks too few of the pool")
+                                 f"{reasons[0]}; set on {src} (last-good)")
+        reasons.append(f"{_named(old_week, season, wk, captures)} (last-good) ranks too "
+                       "few of the pool")
     else:
         reasons.append("no earlier capture to serve as last-good")
     return model("; ".join(reasons) + "; the model's lineup (mu) is served instead")
@@ -255,7 +292,8 @@ def partial_call(df: pl.DataFrame, season: int = SEASON_AHEAD, week: int | None 
         tries.append((late, week, None, label))
     old, old_week = last_good_ecr(season, week, captures)
     if old:
-        tries.append((old, old_week, f"set on week {old_week}'s capture (last-good)", None))
+        src = _named(old_week, season, week, captures)
+        tries.append((old, old_week, f"set on {src} (last-good)", None))
     for ranks, wk, why, cap in tries:
         got = partial(df, ranks=ranks)
         if got.lineup and got.empty == base.empty:

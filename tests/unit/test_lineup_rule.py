@@ -328,6 +328,62 @@ def test_replaying_the_old_lock_week_is_unchanged_by_a_lineup_capture(tmp_path):
     assert after[1].as_dict() == before[1].as_dict() and "ecr_capture" not in after[1].as_dict()
 
 
+# --- last-good also reads earlier weeks' Friday captures (#533) ----------------------------
+#
+# Since #515 only lineup captures are written, so a Wednesday publish has no week capture at all
+# and last-good has to find the previous Friday's.
+
+OLD_FRIDAY = datetime(2026, 10, 16, 15, tzinfo=UTC)
+
+
+def _old_lineup_capture(base, week: int = OLD, captured_at: datetime = OLD_FRIDAY,
+                        scrape: date = date(2026, 10, 16), sunday: date = date(2026, 10, 18)
+                        ) -> None:
+    rows = pl.DataFrame({"player": [p[0] for p in PLAYERS], "pos": [p[1] for p in PLAYERS],
+                         "team": ["XXX"] * len(PLAYERS),
+                         "ecr": [LINEUP_FLIP.get(p[0], p[3]) for p in PLAYERS]})
+    doc = consensus.build_lineup(SEASON, week, rows, scrape, date(2026, 10, 13),
+                                 date(2026, 10, 15), sunday, captured_at, "d")
+    atomic.write_text(consensus.lineup_path(SEASON, week, captured_at, base),
+                      json.dumps(doc, sort_keys=True) + "\n")
+
+
+def test_a_wednesday_publish_serves_last_good_from_an_earlier_weeks_lineup_capture(tmp_path):
+    _old_lineup_capture(tmp_path)
+    lk, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "ecr" and rule.ecr_week == OLD and rule.ecr_capture is None
+    assert _flex(lk.best_lineup) == MU_FLEX, "set on the old lineup capture's ranks"
+    assert f"week {OLD}'s lineup capture of 2026-10-16 (last-good)" in (rule.reason or "")
+    assert "no earlier capture" not in (rule.reason or "")
+
+
+def test_the_newest_earlier_week_wins_and_a_week_capture_beats_a_lineup_capture_of_its_week(
+        tmp_path):
+    _old_lineup_capture(tmp_path, week=OLD - 1, captured_at=OLD_FRIDAY - timedelta(days=7),
+                        scrape=date(2026, 10, 9), sunday=date(2026, 10, 11))
+    _old_lineup_capture(tmp_path)
+    assert lineup_rule.last_good_source(SEASON, FIRST, tmp_path).startswith(f"week {OLD}'s lineup")
+    _capture(tmp_path, OLD)
+    assert lineup_rule.last_good_source(SEASON, FIRST, tmp_path) == f"week {OLD}'s capture"
+    assert lineup_rule.last_good_ecr(SEASON, FIRST, tmp_path)[1] == OLD
+
+
+def test_an_earlier_lineup_capture_that_fails_lineup_problem_is_skipped(tmp_path):
+    _old_lineup_capture(tmp_path, captured_at=datetime(2026, 10, 18, 4, tzinfo=UTC))
+    assert consensus.read_lineup_captures(SEASON, tmp_path) == []
+    assert lineup_rule.last_good_ecr(SEASON, FIRST, tmp_path) == ({}, None)
+    _, rule = lineup_rule.decide(_roster(FIRST), SEASON, captures=tmp_path)
+    assert rule.source == "mu" and "no earlier capture" in (rule.reason or "")
+
+
+def test_the_published_note_names_the_old_lineup_capture(_publishable):
+    tmp = _publishable
+    _old_lineup_capture(tmp / "cons")
+    art = _published(tmp, _roster(FIRST))
+    assert art["lineup_rule"]["ecr_week"] == OLD
+    assert "lineup capture of 2026-10-16" in art["lineup_rule"]["reason"]
+
+
 def test_replaying_weeks_1_to_6_publishes_what_they_published_whatever_captures_exist(tmp_path):
     """#515's replay invariance: ADR-0027 makes a Friday capture the week's in-time capture for
     Sunday's players, and nothing about weeks 1-6 may move with it. Each is replayed with a week
