@@ -52,7 +52,7 @@ def _interval(w: score.WeeklyMean) -> dict[str, Any]:
 
 def build(games: Sequence[score.Game], forecasts: score.Forecasts, *, analysis: Analysis,
           burn_in: score.BurnIn, snapshot_ids: Sequence[str], refused: int,
-          seed: int = 0) -> dict[str, Any]:
+          seed: int) -> dict[str, Any]:
     """The leaderboard document for `games` (the scored window) against `forecasts`."""
     played = [g for g in games if g.outcome is not None]
     rows: list[dict[str, Any]] = []
