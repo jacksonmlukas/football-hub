@@ -1,0 +1,67 @@
+name: LLM forecaster model change
+description: A pinned LLM in the forecaster study was deprecated, moved, or went down. Becomes a row in the prereg's deviations log.
+title: "model change: <contestant> <old id> -> <new id>"
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For `conf/forecasters.toml` `[[llm]]` pins only. A change to the hub's own model uses the
+        "Model change" template. Under `docs/prereg/llm-forecasters.md`, a change after v0 gets a
+        row in the deviations log **before it takes effect**.
+  - type: dropdown
+    id: contestant
+    attributes:
+      label: Contestant
+      options: [llm1, llm2, llm3, llm4, retrieval arm]
+    validations:
+      required: true
+  - type: input
+    id: old_model_id
+    attributes:
+      label: Old model id
+      description: The pinned `model_version`, exactly as in conf/forecasters.toml.
+    validations:
+      required: true
+  - type: input
+    id: new_model_id
+    attributes:
+      label: New model id
+      description: The id that replaces it, or "none" if the contestant stops.
+    validations:
+      required: true
+  - type: input
+    id: date_noticed
+    attributes:
+      label: Date noticed
+      description: YYYY-MM-DD
+    validations:
+      required: true
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Reason
+      options: [provider deprecation, alias moved, outage]
+    validations:
+      required: true
+  - type: dropdown
+    id: leaves_holm_family
+    attributes:
+      label: H1 consequence - leaves the Holm family?
+      description: The family is fixed at the burn-in; a member that cannot be scored stays in with p = 1.
+      options: [no - stays in the family, yes - leaves the family, undecided]
+    validations:
+      required: true
+  - type: dropdown
+    id: resets_contestant
+    attributes:
+      label: H2 consequence - resets the contestant?
+      description: Does the contestant's scored record restart under the new model, or rerun the burn-in?
+      options: [no - record continues, yes - record restarts, undecided]
+    validations:
+      required: true
+  - type: textarea
+    id: deviations_row
+    attributes:
+      label: Deviations-log row
+      description: Date, change, reason, and whether it affects the confirmatory tests.

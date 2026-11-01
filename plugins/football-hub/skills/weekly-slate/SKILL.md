@@ -21,7 +21,12 @@ make slate WEEK=<n>
 5. `hub.models.conformal --recalibrate` updates the rolling calibration window.
 6. `hub.season.roster --write` re-reads your ESPN team. Waivers and trades move it every week,
    so this is a refresh, not a one-off after the draft. Optional: unreachable serves last-good.
-7. `hub.publish` writes `site/data/*.json`, commits, and Pages redeploys.
+7. Pinned-model check (forecaster study): confirm each `model_version` in `[[llm]]` of
+   `conf/forecasters.toml` is still served, from the provider's docs (deprecations page) or the
+   summary of the last `forecast-dry-run.yml` run. No live API call from this step. If one is
+   not served, open a model-change issue (`.github/ISSUE_TEMPLATE/model-change.yml`) before the
+   next forecast runs.
+8. `hub.publish` writes `site/data/*.json`, commits, and Pages redeploys.
 
 ## Cadence
 
