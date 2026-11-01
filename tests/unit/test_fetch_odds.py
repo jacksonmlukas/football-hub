@@ -1471,3 +1471,12 @@ def test_the_extra_columns_add_no_market_and_no_credit(transport, teams, schedul
     calls = transport()
     odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
     assert len(calls) == 1 and calls[0]["markets"] == "spreads,totals,h2h"
+
+
+def test_a_median_price_is_kept_to_cents():
+    """#512's state files are held to ODDS_FILE_CAP, so a median taken in decimal space is stored to
+    cents, not to the fifteen digits no book quoted. Found by the 2026-11-01 goal-check (a 2->3
+    digit mutant survived)."""
+    assert odds._cents(-111.23456) == -111.23
+    assert odds._cents(147.6789) == 147.68
+    assert odds._cents(None) is None
