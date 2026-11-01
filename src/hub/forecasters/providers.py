@@ -48,7 +48,10 @@ KEY_ENV: dict[str, str] = {ANTHROPIC: "ANTHROPIC_API_KEY", OPENAI: "OPENAI_API_K
                            GOOGLE: "GEMINI_API_KEY"}
 TAVILY_KEY_ENV = tavily.KEY_ENV            # the retrieval arm's search key (#511)
 
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+# What `Router` puts in front of a failed call's one-line reason (the lost-sample text).
+PROVIDER_ERROR_PREFIX = "[provider error]"
+
+ANTHROPIC_URL ="https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 OPENAI_URL = "https://api.openai.com/v1/responses"
 GOOGLE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -152,7 +155,8 @@ class Anthropic(_Adapter):
     def reply(self, data):
         text = "".join(b.get("text", "") for b in data["content"] if b.get("type") == "text")
         u = data.get("usage") or {}
-        return Completion(text, _int(u.get("input_tokens")), _int(u.get("output_tokens")))
+        return Completion(text, _int(u.get("input_tokens")), _int(u.get("output_tokens")),
+                          bool(u))
 
 
 class OpenAI(_Adapter):
@@ -177,7 +181,8 @@ class OpenAI(_Adapter):
                        if item.get("type") == "message"
                        for c in item.get("content") or [] if c.get("type") == "output_text")
         u = data.get("usage") or {}
-        return Completion(text, _int(u.get("input_tokens")), _int(u.get("output_tokens")))
+        return Completion(text, _int(u.get("input_tokens")), _int(u.get("output_tokens")),
+                          bool(u))
 
 
 class Google(_Adapter):
@@ -205,7 +210,7 @@ class Google(_Adapter):
         text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         u = data.get("usageMetadata") or {}
         out = _int(u.get("candidatesTokenCount")) + _int(u.get("thoughtsTokenCount"))
-        return Completion(text, _int(u.get("promptTokenCount")), out)
+        return Completion(text, _int(u.get("promptTokenCount")), out, bool(u))
 
 
 ADAPTERS: dict[str, type[_Adapter]] = {ANTHROPIC: Anthropic, OPENAI: OpenAI, GOOGLE: Google}
@@ -228,4 +233,4 @@ class Router:
         try:
             return self._by[spec.provider].complete(spec, system, user)
         except ProviderError as exc:
-            return Completion(f"[provider error] {exc}", 0, 0)
+            return Completion(f"{PROVIDER_ERROR_PREFIX} {exc}", 0, 0, False)

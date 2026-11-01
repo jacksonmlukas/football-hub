@@ -100,7 +100,7 @@ class WidthEntry:
     # this module writes, which then carries no such key.
     requires_review: bool | None = None
     # #381: how many of the run's seasons resolved (a win or a loss) and how many abstained
-    # (CONTEXT.md, **Abstention**) -- the two numbers the verdict is read over, recorded beside
+    # (GLOSSARY.md, **Abstention**) -- the two numbers the verdict is read over, recorded beside
     # it so a verdict on fewer seasons than were run says so in the record and not only in the
     # sentence. `None` on an entry written before #381, or by a caller with no seasons frame to
     # count; then neither key is written, the same additive shape as `seasons`.

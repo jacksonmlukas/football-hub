@@ -66,7 +66,7 @@ move is not.
 > **Amendment, 2026-10-07 (#430): the arm is re-pinned. Prior text above kept.** The move
 > happened: `hub/models/weekly.py` is now `hub/exhibits/weekly_projection.py`, and
 > `shipped_quantiles` is now `parametric_quantiles` (the word *shipped* names the page's
-> conformalised interval and nothing else, CONTEXT.md). **This is a pure move and rename.** What
+> conformalised interval and nothing else, GLOSSARY.md). **This is a pure move and rename.** What
 > the projection computes is unchanged, and the proof is
 > `tests/unit/test_weekly_projection_move.py::test_the_moved_projection_computes_exactly_what_the_pinned_arm_computed`:
 > it freezes `project` (bare, under each fitted `Shrink`, and under a fixed one), `fit_shrink`
@@ -1118,3 +1118,28 @@ changed; `tests/unit/test_config.py` holds them).
 **The rows now pinned.** `hub.models.margin` `3852336394ee`, `hub.models.market` `9059bc8092ed`;
 the other 27 rows are as in the latest table above. Closure digest **`d52b01c1b3ffa8fd`** (was
 `69a09cab8e72c77d`).
+
+### Amendment, 2026-11-01: the glossary rename re-pins four modules (comments only)
+
+The `chore/glossary-rename` merge (`e7ed907`, mattpocock-skills 1.3) renamed `CONTEXT.md` to
+`GLOSSARY.md` and changed one word in a docstring or comment in each of four pinned modules:
+`CONTEXT.md` became `GLOSSARY.md`. The pin hashes source bytes, so the four digests moved.
+Re-pinned at the maintainer's instruction (option (a), 2026-11-01). The closure's set is unchanged:
+29 modules, the same names.
+
+**Why the arm's figures are unchanged.** Each edit is a comment or docstring word. No statement,
+constant, name or import changed. #430's identity test (`tests/unit/test_weekly_projection_move.py`)
+passes on this tree.
+
+**What did not move:** `config_digest` and `fitted_digest` (no constant changed).
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.optimize` | `314a78a8b5ef` | `8dc3527a8f01` |
+| `hub.models.panel` | `99d19fba99e0` | `a75721321098` |
+| `hub.models.scoring_rules` | `3c201f3a0d6f` | `051e826af4a9` |
+| `hub.names` | `93e503040186` | `45f5942ed9de` |
+
+**The rows now pinned.** `hub.draft.optimize` `8dc3527a8f01`, `hub.models.panel` `a75721321098`,
+`hub.models.scoring_rules` `051e826af4a9`, `hub.names` `45f5942ed9de`; the other 25 rows are as in the
+latest table above. Closure digest **`e7e586aa15ef2a02`** (was `d52b01c1b3ffa8fd`).

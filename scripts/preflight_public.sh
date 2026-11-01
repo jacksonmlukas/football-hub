@@ -28,7 +28,7 @@ fail=0
 # learn to ignore -- which is how the 2026-08-23 miss became possible. A real cookie or key
 # carries no spaces and no prose punctuation.
 #
-# "Scan", not "gate", throughout. `CONTEXT.md` reserves **Gate** for the measurement decision
+# "Scan", not "gate", throughout. `GLOSSARY.md` reserves **Gate** for the measurement decision
 # -- does a model beat the thing it replaces -- and this checks a history for credentials,
 # which is a different kind of claim entirely. Its test module was renamed to match in the
 # names; that is issue #53's second pass.

@@ -80,6 +80,15 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: uv run python -m hub.forecasters.cli mark-done --out forecasts-branch --day "${{ steps.gate.outputs.day }}"
 
+      # Timestamp receipts (#449): each day's forecast file is submitted to the public
+      # OpenTimestamps calendars and the receipt kept beside it as `<file>.ots`, on `forecasts`.
+      # Best effort -- an outage logs and exits 0, the file stays unreceipted, and the next run
+      # stamps it. Only this gated workflow stamps (tests/contracts/test_receipts_wiring.py).
+      - name: Stamp the forecast files
+        if: steps.gate.outputs.run == 'true'
+        continue-on-error: true
+        run: uv run python -m hub.forecasters.receipts stamp-pending forecasts-branch
+
       - name: Save the output as an artifact
         if: always() && steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4

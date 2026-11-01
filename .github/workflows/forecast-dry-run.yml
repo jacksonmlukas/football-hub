@@ -1,0 +1,66 @@
+name: llm-forecast-dry-run
+# A manual live dry run of one study day (#534): the day pipeline once, against the real
+# providers, Tavily and The Odds API, with the real keys, writing NOWHERE but a workflow
+# artifact. For checking the keys, the token usage against the 1,000 cap, latency, cost and the
+# ESPN feed's shape before the burn-in -- without enabling the study.
+#
+# **Not gated by LLM_FORECASTS_ENABLED**, and manual dispatch only: no schedule, no push
+# trigger. **It cannot push**: `contents: read`, the checkout keeps no credentials
+# (`persist-credentials: false`), and no step runs git beyond the checkout.
+# `tests/contracts/test_forecast_dry_run_workflow.py` holds all of that.
+#
+# **Spend**: `ceiling_usd` is checked against the day's worst case (every sample retried to the
+# limit, at the pinned prices) before any key is read or any call is made; over it, the run
+# refuses and the artifact holds only the summary. The worst case is about $2 a game, so pick a
+# light day (a Thursday night, a Monday) or a ceiling to match.
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "The study day to run, YYYY-MM-DD (US Eastern)"
+        required: true
+        type: string
+      ceiling_usd:
+        description: "Hard ceiling on the day's worst-case spend, USD (well under 5)"
+        required: true
+        default: "4"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-forecast-dry-run
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Dry-run the day into dry-run-out/ only
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          DAY: ${{ inputs.day }}
+          CEILING_USD: ${{ inputs.ceiling_usd }}
+        run: uv run python -m hub.forecasters.cli dry-run --out dry-run-out --day "$DAY" --ceiling-usd "$CEILING_USD"
+
+      - name: Save the output as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecast-dry-run-${{ inputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dry-run-out/
+          if-no-files-found: warn
+          retention-days: 14

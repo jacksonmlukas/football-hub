@@ -1,4 +1,4 @@
-"""`CONTEXT.md`'s `_Avoid_` lists, enforced against the source tree, against `CONTEXT.md`, and
+"""`GLOSSARY.md`'s `_Avoid_` lists, enforced against the source tree, against `GLOSSARY.md`, and
 against the names `tests/` declares.
 
 Prose has failed to hold this rule five times. A frame was named `eligible` two lines after
@@ -21,7 +21,7 @@ So every term is classified, and the classification is the honest part:
 * `UNCHECKED` -- no regex can decide it, and the entry's own words say why.
 
 `test_every_avoided_term_in_the_glossary_is_classified` requires every term parsed out of
-`CONTEXT.md` to sit in exactly one of them. A new `_Avoid_` term therefore forces a decision
+`GLOSSARY.md` to sit in exactly one of them. A new `_Avoid_` term therefore forces a decision
 rather than arriving unscanned, and a term struck from the glossary forces a cleanup. That
 premise, and not the scan, is what stops this file quietly narrowing to nothing.
 
@@ -50,7 +50,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTEXT = ROOT / "CONTEXT.md"
+CONTEXT = ROOT / "GLOSSARY.md"
 
 # The source tree and the glossary, read line by line.
 SCAN_ROOTS: tuple[Path, ...] = (
@@ -122,7 +122,7 @@ def _terms(body: str) -> list[str]:
     would be the narrowing this file exists to refuse.
     """
     body = re.sub(r"\s\([^)]*\)", "", " ".join(body.split()))
-    # Em dash, en dash or `--`: `CONTEXT.md` uses the first, source comments the last, and
+    # Em dash, en dash or `--`: `GLOSSARY.md` uses the first, source comments the last, and
     # the second is spelled as an escape because a bare one is indistinguishable from a hyphen.
     clauses = [re.split("\\s+[\u2014\u2013]\\s+|\\s+--\\s+", body)[0]]
     clauses += [m.group("body") for m in _ALSO.finditer(body)]
@@ -136,7 +136,7 @@ def _terms(body: str) -> list[str]:
 
 
 def glossary(text: str | None = None) -> list[Entry]:
-    """Every entry in `CONTEXT.md` that forbids something, in the order they appear."""
+    """Every entry in `GLOSSARY.md` that forbids something, in the order they appear."""
     text = CONTEXT.read_text() if text is None else text
     heads = [(m.start(), tuple(g for g in (m.group(1), m.group(2)) if g))
              for m in _HEADWORD.finditer(text)]
@@ -150,7 +150,7 @@ def glossary(text: str | None = None) -> list[Entry]:
 
 
 def headwords(text: str | None = None) -> set[str]:
-    """Every term `CONTEXT.md` defines, lower-cased."""
+    """Every term `GLOSSARY.md` defines, lower-cased."""
     text = CONTEXT.read_text() if text is None else text
     return {g.lower() for m in _HEADWORD.finditer(text)
             for g in (m.group(1), m.group(2)) if g}
@@ -387,7 +387,7 @@ class Hit:
         return (self.path, self.term)
 
 
-# A mention is not a use. `# CONTEXT.md avoids "the plan" unqualified` cites the rule; the
+# A mention is not a use. `# GLOSSARY.md avoids "the plan" unqualified` cites the rule; the
 # glossary's own `_Avoid_` line lists the term. Both are quoted or backticked *and* sit on a
 # line that names the rule, which is as narrow as this exemption gets.
 _CITES = re.compile(r"\bavoid|CONTEXT\.md|glossary\b", re.I)
@@ -725,7 +725,7 @@ def test_the_parse_is_not_broken_by_a_comma_or_a_dash_inside_an_aside():
 def test_every_avoided_term_in_the_glossary_is_classified():
     """The check that stops this file narrowing to nothing.
 
-    A term parsed out of `CONTEXT.md` is either checked -- with the rule that decides it --
+    A term parsed out of `GLOSSARY.md` is either checked -- with the rule that decides it --
     or explicitly not checkable, with the reason. Adding an `_Avoid_` term to the glossary
     therefore fails this until someone has decided which it is.
     """
@@ -743,7 +743,7 @@ def test_every_avoided_term_in_the_glossary_is_classified():
 def test_every_reserved_term_is_a_headword_the_glossary_defines():
     defined = headwords()
     assert not (set(RESERVED) - defined), (
-        f"RESERVED names terms `CONTEXT.md` does not define: "
+        f"RESERVED names terms `GLOSSARY.md` does not define: "
         f"{sorted(set(RESERVED) - defined)}")
 
 
@@ -896,10 +896,10 @@ def test_a_fresh_violation_is_caught(tmp_path):
 def test_a_citation_of_the_rule_is_not_a_violation(tmp_path):
     """The narrow exemption: a quoted mention on a line that names the rule.
 
-    `CONTEXT.md`'s own `_Avoid_` lines and the comments citing them are talking *about* the
+    `GLOSSARY.md`'s own `_Avoid_` lines and the comments citing them are talking *about* the
     term. Nothing wider than that is exempt -- the same words unquoted still fail."""
     mod = tmp_path / "cite.py"
-    mod.write_text('# CONTEXT.md avoids "the market" unqualified, so this says which one.\n'
+    mod.write_text('# GLOSSARY.md avoids "the market" unqualified, so this says which one.\n'
                    "# This one follows the market.\n")
     assert [h.line for h in scan((mod,))] == [2]
 
@@ -935,7 +935,7 @@ def test_nothing_scanned_uses_a_term_its_glossary_forbids():
                        f"{repr(entry) if entry else 'reserved by **Board**/**Gate**'} "
                        f"forbids it ({hit.rule.why}).\n      {hit.text[:96]}")
     assert not bad, (
-        "these use a term CONTEXT.md forbids:\n" + "\n".join(sorted(set(bad))) + "\n\n"
+        "these use a term GLOSSARY.md forbids:\n" + "\n".join(sorted(set(bad))) + "\n\n"
         "Say which market, which plan, which board. If the use is genuinely the entry's own "
         "sense, add it to OUTSTANDING with the reason -- and if the term is not decidable by "
         "a regex at all, move it to UNCHECKED and say why. A name under `tests/` is a name "

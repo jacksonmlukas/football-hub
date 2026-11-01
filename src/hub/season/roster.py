@@ -282,7 +282,7 @@ def build(espn: pl.DataFrame, board: pl.DataFrame,
         (~pl.col("slot").is_in(NOT_STARTING)).alias("starting"),
         # Whether he may occupy a Slot at all, which is not whether he is in one and not
         # whether we expect him to play. Three neighbouring ideas with three names: see
-        # CONTEXT.md, which keeps them apart on purpose.
+        # GLOSSARY.md, which keeps them apart on purpose.
         (pl.col("slot") != INJURED_RESERVE).alias("can_start"),
         _on_bye(week),
         _kicked_off(week),

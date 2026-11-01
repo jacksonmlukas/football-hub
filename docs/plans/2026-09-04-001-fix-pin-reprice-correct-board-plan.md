@@ -889,7 +889,7 @@ restatement boxes, and every ADR resting on a moved verdict is re-scored.
 **Dependencies:** U4, U9, U10, U12
 
 **Files:**
-- `CONTEXT.md`
+- `GLOSSARY.md`
 - `docs/architecture.md` — the ADR index
 - `docs/method.md` — the track-record table
 - `docs/track-record.md`
@@ -908,7 +908,7 @@ measured and then removed, which makes a stale record the highest-severity docum
 defect available. Scope is the drift this plan's own units cause or supersede: Gate B's
 headline standing four ways across three files, the blend headline standing at the superseded
 +0.711 in five documents, the ADR index stopping at 0014 while 0022 exists, and every figure
-U4, U9, U10 and U12 move. `CONTEXT.md` is in scope because CLAUDE.md designates it the
+U4, U9, U10 and U12 move. `GLOSSARY.md` is in scope because CLAUDE.md designates it the
 single-context domain doc, so a superseded figure there is ingested as authoritative by every
 future session.
 
@@ -930,7 +930,7 @@ superseded figures stay visible with the reason they moved.
 
 **Verification:** A grep for each superseded figure this plan moved returns either nothing or
 a hit inside a restatement box; `docs/architecture.md` lists 0001 through 0022; every figure
-in `CONTEXT.md` matches its canonical value or sits in a restatement box; and each of ADR-0009,
+in `GLOSSARY.md` matches its canonical value or sits in a restatement box; and each of ADR-0009,
 0013, 0016 and 0017 carries a dated re-scoring.
 
 ---

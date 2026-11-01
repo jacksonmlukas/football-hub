@@ -89,7 +89,7 @@ What this repo has spent against two metered third-party accounts:
   unaffected either way.
 
   **`resolved` and `abstained`, since #381 (C).** A Gate's verdict is read over its *resolved*
-  seasons (a win or a loss; CONTEXT.md, **Disposition**), so an entry written from a run records
+  seasons (a win or a loss; GLOSSARY.md, **Disposition**), so an entry written from a run records
   the two counts beside the verdict: `resolved` seasons and `abstained` seasons (**Abstention**),
   summing to the seasons run. A verdict of `ADOPT` with `resolved: 3, abstained: 1` is "ADOPT on 3
   resolved of 4, 1 abstained"; `resolved: 0` is a SHOW that could be nothing else. Optional and

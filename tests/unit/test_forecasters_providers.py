@@ -269,3 +269,20 @@ def test_each_pinned_model_gets_the_request_its_api_documents(name):
     if m.provider == "google":
         assert url.endswith(f"/models/{m.model_version}:generateContent")
     assert runner.parse_sample(c.text) is not None
+
+
+@pytest.mark.parametrize("provider", sorted(providers.ADAPTERS))
+def test_a_reply_without_a_usage_block_is_marked_so_not_read_as_zero_tokens(provider):
+    reply = {k: v for k, v in REPLIES[provider].items() if k not in ("usage", "usageMetadata")}
+    c = _client(provider, Stub(reply)).complete(_spec(provider), "SYSTEM", "USER")
+    assert (c.input_tokens, c.output_tokens, c.usage_reported) == (0, 0, False)
+    full = _client(provider, Stub(REPLIES[provider])).complete(_spec(provider), "S", "U")
+    assert full.usage_reported is True
+
+
+def test_a_failed_call_is_marked_as_having_no_usage():
+    cfg = StudyConfig(llms=(_spec("anthropic"),), season_cap_usd=150, home_rate=0.547,
+                      home_rate_seasons="2016-2025", est_input_tokens=2000)
+    router = providers.Router(cfg, env=ENV, transport=Stub(raises=ConnectionError("x")))
+    c = router.complete(_spec("anthropic"), "S", "U")
+    assert c.text.startswith(providers.PROVIDER_ERROR_PREFIX) and c.usage_reported is False

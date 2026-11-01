@@ -642,7 +642,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Infeasible as e:
         print(f"hub.season.survivor: {e}", file=sys.stderr)
         return 1
-    # `got.picks` and `got.coverage` rather than locals called `plan` and `cov`: CONTEXT.md
+    # `got.picks` and `got.coverage` rather than locals called `plan` and `cov`: GLOSSARY.md
     # avoids "the plan" unqualified, because a plan for the season and a plan from here are
     # different objects and this CLI prints the second one.
     cov = got.coverage
