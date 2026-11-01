@@ -354,10 +354,17 @@ def lines_as_of(at: datetime, season: int, league: str = "nfl",
 SNAPSHOT_COLUMNS: dict[str, pl.DataType] = {
     "game_id": pl.Utf8(), "close_spread": pl.Float64(), "spread_price": pl.Float64(),
     "close_total": pl.Float64(), "total_price": pl.Float64(),
-    "ml_home_prob": pl.Float64(), "captured_at": pl.Datetime(),
+    "ml_home_prob": pl.Float64(), "spread_price_away": pl.Float64(),
+    "ml_home_price": pl.Float64(), "ml_away_price": pl.Float64(),
+    "captured_at": pl.Datetime(),
     "polls_unmoved": pl.Int64(), "unmoved_since": pl.Datetime(),
 }
-_SNAPSHOT_TIMES = ("captured_at", "unmoved_since")
+# The shape a capture had before #512 kept the other side of each price. Committed files of this
+# shape are still read (the columns come back null); tests build one to prove it.
+PRE_512_COLUMNS: dict[str, pl.DataType] = {
+    k: t for k, t in SNAPSHOT_COLUMNS.items()
+    if k not in ("spread_price_away", "ml_home_price", "ml_away_price")}
+_SNAPSHOT_TIMES =("captured_at", "unmoved_since")
 _SNAPSHOT_GLOB = "*/wk*/snap-*.json"
 
 

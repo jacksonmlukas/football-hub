@@ -1423,3 +1423,51 @@ def test_live_check_fetch_records_its_spend_in_the_fetchers_state(tmp_path, monk
     saved = json.loads(state.read_text())
     assert saved["remaining"] == 99 and saved["last_cost"] == 1
     assert odds.credits_remaining(state) == 99
+
+
+# --- both sides' prices (#512) -----------------------------------------------------------
+
+def test_both_sides_of_the_spread_and_the_moneyline_reach_the_stored_row(
+        transport, teams, schedule, paths):
+    """The overround can only be published if the snapshot keeps the partner of each price.
+    Home -115 / away -105 on the spread, -150 / +130 on the moneyline, one book."""
+    ev = _event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5, books=1)
+    spreads = ev["bookmakers"][0]["markets"][0]["outcomes"]
+    spreads[0]["price"], spreads[1]["price"] = -115, -105
+    ev["bookmakers"][0]["markets"].append({"key": "h2h", "outcomes": [
+        {"name": "Philadelphia Eagles", "price": -150}, {"name": "Dallas Cowboys", "price": 130}]})
+    transport(events=[ev])
+    row = odds.snapshot(season=2025, state_path=paths["state"],
+                        base=paths["store"]).row(0, named=True)
+    assert row["spread_price"] == pytest.approx(-115) and row["spread_price_away"] == -105
+    assert row["ml_home_price"] == -150 and row["ml_away_price"] == 130
+
+
+def test_the_away_price_is_not_the_home_price_negated_or_copied(
+        transport, teams, schedule, paths):
+    """The away side keeps its own sign and its own number: a pick'em at -110 both ways has
+    -110 on the away side, not +110, and not the home price by default."""
+    transport()
+    row = odds.snapshot(season=2025, state_path=paths["state"],
+                        base=paths["store"]).row(0, named=True)
+    assert row["spread_price_away"] == pytest.approx(-110)
+    ev = _event("Philadelphia Eagles", "Dallas Cowboys", "2025-09-04", -8.5, books=1)
+    ev["bookmakers"][0]["markets"][0]["outcomes"][1]["price"] = -125
+    assert odds._median_away_spread_price(ev, "Dallas Cowboys") == pytest.approx(-125)
+    assert odds._median_home_spread(ev, "Philadelphia Eagles")[1] == pytest.approx(-110)
+
+
+def test_the_moneyline_prices_come_only_from_books_quoting_both_sides():
+    ev = _ml_event([(-150, 130), (-300, 250)])
+    ev["bookmakers"][1]["markets"][0]["outcomes"].pop()           # one book hangs only home
+    got = odds._median_moneyline_prices(ev, "Philadelphia Eagles", "Dallas Cowboys")
+    assert got == (-150, 130), "the home half of one book was paired with another's away"
+    assert odds._median_moneyline_prices(_ml_event([(1.5, 2.3)]),
+                                         "Philadelphia Eagles", "Dallas Cowboys") == (None, None)
+
+
+def test_the_extra_columns_add_no_market_and_no_credit(transport, teams, schedule, paths):
+    """The same markets and regions return both sides already: one call, three credits."""
+    calls = transport()
+    odds.snapshot(season=2025, state_path=paths["state"], base=paths["store"])
+    assert len(calls) == 1 and calls[0]["markets"] == "spreads,totals,h2h"
