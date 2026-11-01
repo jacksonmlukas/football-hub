@@ -61,9 +61,12 @@ class NotPinned(RuntimeError):
 
 @dataclass(frozen=True)
 class Completion:
+    """One reply. `usage_reported` is False where the provider sent no usage block (or the call
+    failed), so a zero in the token counts is told apart from a measured zero (#534)."""
     text: str
     input_tokens: int
     output_tokens: int
+    usage_reported: bool = True
 
 
 class Client(Protocol):

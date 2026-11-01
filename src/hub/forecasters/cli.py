@@ -6,6 +6,10 @@ the day's games into `--out` (the checked-out `forecasts` branch) through
 that fails leaves none, so the next trigger in the window retries and the runner's idempotency
 fills only the gaps.
 
+`dry-run` (#534) is the same day run once with everything written under `--out`, a hard
+`--ceiling-usd` on the worst-case spend, and a summary (`hub.forecasters.dry_run`); it exits
+with the codes below, plus 9 when the ceiling refused.
+
 Exit codes: 0 ok (including nothing due and nothing left), 2 bad arguments, 3 the config is not
 pinned for v0, 4 a source failed with no last-good copy, 5 a provider's (or Tavily's) key is
 missing, 6 partial (no market snapshot: the blind half ran, the line-aware half waits for the next
@@ -23,7 +27,7 @@ from pathlib import Path
 from hub import atomic
 from hub.fetch import tavily
 from hub.forecasters import config as study_config
-from hub.forecasters import days, last_good, pipeline, providers, runner
+from hub.forecasters import days, dry_run, last_good, pipeline, providers, runner
 
 # The refusals `run` answers with one sentence and an exit code, never a traceback.
 REFUSALS: tuple[tuple[type[Exception], int], ...] = (
@@ -52,6 +56,10 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
         p = sub.add_parser(name)
         p.add_argument("--out", type=Path, required=True)
         p.add_argument("--day", type=date.fromisoformat, required=True)
+    dry = sub.add_parser("dry-run", help="one real day into --out only; nothing is committed")
+    dry.add_argument("--out", type=Path, required=True)
+    dry.add_argument("--day", type=date.fromisoformat, required=True)
+    dry.add_argument("--ceiling-usd", type=float, required=True)
     args = ap.parse_args(argv)
 
     if args.cmd == "should-run":
@@ -78,6 +86,15 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
     except runner.NotPinned as exc:
         echo(f"refused: {exc}")
         return 3
+    if args.cmd == "dry-run":
+        try:
+            return dry_run.run_dry(
+                args.day, args.out, ceiling_usd=args.ceiling_usd, config=cfg,
+                deps=deps or pipeline.production(run_id=os.environ.get("GITHUB_RUN_ID", "dry-run")),
+                refusals=REFUSALS, echo=echo)
+        except (ValueError, dry_run.OutNotEmpty) as exc:
+            echo(f"error: {exc}")
+            return 2
     try:
         outcome = pipeline.run_day(
             args.day, args.out, config=cfg,
