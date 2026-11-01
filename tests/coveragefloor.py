@@ -93,6 +93,7 @@ FLOOR: dict[str, int] = {
     "src/hub/forecasters/dry_run.py": 1,
     "src/hub/forecasters/inputs.py": 0,
     "src/hub/forecasters/last_good.py": 0,
+    "src/hub/forecasters/leaderboard.py": 0,
     "src/hub/forecasters/market.py": 5,
     "src/hub/forecasters/packet.py": 5,
     "src/hub/forecasters/receipts.py": 0,
