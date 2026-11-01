@@ -107,11 +107,12 @@ def browser() -> Iterator[Browser]:
             b.close()
 
 
-def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: str = NOW) -> Path:
-    """Render the dashboard and return the path of the PNG, under `test-results/`."""
+def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: str = NOW,
+            view: str = "week") -> Path:
+    """Render one view of the dashboard and return the path of the PNG, under `test-results/`."""
     w, h = VIEWPORTS[width]
     OUT.mkdir(parents=True, exist_ok=True)
-    out = OUT / f"{OS_KEY}-{width}-{scheme}-{now.replace(':', '')}.png"
+    out = OUT / f"{OS_KEY}-{width}-{scheme}-{view}-{now.replace(':', '')}.png"
     context = browser.new_context(viewport={"width": w, "height": h}, device_scale_factor=1)
     try:
         page = context.new_page()
@@ -128,11 +129,17 @@ def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: st
                 route.abort()
 
         page.route("**/*", gate)
-        page.goto(base_url + "/index.html")
+        page.goto(f"{base_url}/index.html#/{view}")
         # `render()` writes the subtitle once the manifest has loaded; the panels follow.
         page.wait_for_function(
             "document.getElementById('subtitle').textContent.includes('week')")
         page.wait_for_load_state("networkidle")
+        shown = page.evaluate(
+            "[...document.querySelectorAll('.view')].filter(v => !v.hidden).map(v => v.id)")
+        assert shown == [f"v-{view}"], f"#/{view} showed {shown}"
+        # No view scrolls sideways: the document is never wider than the window (#478).
+        overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"{view} at {width}px scrolls sideways by {overflow}px"
         page.screenshot(path=str(out), full_page=True, animations="disabled", caret="initial")
         assert not foreign, f"the page reached off-host: {foreign}"
     finally:
@@ -159,11 +166,19 @@ def changed_fraction(a: Path, b: Path, diff_to: Path | None = None) -> float:
     return changed / (ia.size[0] * ia.size[1])
 
 
+# The views with content of their own today. Study and Ledger hold one placeholder sentence until
+# #487 and #488, and get their baselines then. This week keeps the unsuffixed names it has
+# always had, so its history in git is one file per width and scheme.
+VIEW_NAMES = ("week", "games", "record")
+
+
+@pytest.mark.parametrize("view", VIEW_NAMES)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("width", VIEWPORTS)
-def test_dashboard_matches_baseline(browser, base_url, width, scheme):
-    actual = capture(browser, base_url, width, scheme)
-    baseline = BASELINES / f"{width}-{scheme}.png"
+def test_dashboard_matches_baseline(browser, base_url, width, scheme, view):
+    actual = capture(browser, base_url, width, scheme, view=view)
+    suffix = "" if view == "week" else f"-{view}"
+    baseline = BASELINES / f"{width}-{scheme}{suffix}.png"
     if os.environ.get("UPDATE_SCREENSHOTS") == "1":
         BASELINES.mkdir(parents=True, exist_ok=True)
         baseline.write_bytes(actual.read_bytes())
@@ -172,7 +187,7 @@ def test_dashboard_matches_baseline(browser, base_url, width, scheme):
         f"no baseline for {OS_KEY}/{baseline.name}. Baselines are per OS; create them "
         "deliberately with UPDATE_SCREENSHOTS=1 and commit them."
     )
-    diff = OUT / f"{OS_KEY}-{width}-{scheme}-diff.png"
+    diff = OUT / f"{OS_KEY}-{width}-{scheme}-{view}-diff.png"
     frac = changed_fraction(baseline, actual, diff)
     assert frac <= MAX_CHANGED_FRACTION, (
         f"{width}px {scheme}: {frac:.4%} of pixels changed (limit {MAX_CHANGED_FRACTION:.2%}). "

@@ -14,6 +14,7 @@ import { rosterBody } from "./panels/roster.js";
 import { chooseWeek, isArchived, renderSlate } from "./panels/slate.js";
 import { backtestStatement } from "./panels/statement.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
+import { mount } from "./router.js";
 import { STATE, failureWarn, staleOf } from "./state.js";
 
 export async function render() {
@@ -191,6 +192,9 @@ export function onClick(e) {
 export function start() {
   document.getElementById("boot-status").hidden = true;
   document.addEventListener("click", onClick);
+  // The router needs a window (a hash, `hashchange`); the contract tests' stub document has no
+  // window, and they import this module without wanting a view shown.
+  if (typeof window !== "undefined") mount(window, document);
   render().then(async () => { manifestCache = await load("manifest"); });
   setInterval(tick, LIVE_POLL_MS);
 }
