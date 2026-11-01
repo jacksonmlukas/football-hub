@@ -140,6 +140,12 @@ def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: st
         # No view scrolls sideways: the document is never wider than the window (#478).
         overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
         assert overflow <= 0, f"{view} at {width}px scrolls sideways by {overflow}px"
+        if view == "week" and width == "390":
+            # #484: on a phone the lineup call reaches the end of its swap cards within 390x844.
+            bottom = page.evaluate(
+                "Math.max(...[...document.querySelectorAll('.swap-card')]"
+                ".map(c => c.getBoundingClientRect().bottom))")
+            assert bottom <= h, f"the swap cards end at {bottom}px, below the {h}px fold"
         page.screenshot(path=str(out), full_page=True, animations="disabled", caret="initial")
         assert not foreign, f"the page reached off-host: {foreign}"
     finally:
