@@ -89,6 +89,14 @@ jobs:
         continue-on-error: true
         run: uv run python -m hub.forecasters.receipts stamp-pending forecasts-branch
 
+      # Upgrade pending receipts (#535): ask each calendar for the completed Bitcoin timestamp of
+      # every receipt still pending and write it in place. A receipt Bitcoin has not confirmed
+      # yet stays pending with no error; an outage changes nothing. Best effort, same gate.
+      - name: Upgrade pending timestamp receipts
+        if: steps.gate.outputs.run == 'true'
+        continue-on-error: true
+        run: uv run python -m hub.forecasters.receipts upgrade-pending forecasts-branch
+
       - name: Save the output as an artifact
         if: always() && steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4
