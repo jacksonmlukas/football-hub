@@ -4,6 +4,8 @@ about: Any change that alters a prediction
 labels: ''
 ---
 
+<!-- For a change to one of the LLM forecasters study's pinned models, use the "LLM forecaster model change" form (model-change.yml) instead. -->
+
 ## What changes
 
 ## Hypothesis
