@@ -216,7 +216,7 @@
       "mu": 12.353947368421053,
       "sd": 7.486562883980169,
       "projected": true,
-      "starting": false,
+      "starting": true,
       "best_start": false,
       "injury_status": "QUESTIONABLE",
       "available": false,
@@ -297,7 +297,7 @@
       "sd": 6.807785675239783,
       "projected": true,
       "starting": true,
-      "best_start": true,
+      "best_start": false,
       "injury_status": "ACTIVE",
       "available": true,
       "can_start": true,
@@ -377,7 +377,7 @@
       "sd": 6.6155847814082165,
       "projected": true,
       "starting": false,
-      "best_start": false,
+      "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
       "can_start": true,
@@ -426,26 +426,26 @@
     },
     {
       "quantiles": [
-        0.0,
-        0.0,
-        1.1,
-        2.06,
-        2.9,
-        3.68,
-        4.42,
-        5.13,
-        5.84,
-        6.55,
-        7.27,
-        8.02,
-        8.81,
-        9.66,
-        10.59,
-        11.64,
-        12.87,
-        14.4,
-        16.55,
-        20.68
+        4.48,
+        6.36,
+        7.56,
+        8.52,
+        9.36,
+        10.14,
+        10.87,
+        11.59,
+        12.29,
+        13.0,
+        13.73,
+        14.48,
+        15.27,
+        16.12,
+        17.05,
+        18.09,
+        19.32,
+        20.86,
+        23.0,
+        27.14
       ],
       "quantiles_reason": null,
       "ecr": null,
@@ -453,11 +453,11 @@
       "player": "Marvin Harrison Jr.",
       "pos": "WR",
       "nfl_team": "HOU",
-      "mu": 7.543749999999999,
+      "mu": 14.0,
       "sd": 5.850234129930185,
       "projected": true,
       "starting": false,
-      "best_start": false,
+      "best_start": true,
       "injury_status": "ACTIVE",
       "available": true,
       "can_start": true,
@@ -563,14 +563,20 @@
     }
   ],
   "set_total": 103.81354141710946,
-  "optimal_total": 103.81354141710946,
-  "gain": 0.0,
+  "optimal_total": 104.89092738202174,
+  "gain": 1.0773859649122812,
   "withheld": [
     "DJ Moore",
     "Ja'Marr Chase"
   ],
-  "start": [],
-  "sit": [],
+  "start": [
+    "KC Concepcion",
+    "Marvin Harrison Jr."
+  ],
+  "sit": [
+    "DJ Moore",
+    "Matthew Golden"
+  ],
   "week": 6,
   "ecr_reason": "no pre-kickoff consensus capture for week 6",
   "espn_week_reason": null,
@@ -593,7 +599,22 @@
       "KC Concepcion"
     ]
   },
-  "swaps": [],
+  "swaps": [
+    {
+      "out": "DJ Moore",
+      "in": "KC Concepcion",
+      "gain": -2.707280701754387,
+      "forced": true,
+      "p_in_beats_out": null
+    },
+    {
+      "out": "Matthew Golden",
+      "in": "Marvin Harrison Jr.",
+      "gain": 3.7846666666666664,
+      "forced": false,
+      "p_in_beats_out": 0.6787
+    }
+  ],
   "odds_reason": null,
   "unprojected": [
     "Eddy Pineiro",

@@ -206,6 +206,50 @@
                                                             transparent 2px 7px); }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
   @media (prefers-reduced-motion: reduce) { .chip-live .glyph { animation: none } }
+  /* This week (#484). The heading states the decision; swap cards carry the call's moves; the
+     best lineup is a list of rows, each with a 20-dot plot on a shared 0-40 axis. Colour comes
+     from the tokens only: the dots are turf, the projection line is the accent, an incoming
+     player's row is tinted turf. The footer's status line gives way to the pipeline-health
+     panel on this view. */
+  :root { --incoming-tint: color-mix(in srgb, var(--turf) 12%, transparent); }
+  .week-head { display: block; font: 700 1.9rem/1.1 var(--font-display); margin: 0 0 0.9rem;
+               letter-spacing: 0.01em; color: var(--fg); }
+  .week-head[hidden] { display: none; }
+  main:has(#v-week:not([hidden])) > footer { display: none; }
+  .swap-cards { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+  .swap-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.75rem;
+               min-width: 0; }
+  .swap-pair { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem; }
+  .swap-side { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem;
+               min-width: 0; }
+  .swap-out s { color: var(--muted); }
+  .swap-proj { color: var(--muted); font-size: 0.8rem; }
+  .swap-why { margin: 0.4rem 0 0; font-size: 0.9rem; }
+  .bl-list { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+  .bl-row { display: grid; grid-template-columns: 2.4rem 1fr auto; gap: 0 0.5rem;
+            align-items: baseline; padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--line); }
+  .bl-row:last-child { border-bottom: 0; }
+  .bl-incoming { background: var(--incoming-tint); border-radius: 6px; }
+  .bl-pos { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+  .bl-name { min-width: 0; overflow-wrap: anywhere; }
+  .bl-new { font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.03em; color: var(--turf); border: 1px solid var(--turf);
+            border-radius: 4px; padding: 0 0.3rem; }
+  .bl-proj { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bl-dots { grid-column: 1 / -1; }
+  .bl-plot { display: block; width: 100%; height: 18px; overflow: visible; }
+  .bl-axis, .bl-tick { stroke: var(--line); stroke-width: 1; }
+  .bl-dot { fill: var(--turf); fill-opacity: 0.75; }
+  .bl-mu { stroke: var(--pylon); stroke-width: 2; }
+  .bl-axis-head { display: flex; justify-content: space-between; color: var(--muted);
+                  font-size: 0.7rem; margin: 0.6rem 0 0 3rem; }
+  .bl-none { margin: 0; font-size: 0.8rem; }
+  .bl-bench { margin-top: 0.6rem; }
+  .bl-bench summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+  .bl-unproj { list-style: none; margin: 0.2rem 0 0; padding: 0; font-size: 0.85rem; }
+  .health { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap;
+            gap: 0.4rem 1.25rem; font-size: 0.85rem; }
+  .health li { min-width: 0; }
   /* The view change is a same-document view transition (js/router.js), which the script skips
      under reduced motion; this stops the browser's own default fade for any path that starts one
      anyway. */
@@ -253,6 +297,9 @@
 <div class="zone" id="z-week" role="region" aria-labelledby="zh-week">
   <div class="zone-head"><h2 class="zone-title" id="zh-week">This week</h2>
     <span class="zone-when">regenerated Wed &amp; Sat, live Sun</span></div>
+  <!-- The decision, in words (#484): "Week 6: make two changes". Hidden until render() has a
+       roster with swaps and quantiles to state it from. -->
+  <h3 class="week-head" id="week-head" hidden></h3>
   <div class="grid">
     <!-- The draft board (#348) shows only while no newer slate exists: the decision of the week
          in July, gone once a slate is published. Hidden until render() says boardShows. -->
@@ -260,8 +307,10 @@
          for. Hidden until render() has a roster to make a call from. -->
     <section id="p-lineup" class="wide" hidden><h3>The lineup call <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-board" class="wide" hidden><h3>Draft board <span class="age"></span></h3><div class="body"></div></section>
+    <section id="p-best" class="wide" hidden><h3>Best lineup, 20 ways <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-roster"><h3>Who to start <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-survivor"><h3>Who to pick in survivor <span class="age"></span></h3><div class="body"></div></section>
+    <section id="p-health" class="wide"><h3>Pipeline health <span class="age"></span></h3><div class="body"></div></section>
   </div>
 </div>
 </div>
