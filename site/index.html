@@ -95,12 +95,11 @@
   .bar a:focus-visible { outline: 2px solid var(--pylon-lit); outline-offset: 1px; }
   /* The page column: capped near 1080px on a wide screen, 1rem of gutter on a phone. */
   .page { max-width: 1080px; margin: 0 auto; padding: 1.25rem 1rem 1.5rem; }
-  /* #484: on a phone the lineup call must reach the end of its swap cards within 390x844, so on This
-     week the page-level backtest statement moves below the view (visual order only; the DOM, and so
-     the reading order for assistive tech, keeps it first). */
+  /* #484: on a phone the lineup call must reach the end of its swap cards within 390x844. The
+     page-level backtest statement used to sit above the views and was ordered below this one; it
+     lives in the Record view now (#486), so only the footer is ordered. */
   @media (max-width: 480px) {
     main.page:has(#v-week:not([hidden])) { display: flex; flex-direction: column; }
-    main.page:has(#v-week:not([hidden])) > #st-backtest { order: 1; }
     main.page:has(#v-week:not([hidden])) > footer { order: 2; }
     main.page:has(#v-week:not([hidden])) { padding-top: 0.75rem; }
     /* The zone title repeats what the week heading says ("Week 6: make two changes"). */
@@ -315,6 +314,30 @@
   .gt-pop dt { color: var(--muted); }
   .gt-pop dd { margin: 0; overflow-wrap: anywhere; }
   .gt-vs { margin-top: 0.15rem; }
+  /* Record (#486). The counts as chips, then one sentence at reading size, then the curve. The
+     bullet rows draw the claim as a tick, its tolerance as a band and the measured coverage as the
+     bar; colour is tokens only (turf for the measure, the accent for the claim). Nothing animates,
+     so reduced motion has nothing to switch off. */
+  .rec-chips { margin: 0.2rem 0 0; display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; }
+  .rec-sentence { font: 700 1.5rem/1.2 var(--font-display); letter-spacing: 0.01em; margin: 0.9rem 0 0;
+                  color: var(--fg); }
+  .rec-ll { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
+  .rec-older { margin-top: 0.6rem; }
+  .rec-older summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+  .rb-head { margin: 1.1rem 0 0; font-size: 0.95rem; }
+  .rb-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+  .rb-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.6rem;
+            align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
+  .rb-row:last-child { border-bottom: 0; }
+  .rb-name { font-weight: 600; grid-column: 1; }
+  .rb-text { grid-column: 1; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rb-text b { color: var(--fg); }
+  .rb-chip { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  .rb-bar { grid-column: 1 / -1; }
+  .rb-plot { display: block; width: 100%; height: 14px; }
+  .rb-band { fill: var(--field-tint); stroke: var(--line); stroke-width: 1; }
+  .rb-measure { fill: var(--turf); fill-opacity: 0.8; }
+  .rb-claim { stroke: var(--accent); stroke-width: 2; }
   /* The view change is a same-document view transition (js/router.js), which the script skips
      under reduced motion; this stops the browser's own default fade for any path that starts one
      anyway. */
@@ -348,10 +371,6 @@
 <p id="boot-status" class="warn" role="alert">The page's script did not start, so the panels below
   are empty. The published data is still in <code>data/</code>. If you opened this file directly,
   serve the folder instead (<code>make serve</code>): browsers refuse modules from a file URL.</p>
-
-<!-- The page-level backtest statement (#354): what the page's model numbers have and have not been
-     tested against, said once. Filled by render() from the track record artifact alone. -->
-<div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
 
 <!-- Five views (#478), one shown at a time by js/router.js (a hash picks it; unknown or empty is
      This week). Each view is one zone, and the zones keep the order of the bar. With no script
@@ -397,7 +416,12 @@
   <div class="zone-head"><h2 class="zone-title" id="zh-record">The record</h2>
     <span class="zone-when">weekly, after scoring</span></div>
   <div class="grid">
-    <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3><div class="body"></div></section>
+    <!-- The page-level backtest statement (#354), moved under this heading (#486): what the page's
+         model numbers have and have not been tested against, said once. Filled by render() from the
+         track record artifact alone; panel() touches only .age and .body, so it survives a redraw. -->
+    <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3>
+    <div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
+    <div class="body"></div></section>
   </div>
 </div>
 </div>

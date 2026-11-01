@@ -127,7 +127,7 @@ export async function render() {
   // --- track record
   if (tr) {
     panel("p-record", { age: ago(tr.generated_at), stale: staleOf(trArt),
-                        html: trackRecordBody(tr) });
+                        html: trackRecordBody(tr, trArt) });
   } else {
     panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
   }
