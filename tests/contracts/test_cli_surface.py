@@ -58,7 +58,7 @@ CLI_MODULES = (
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
     "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.free_agents", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
-    "hub.fetch.pool", "hub.forecasters.cli", "hub.forecasters.close_line", "hub.forecasters.receipts", "hub.forecasters.score", "hub.forecasters.leaderboard", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
+    "hub.fetch.pool", "hub.forecasters.cli", "hub.forecasters.close_line", "hub.forecasters.receipts", "hub.forecasters.score", "hub.forecasters.leaderboard", "hub.forecasters.burn_in", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
     "hub.models.coverage",
@@ -283,6 +283,9 @@ ABSENT_INPUT = [
     # The interim leaderboard (#453): with no burn-in record it refuses in one sentence (exit 4)
     # and writes nothing, before any schedule is read.
     ("hub.forecasters.leaderboard", ["--forecasts", "{tmp}", "--out", "{tmp}/lb.json"]),
+    # The burn-in report (#451): the Week 9 schedule cannot be read, so it says so and exits 1
+    # before any record is written. `--out` keeps it off the committed prereg record.
+    ("hub.forecasters.burn_in", ["--forecasts", "{tmp}", "--out", "{tmp}/burn-in.json"]),
     # The study's closing line (#450): the schedule it places kickoffs by cannot be reached, so
     # it says so and exits 2 before any attempt is recorded or credit spent.
     ("hub.forecasters.close_line", ["capture", "--out", "{tmp}"]),
