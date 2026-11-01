@@ -8,6 +8,42 @@ import { ago, cap, esc } from "./format.js";
 export const STATE = { frozen: "state-frozen", live: "state-live", stale: "state-stale",
                 unconfirmed: "state-unconfirmed" };
 
+// The four state chips (#478). The state is carried three ways so it survives colour blindness
+// and a greyscale print: a glyph (lock, dot, clock, question mark), an outline (solid, none,
+// dotted, dashed) and a fill (live is the only filled chip), with the word always spelled out.
+// Colour is the fourth channel, not the first. The CSS keys on `chip-<state>`; a test keys on
+// `data-state` and `data-glyph`.
+//
+// One builder per state rather than one builder with a flag, so the stale rule is a signature:
+// `chipStale(age)` has no way to be called without an age (#351's rule: "stale" with no age
+// cannot be told from a panel that went stale a minute ago), and a missing or blank age throws
+// instead of drawing a chip that looks fine.
+const GLYPHS = {
+  lock: `<rect x="3.5" y="7" width="9" height="6.5" rx="1.2" fill="currentColor"/>
+         <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
+  dot: `<circle cx="8" cy="8" r="4" fill="currentColor"/>`,
+  clock: `<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
+  question: `<path d="M5.7 6.2a2.3 2.3 0 1 1 3.4 2c-.7.4-1.1.8-1.1 1.6" fill="none"
+                   stroke="currentColor" stroke-width="1.6"/>
+             <circle cx="8" cy="12.2" r="1" fill="currentColor"/>`,
+};
+const glyph = name =>
+  `<svg class="glyph" data-glyph="${name}" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">${GLYPHS[name]}</svg>`;
+const chipOf = (kind, g, label, extra = "") =>
+  `<span class="chip chip-${kind}" data-state="${kind}">${glyph(g)}`
+  + `<span class="chip-label">${esc(label)}</span>${extra}</span>`;
+
+export const chipFrozen = (label = "frozen") => chipOf("frozen", "lock", label);
+export const chipLive = (label = "live") => chipOf("live", "dot", label);
+export const chipUnconfirmed = (label = "unconfirmed") => chipOf("unconfirmed", "question", label);
+export function chipStale(age, label = "stale") {
+  if (typeof age !== "string" || !age.trim()) {
+    throw new TypeError("a stale chip needs the age of what it describes");
+  }
+  return chipOf("stale", "clock", label, `<span class="chip-age">${esc(age)}</span>`);
+}
+
 // A stale panel's warning, in the stale state, with the artifact's age beside it. The age is
 // required: "Stale" with no age cannot be told from a panel that went stale a minute ago, so
 // an artifact that does not say when it was written says that instead of saying nothing.

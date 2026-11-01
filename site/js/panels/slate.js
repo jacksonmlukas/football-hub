@@ -3,7 +3,7 @@
 import { ago, esc, fmt, pct } from "../format.js";
 import { findArt, frozen, load, otherWeeks, predsArt } from "../artifacts.js";
 import { panel } from "../dom.js";
-import { staleOf } from "../state.js";
+import { chipFrozen, chipLive, staleOf } from "../state.js";
 
 // ESPN to nflverse, and the direction matters. Compared against a live scoreboard and a
 // published slate, exactly two abbreviations differ: ESPN writes LAR and WSH where
@@ -71,9 +71,9 @@ export async function slateBody(preds, art, archived, liveArt) {
   const head = `
     <p class="legend">
       <b>${esc(stamp)}</b>.
-      <span class="tag frozen">frozen</span> model numbers, locked ${ago(lockedAt)} — these
+      ${chipFrozen("frozen")} model numbers, locked ${ago(lockedAt)} — these
       do not move once games start.
-      <span class="tag live">live</span> scores, ${liveAge}.
+      ${chipLive("live")} scores, ${liveAge}.
     </p>`;
 
   const body = `<div class="scroll"><table>

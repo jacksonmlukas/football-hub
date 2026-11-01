@@ -1057,7 +1057,7 @@ def test_reduced_motion_still_stops_the_live_pulse():
     assert "animation: pulse" in style
     media = re.search(r"@media \(prefers-reduced-motion: reduce\) \{([^}]*)\}", style)
     assert media and "animation: none" in media.group(1)
-    assert ".tag.live::before" in media.group(1)
+    assert ".chip-live .glyph" in media.group(1)
 
 
 # --- the page's own guards, proved by deleting them (#61) --------------------
@@ -1364,8 +1364,15 @@ def test_a_panel_with_the_wrong_state_turns_the_grammar_red(node, tmp_path):
 # *within* a zone and no longer decides the ranking of the page.
 
 # The board leads zone one while it is shown (#348): in July it is that week's decision.
-WEEK_ZONE = ("p-lineup", "p-board", "p-roster", "p-survivor", "p-slate")
+#
+# Since #478 each zone is the one zone of a view (`v-week`, `v-games`, `v-record`, ...), and the
+# slate has moved out of This week into Games: the router shows one view at a time.
+WEEK_ZONE = ("p-lineup", "p-board", "p-roster", "p-survivor")
+GAMES_ZONE = ("p-slate",)
 RECORD_ZONE = ("p-record",)
+ZONES = ("z-week", "z-games", "z-record", "z-study", "z-ledger")
+ZONE_VIEW = {"z-week": "v-week", "z-games": "v-games", "z-record": "v-record",
+             "z-study": "v-study", "z-ledger": "v-ledger"}
 
 
 def _layout(text: str) -> dict:
@@ -1413,20 +1420,22 @@ def _panels_in(layout: dict, zone: str) -> list[str]:
 def test_each_panel_sits_in_its_zone_in_the_agreed_order():
     layout = _layout(PAGE.read_text())
     assert _panels_in(layout, "z-week") == list(WEEK_ZONE)
+    assert _panels_in(layout, "z-games") == list(GAMES_ZONE)
     assert _panels_in(layout, "z-record") == list(RECORD_ZONE)
 
 
-def test_the_page_reads_header_then_this_week_then_the_record():
+def test_the_page_reads_bar_then_the_views_in_the_bars_order_then_footer():
     layout = _layout(PAGE.read_text())
-    order = [layout[i]["order"] for i in ("subtitle", "z-week", *WEEK_ZONE, "z-record",
-                                          *RECORD_ZONE, "footer")]
-    assert order == sorted(order), "the page is no longer header, this week, the record, footer"
+    order = [layout[i]["order"] for i in ("subtitle", "z-week", *WEEK_ZONE, "z-games",
+                                          *GAMES_ZONE, "z-record", *RECORD_ZONE, "z-study",
+                                          "z-ledger", "footer")]
+    assert order == sorted(order), "the page is no longer bar, the five views in order, footer"
 
 
 def test_a_panel_belongs_to_exactly_one_zone_and_nothing_visible_is_outside_both():
     layout = _layout(PAGE.read_text())
     for panel in (i for i in layout if i.startswith("p-")):
-        zones = [z for z in ("z-week", "z-record") if z in layout[panel]["in"]]
+        zones = [z for z in ZONES if z in layout[panel]["in"]]
         assert len(zones) == 1 or layout[panel]["hidden"], (
             f"{panel} is in {zones or 'no zone'} and is visible: every panel answers to one zone")
 
@@ -1451,9 +1460,10 @@ def test_the_zones_do_not_share_a_column_track():
     ranks panels by column -- the two would be tracks of one grid again, which is the layout
     this replaces."""
     layout = _layout(PAGE.read_text())
-    for zone in ("z-week", "z-record"):
+    for zone in ZONES:
         assert "grid" not in layout[zone]["in_classes"], f"{zone} sits inside a grid"
-        assert layout[zone]["in"] == [], f"{zone} is nested in {layout[zone]['in']}"
+        # Its own view and nothing else: a zone nested in another zone would share its track.
+        assert layout[zone]["in"] == [ZONE_VIEW[zone]], f"{zone} is nested in {layout[zone]['in']}"
 
 
 def test_the_zones_are_named_for_when_their_data_changes():
@@ -1575,7 +1585,8 @@ def _grid_minimum_fits(style: str, viewport: int = PHONE) -> bool:
     if re.fullmatch(r"min\([^)]*100%\s*\)", minimum):
         return True
     px = re.fullmatch(r"([0-9.]+)px", minimum)
-    pad = re.search(r"body\s*\{[^}]*padding:\s*([0-9.]+)rem", style)
+    # The side gutter is the page column's (#478: the bar is full width, the column is not).
+    pad = re.search(r"\.page\s*\{[^}]*padding:\s*[0-9.]+rem\s+([0-9.]+)rem", style)
     assert px and pad, f"cannot read the track minimum {minimum!r} or the body padding"
     return float(px.group(1)) <= viewport - 2 * float(pad.group(1)) * 16
 
@@ -1585,11 +1596,11 @@ def test_the_grid_track_minimum_cannot_exceed_the_content_width_at_375px():
 
 
 def test_a_fixed_340px_track_minimum_is_caught():
-    """The planted failure: 340px against a 327px content box (375 less 2 x 24px padding)."""
-    planted = _style().replace("minmax(min(340px, 100%), 1fr)", "minmax(340px, 1fr)")
+    """The planted failure: 360px against a 343px content box (375 less 2 x 16px gutter)."""
+    planted = _style().replace("minmax(min(340px, 100%), 1fr)", "minmax(360px, 1fr)")
     assert planted != _style(), "the plant did not land"
     assert _grid_minimum_fits(planted) is False
-    assert _grid_minimum_fits(planted.replace("340px", "300px")) is True
+    assert _grid_minimum_fits(planted.replace("360px", "300px")) is True
 
 
 # --- the status line, and failure at the panel it broke (#351) ----------------

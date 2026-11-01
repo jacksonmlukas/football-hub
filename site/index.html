@@ -17,8 +17,9 @@
 <style>
   /* Self-hosted type (ADR-0026, #477). Same-origin WOFF2 under site/fonts/, Latin subset, SIL OFL
      licences beside them. `swap` plus the system fallbacks mean a failed load never blanks text.
-     Only declared here: nothing below uses these faces yet, the visual system that does is #478,
-     and a face nothing references is never fetched. */
+     Applied by #478 through the three `--font-*` variables below: display (Big Shoulders) for
+     the wordmark, view titles and the lineup gain; text (Geist) for everything else; mono
+     (Geist Mono) for hashes and digests only. A face nothing references is never fetched. */
   @font-face { font-family: "Big Shoulders Display"; font-weight: 700; font-style: normal;
                font-display: swap; src: url("fonts/BigShouldersDisplay-Bold.woff2") format("woff2"); }
   @font-face { font-family: "Geist"; font-weight: 400; font-style: normal;
@@ -34,35 +35,68 @@
     --font-text: "Geist", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
+  /* Every colour on the page is a token defined here and redefined in the dark block below; no
+     rule outside these two blocks names a colour (tests/contracts/test_dashboard_escapes.py greps
+     for it). The palette is a football field:
+       chalk  --bg / --card   the page and its cards, the painted lines of --line
+       ink    --fg / --muted  text
+       turf   --turf*         structure: the bar, view titles, zone rules
+       pylon  --pylon, --accent  the one accent, for the call and for live
+       state inks --st-*      the four-state grammar (#347), see "Confidence grammar". */
   :root {
-    --bg: #fbfbfa; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
-    --card: #fff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
-    --good: #15803d; --bad: #b91c1c; --accent: #1d4ed8;
+    --bg: #f6f5ef; --fg: #1b1f1c; --muted: #596058; --line: #dcdace;
+    --card: #fffffd; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
+    --good: #15803d; --bad: #b91c1c;
+    --turf: #1f5136; --turf-deep: #173d2a; --on-turf: #f6f5ef;
+    --pylon: #c2410c; --pylon-lit: #fdba74; --on-pylon: #fffffd;
+    --accent: var(--pylon);
     /* The confidence grammar (#347): one token set, four states. See "Confidence grammar". */
-    --st-frozen-rule: #374151;
+    --st-frozen-rule: #2c3a31;
     --st-live-tint: color-mix(in srgb, var(--accent) 9%, transparent);
     --st-stale-ink: #5b6170; --st-stale-rule: #9ca3af;
     --st-unc-ink: #6d28d9; --st-unc-hatch: rgba(109, 40, 217, 0.22);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0f1115; --fg: #e8e8e8; --muted: #9ca3af; --line: #262a33;
-      --card: #161920; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
-      --good: #4ade80; --bad: #f87171; --accent: #60a5fa;
-      --st-frozen-rule: #d1d5db;
+      --bg: #0f1310; --fg: #e8ebe6; --muted: #9aa49c; --line: #262d28;
+      --card: #161b17; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
+      --good: #4ade80; --bad: #f87171;
+      --turf: #7cc79f; --turf-deep: #0b1f14; --on-turf: #e8ebe6;
+      --pylon: #fb923c; --pylon-lit: #fdba74; --on-pylon: #1b1305;
+      --st-frozen-rule: #d1d9d3;
       --st-live-tint: color-mix(in srgb, var(--accent) 14%, transparent);
       --st-stale-ink: #a3aab8; --st-stale-rule: #5b6270;
       --st-unc-ink: #c4b5fd; --st-unc-hatch: rgba(196, 181, 253, 0.28);
     }
   }
   * { box-sizing: border-box; }
+  /* Tabular figures everywhere: a column of numbers lines up whether or not its cell remembered
+     to say `num`. */
   body {
-    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
-    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 var(--font-text); font-variant-numeric: tabular-nums;
   }
-  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
-           margin-bottom: 1.25rem; }
-  h1 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+  /* The sticky bar (#478): wordmark, season and week, the five views. Turf, full width; its
+     content is capped to the page column below. It keeps its own transition name so a view
+     change crossfades the content and leaves the bar where it is. */
+  .bar { position: sticky; top: 0; z-index: 10; background: var(--turf-deep);
+         color: var(--on-turf); border-bottom: 3px solid var(--pylon);
+         view-transition-name: bar; }
+  .bar-in { max-width: 1080px; margin: 0 auto; padding: 0.55rem 1rem; display: flex;
+            align-items: baseline; flex-wrap: wrap; gap: 0.15rem 1.25rem; }
+  .wordmark { font: 700 1.55rem/1 var(--font-display); letter-spacing: 0.02em; margin: 0;
+              text-transform: uppercase; }
+  .bar .sub { color: var(--on-turf); opacity: 0.8; font-size: 0.82rem; }
+  .bar nav { display: flex; flex-wrap: wrap; gap: 0 0.25rem; margin-left: auto; }
+  .bar nav a { color: var(--on-turf); text-decoration: none; font-weight: 500;
+               font-size: 0.9rem; padding: 0.35rem 0.55rem; border-bottom: 2px solid transparent; }
+  .bar nav a:hover { border-bottom-color: var(--on-turf); }
+  .bar nav a[aria-current="page"] { border-bottom-color: var(--pylon-lit); font-weight: 600; }
+  .bar a:focus-visible { outline: 2px solid var(--pylon-lit); outline-offset: 1px; }
+  /* The page column: capped near 1080px on a wide screen, 1rem of gutter on a phone. */
+  .page { max-width: 1080px; margin: 0 auto; padding: 1.25rem 1rem 1.5rem; }
+  .view[hidden] { display: none; }
+  .page a { color: var(--turf); }
   .sub { color: var(--muted); font-size: 0.85rem; }
   /* Two zones (#350). The page is ordered by when its data changes: this week first, the record
      one scroll down. A zone is a full-width band of its own, never a column track shared with
@@ -70,9 +104,10 @@
      ranking of the page. */
   .zone { margin-top: 1.75rem; }
   .zone-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
-               border-bottom: 2px solid var(--st-frozen-rule); margin: 0 0 0.9rem;
+               border-bottom: 2px solid var(--turf); margin: 0 0 0.9rem;
                padding-bottom: 0.35rem; }
-  .zone-title { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; }
+  .zone-title { font: 700 1.6rem/1.1 var(--font-display); margin: 0; letter-spacing: 0.02em;
+                text-transform: uppercase; color: var(--turf); }
   .zone-when { color: var(--muted); font-size: 0.8rem; }
   .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); }
   .grid > .wide { grid-column: 1 / -1; }
@@ -80,8 +115,8 @@
   #boot-status[hidden] { display: none; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
             padding: 1rem 1.1rem; min-width: 0; }
-  h3 { font-size: 0.95rem; margin: 0 0 0.15rem; display: flex; align-items: center;
-       gap: 0.5rem; }
+  h3 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.15rem; display: flex;
+       align-items: center; gap: 0.5rem; }
   .age { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: auto; }
   .warn { background: var(--warn-bg); color: var(--warn-fg);
           border: 1px solid var(--warn-line); border-radius: 6px;
@@ -100,8 +135,11 @@
            border-top: 1px solid var(--line); padding-top: 0.8rem; }
   footer .status { margin: 0; line-height: 1.6; }
   footer .down { color: var(--st-stale-ink); font-weight: 600; }
+  /* Mono is for hashes and digests only (#478): `.digest`. A command in prose is still `code`,
+     in the text face, so the one monospace use on the page means one thing. */
   code { font-size: 0.85em; background: var(--line); padding: 0.05rem 0.3rem;
          border-radius: 3px; }
+  code.digest { font-family: var(--font-mono); font-size: 0.8em; }
 
   /* Confidence grammar (#347). Every number is frozen, live, stale or unconfirmed, and the
      page says which by how it draws the number rather than by a footnote under it:
@@ -133,10 +171,11 @@
   .statement .thin { display: block; margin-top: 0.2rem; }
   /* The lineup call (#352): the gain at display size, one decisive jump above everything else
      on the page, in tabular numerals and the system stack. */
-  .lineup-gain { font-size: 3.2rem; font-weight: 700; line-height: 1.05; margin-top: 0.4rem;
-                 letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-  .lineup-gain .unit { font-size: 0.95rem; font-weight: 400; color: var(--muted);
-                       letter-spacing: 0; }
+  .lineup-gain { font-family: var(--font-display); font-size: 4rem; font-weight: 700;
+                 line-height: 1; margin-top: 0.4rem; letter-spacing: 0.01em;
+                 color: var(--pylon); font-variant-numeric: tabular-nums; }
+  .lineup-gain .unit { font-family: var(--font-text); font-size: 0.95rem; font-weight: 400;
+                       color: var(--muted); letter-spacing: 0; }
   .lineup-changes { margin: 0.25rem 0 0; font-size: 0.95rem; }
   .lineup-call { font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0; }
   .lineup-totals { color: var(--muted); font-size: 0.88rem; margin: 0.25rem 0 0;
@@ -146,22 +185,55 @@
   .swaps li:last-child { border-bottom: 0; }
   .swaps .arrow { color: var(--muted); padding: 0 0.35rem; }
   .legend { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0; line-height: 1.5; }
-  .tag { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
-         padding: 0.05rem 0.4rem; border-radius: 4px; text-transform: uppercase; }
-  .tag.frozen { background: var(--line); color: var(--fg); }
-  .tag.live { background: var(--accent); color: #fff; }
-  .tag.live::before { content: "● "; animation: pulse 2s ease-in-out infinite; }
-  .tag.stale { background: var(--st-stale-rule); color: var(--bg); }
-  .tag.unconfirmed { border: 1px dashed var(--st-unc-ink); color: var(--st-unc-ink); }
+  /* The four state chips (#478), built by `chipFrozen/Live/Stale/Unconfirmed` in js/state.js.
+     Each state differs in glyph, outline and fill, so none rests on colour alone:
+       frozen       lock,     solid outline, plain field
+       live         dot,      no outline, filled with the accent, the dot pulses
+       stale        clock,    dotted outline, the age rides inside the chip
+       unconfirmed  question, dashed outline, hatched field */
+  .chip { display: inline-flex; align-items: center; gap: 0.3rem; vertical-align: baseline;
+          font-size: 0.68rem; font-weight: 600; letter-spacing: 0.03em; line-height: 1.5;
+          padding: 0 0.45rem; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+  .chip .glyph { flex: none; }
+  .chip-age { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .chip-age::before { content: "· "; }
+  .chip-frozen { border: 1.5px solid var(--st-frozen-rule); color: var(--fg); }
+  .chip-live { background: var(--pylon); color: var(--on-pylon); border: 1.5px solid var(--pylon); }
+  .chip-live .glyph { animation: pulse 2s ease-in-out infinite; }
+  .chip-stale { border: 1.5px dotted var(--st-stale-rule); color: var(--st-stale-ink); }
+  .chip-unconfirmed { border: 1.5px dashed var(--st-unc-ink); color: var(--st-unc-ink);
+                      background: repeating-linear-gradient(135deg, var(--st-unc-hatch) 0 2px,
+                                                            transparent 2px 7px); }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
-  @media (prefers-reduced-motion: reduce) { .tag.live::before { animation: none } }
+  @media (prefers-reduced-motion: reduce) { .chip-live .glyph { animation: none } }
+  /* The view change is a same-document view transition (js/router.js), which the script skips
+     under reduced motion; this stops the browser's own default fade for any path that starts one
+     anyway. */
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
+      animation: none;
+    }
+  }
 </style>
 
-<header>
-  <h1>football hub</h1>
-  <span class="sub" id="subtitle">loading…</span>
+<!-- The sticky bar (#478): wordmark, season and week, the five views. The links are static so the
+     bar works before any script runs; js/router.js (VIEWS) owns which one is current, and a
+     contract test holds these five to it. -->
+<header class="bar">
+  <div class="bar-in">
+    <h1 class="wordmark">football hub</h1>
+    <span class="sub" id="subtitle">loading…</span>
+    <nav aria-label="Views">
+      <a id="nav-week" href="#/week">This week</a>
+      <a id="nav-games" href="#/games">Games</a>
+      <a id="nav-record" href="#/record">Record</a>
+      <a id="nav-study" href="#/study">Study</a>
+      <a id="nav-ledger" href="#/ledger">Ledger</a>
+    </nav>
+  </div>
 </header>
 
+<main class="page">
 <!-- Shown until js/main.js has started. A module that fails to load stops the whole graph, and
      without this the reader would see empty panels and no reason; `start()` hides it. -->
 <p id="boot-status" class="warn" role="alert">The page's script did not start, so the panels below
@@ -172,7 +244,12 @@
      tested against, said once. Filled by render() from the track record artifact alone. -->
 <div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
 
-<!-- Zone one: this week. Regenerated Wed & Sat, live Sun. Lineup, survivor, slate, in that order. -->
+<!-- Five views (#478), one shown at a time by js/router.js (a hash picks it; unknown or empty is
+     This week). Each view is one zone, and the zones keep the order of the bar. With no script
+     they simply stack, which is why none of them ships hidden. -->
+
+<!-- View one, This week: the lineup, the roster and the survivor plan. Regenerated Wed & Sat. -->
+<div class="view" id="v-week">
 <div class="zone" id="z-week" role="region" aria-labelledby="zh-week">
   <div class="zone-head"><h2 class="zone-title" id="zh-week">This week</h2>
     <span class="zone-when">regenerated Wed &amp; Sat, live Sun</span></div>
@@ -185,11 +262,23 @@
     <section id="p-board" class="wide" hidden><h3>Draft board <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-roster"><h3>Who to start <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-survivor"><h3>Who to pick in survivor <span class="age"></span></h3><div class="body"></div></section>
+  </div>
+</div>
+</div>
+
+<!-- View two, Games: the slate, frozen model numbers beside live scores. -->
+<div class="view" id="v-games">
+<div class="zone" id="z-games" role="region" aria-labelledby="zh-games">
+  <div class="zone-head"><h2 class="zone-title" id="zh-games">Games</h2>
+    <span class="zone-when">frozen at lock, live Sun</span></div>
+  <div class="grid">
     <section id="p-slate" class="wide"><h3>Who wins this week <span class="age"></span></h3><div class="body"></div></section>
   </div>
 </div>
+</div>
 
-<!-- Zone two: the record. Weekly, after scoring. -->
+<!-- View three, Record: weekly, after scoring. -->
+<div class="view" id="v-record">
 <div class="zone" id="z-record" role="region" aria-labelledby="zh-record">
   <div class="zone-head"><h2 class="zone-title" id="zh-record">The record</h2>
     <span class="zone-when">weekly, after scoring</span></div>
@@ -197,8 +286,27 @@
     <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3><div class="body"></div></section>
   </div>
 </div>
+</div>
+
+<!-- Views four and five hold a placeholder sentence (router.js draws it) until #487 and #488. -->
+<div class="view" id="v-study">
+<div class="zone" id="z-study" role="region" aria-labelledby="zh-study">
+  <div class="zone-head"><h2 class="zone-title" id="zh-study">Study</h2>
+    <span class="zone-when">LLM leaderboard</span></div>
+  <div class="view-body"></div>
+</div>
+</div>
+
+<div class="view" id="v-ledger">
+<div class="zone" id="z-ledger" role="region" aria-labelledby="zh-ledger">
+  <div class="zone-head"><h2 class="zone-title" id="zh-ledger">Ledger</h2>
+    <span class="zone-when">what was measured and cut</span></div>
+  <div class="view-body"></div>
+</div>
+</div>
 
 <footer id="footer"></footer>
+</main>
 
 <!-- The script is native ES modules under site/js/, loaded same-origin with no bundler and no CDN.
      Each module is a file a test imports directly. -->
