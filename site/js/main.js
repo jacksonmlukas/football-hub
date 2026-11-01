@@ -11,7 +11,7 @@ import { statusLine, statusRecords } from "./panels/footer.js";
 import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
-import { chooseWeek, isArchived, renderSlate } from "./panels/slate.js";
+import { chooseSort, chooseWeek, isArchived, refreshLive, renderSlate } from "./panels/slate.js";
 import { backtestStatement } from "./panels/statement.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
 import { bestLineupBody, healthBody, weekHeading } from "./panels/week.js";
@@ -196,12 +196,17 @@ export async function tick() {
   // timer has nothing to add, and redrawing the panel under them would take their choice
   // away -- which is how a page teaches a reader not to click anything.
   if (!manifestCache || isArchived()) return;
-  await renderSlate(manifestCache);
+  await refreshLive(manifestCache);
 }
 
 // Switching weeks. Delegated from the document because the panel is rebuilt through
 // innerHTML on every render, so a listener bound to the link would not survive one.
 export function onClick(e) {
+  const sort = e.target.closest?.("[data-sort]");
+  if (sort) {
+    chooseSort(sort.getAttribute("data-sort"));
+    return;
+  }
   const link = e.target.closest?.("[data-preds]");
   if (!link) return;
   e.preventDefault();

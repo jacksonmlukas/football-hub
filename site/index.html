@@ -261,6 +261,60 @@
   .health { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap;
             gap: 0.4rem 1.25rem; font-size: 0.85rem; }
   .health li { min-width: 0; }
+  /* Games (#485). One tile per game; the grid goes from one column on a phone to two and then
+     three. Colour is tokens only: the field is turf, the end zones a deeper turf, the 80% band the
+     turf at partial opacity with soft edges, the expected margin the pylon accent. Nothing here
+     animates, so reduced motion has nothing to switch off. */
+  :root { --field-tint: color-mix(in srgb, var(--turf) 10%, transparent);
+          --ez-tint: color-mix(in srgb, var(--turf) 26%, transparent); }
+  .gt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.7rem 0 0;
+                 font-size: 0.82rem; }
+  .gt-controls button, .gt-info { font: inherit; font-size: 0.78rem; color: var(--fg);
+        background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+        padding: 0.25rem 0.6rem; cursor: pointer; }
+  .gt-controls button[aria-pressed="true"] { border-color: var(--turf); color: var(--turf);
+        font-weight: 600; }
+  .gt-controls button:focus-visible, .gt-info:focus-visible { outline: 2px solid var(--pylon);
+        outline-offset: 1px; }
+  .game-grid { display: grid; gap: 0.8rem; grid-template-columns: minmax(0, 1fr); margin-top: 0.8rem; }
+  @media (min-width: 640px) { .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 960px) { .game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .game-tile { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.8rem;
+               min-width: 0; background: var(--card); }
+  .gt-title { font: 700 1.35rem/1.1 var(--font-display); margin: 0; letter-spacing: 0.02em;
+              text-transform: uppercase; }
+  .gt-at { font: 400 0.8rem var(--font-text); color: var(--muted); text-transform: none; }
+  .gt-prob { margin: 0.2rem 0 0; font-size: 0.95rem; }
+  .gt-prob b { font-size: 1.15rem; }
+  .gt-wins { color: var(--muted); }
+  .gt-strip { display: block; width: 100%; height: auto; margin-top: 0.35rem; overflow: visible; }
+  .gt-field { fill: var(--field-tint); }
+  .gt-ez { fill: var(--ez-tint); }
+  .gt-grid { stroke: var(--line); stroke-width: 1; }
+  .gt-tie { stroke: var(--muted); stroke-width: 1.5; }
+  .gt-stop { stop-color: var(--turf); }
+  .gt-pylon { stroke: var(--pylon); stroke-width: 2.5; }
+  .gt-pylon-cap { fill: var(--pylon); }
+  .gt-strip text { font: 500 9px var(--font-text); fill: var(--muted); }
+  .gt-strip .gt-ez-name { fill: var(--fg); font-weight: 600; }
+  .gt-strip .gt-pylon-label { fill: var(--fg); font-weight: 600; font-size: 10px; }
+  .gt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; margin-top: 0.5rem;
+             font-size: 0.8rem; min-width: 0; }
+  .gt-foot .digest { margin-left: auto; color: var(--muted); }
+  .gt-live { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.4rem;
+             min-width: 0; margin-right: auto; }
+  .gt-nostart { color: var(--muted); white-space: nowrap; }
+  .gt-score { font-weight: 600; white-space: nowrap; }
+  .gt-livebox { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.4rem;
+                padding: 0.1rem 0.35rem; border-radius: 4px; }
+  .gt-pop { width: min(24rem, calc(100vw - 2rem)); background: var(--card); color: var(--fg);
+            border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 1rem; }
+  .gt-pop h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+  .gt-pop dl { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; margin: 0;
+               font-size: 0.85rem; }
+  .gt-pop dt { color: var(--muted); }
+  .gt-pop dd { margin: 0; overflow-wrap: anywhere; }
+  .gt-vs { margin-top: 0.15rem; }
   /* The view change is a same-document view transition (js/router.js), which the script skips
      under reduced motion; this stops the browser's own default fade for any path that starts one
      anyway. */

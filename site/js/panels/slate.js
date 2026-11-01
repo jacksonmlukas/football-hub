@@ -1,20 +1,13 @@
 // The slate panel: frozen model numbers beside live scores, and the archived weeks.
 
-import { ago, esc, fmt, pct } from "../format.js";
+import { ago, esc } from "../format.js";
 import { findArt, frozen, load, otherWeeks, predsArt } from "../artifacts.js";
 import { panel } from "../dom.js";
 import { chipFrozen, chipLive, staleOf } from "../state.js";
+import { DEFAULT_SORT, feedState, liveSlot, matchupKey, gamesBody, sidesOf } from "./games.js";
 
-// ESPN to nflverse, and the direction matters. Compared against a live scoreboard and a
-// published slate, exactly two abbreviations differ: ESPN writes LAR and WSH where
-// nflverse writes LA and WAS. Predictions are keyed by nflverse game_id, so ESPN is the
-// side that gets translated.
-//
-// This map was initially written the other way round, which silently dropped the Rams
-// game from the overlay every week -- a missing row reads as "not on the board", which is
-// a legitimate state, so nothing would have looked wrong.
-const TEAM_ALIAS = { LAR: "LA", WSH: "WAS" };
-const teamKey = t => TEAM_ALIAS[t] ?? t;
+// The ESPN-to-nflverse team alias lives with the tiles now (`matchupKey` in games.js): the live
+// join is keyed by the matchup, and the tile is what reads it.
 
 // The slate is the one panel mixing two clocks: model numbers frozen at lock, scores
 // moving. Everything here exists to keep that boundary visible -- the frozen columns are
@@ -28,6 +21,10 @@ const teamKey = t => TEAM_ALIAS[t] ?? t;
 // not survive the next render.
 let viewing = null;
 let slateMan = null;
+// How the tiles are ordered, and the rows last drawn for the live week. The poll reads the rows
+// to find the score slots; it never touches the frozen numbers beside them.
+let sortBy = DEFAULT_SORT;
+let drawn = null;
 
 // The slate for a week that has rows, and the two facts about the live join that belong in
 // the panel's frame beside it: how many games matched, and how old the scores are. Hence
@@ -40,16 +37,14 @@ export async function slateBody(preds, art, archived, liveArt) {
   // game, under a column captioned "live". An archived week gets no overlay at all rather
   // than a plausible wrong one.
   const live = archived ? null : await load("live");
-  const byGame = new Map();
-  for (const g of live?.rows ?? []) {
-    byGame.set(`${teamKey(g.away)}_${teamKey(g.home)}`, g);
-  }
-
-  const rows = preds.rows.slice(0, 16).map(r => {
-    const teams = (r.game_id ?? "").replace(/^\d+_\d+_/, "");
-    return { ...r, teams, live: byGame.get(teams) ?? null };
-  });
-  const matched = rows.filter(r => r.live).length;
+  // One tile per prediction row (no cap): the view is the whole slate.
+  const rows = preds.rows;
+  const feed = feedState(live, liveArt, rows, archived);
+  const matched = rows.filter(r => {
+    const sides = sidesOf(r);
+    return sides && feed.byGame.has(matchupKey(sides.away, sides.home));
+  }).length;
+  drawn = archived ? null : { rows, art: liveArt };
 
   const lockedAt = preds.rows[0]?.predicted_at ?? preds.generated_at;
   const liveAge = archived ? "not shown for a week that is over"
@@ -76,30 +71,7 @@ export async function slateBody(preds, art, archived, liveArt) {
       ${chipLive("live")} scores, ${liveAge}.
     </p>`;
 
-  const body = `<div class="scroll"><table>
-    <thead>
-      <tr>
-        <th></th>
-        <th colspan="3" class="grp-frozen">frozen at lock</th>
-        <th colspan="2" class="grp-live">live</th>
-      </tr>
-      <tr>
-        <th>game</th>
-        <th class="grp-frozen">home win</th><th class="grp-frozen">margin</th>
-        <th class="grp-frozen">80% range</th>
-        <th class="grp-live">score</th><th class="grp-live">status</th>
-      </tr>
-    </thead>
-    <tbody>${rows.map(r => `
-      <tr>
-        <td>${esc(r.teams)}</td>
-        <td class="num grp-frozen">${pct(r.home_win_prob)}</td>
-        <td class="num grp-frozen">${fmt(r.margin_mean, 1)}</td>
-        <td class="num grp-frozen">${fmt(r.margin_lo, 0)} … ${fmt(r.margin_hi, 0)}</td>
-        <td class="num grp-live">${r.live ? `${esc(r.live.away_score)}–${esc(r.live.home_score)}` : "—"}</td>
-        <td class="num grp-live">${r.live ? esc(r.live.detail ?? r.live.state) : "not on the board"}</td>
-      </tr>`).join("")}
-    </tbody></table></div>`;
+  const body = gamesBody(rows, feed, preds, sortBy);
 
   return {
     age: `${preds.n} games · ${matched} live`,
@@ -116,6 +88,7 @@ export async function slateBody(preds, art, archived, liveArt) {
 
 export async function renderSlate(man) {
   slateMan = man;
+  drawn = null;
   // The artifact this week was published as, named by whoever wrote it. See `predsArt`.
   const pArt = predsArt(man);
   const key = viewing ?? pArt?.name ?? null;
@@ -162,3 +135,29 @@ export function chooseWeek(pick) {
 
 // Whether a reader is looking at an archived week. The poll asks, and does not redraw if so.
 export const isArchived = () => Boolean(viewing);
+
+// Choosing how the tiles are ordered. The predictions are in the frozen cache, so this redraws
+// the same numbers in another order and fetches nothing it did not already hold but the scores.
+export function chooseSort(how) {
+  sortBy = how;
+  return renderSlate(slateMan);
+}
+
+// The poll's whole job: put the current feed's state into each tile's score slot. Nothing else on
+// the page is touched -- not a frozen number, not the order, not the popovers -- so a poll cannot
+// replace a model number even by accident. An archived week has no slots and nothing to refresh.
+// `root` is the document (a stub in the contract tests).
+export async function refreshLive(man, root = document) {
+  if (viewing != null || !drawn) return;
+  const live = await load("live");
+  const feed = feedState(live, findArt(man, "live"), drawn.rows, false);
+  const byKey = new Map();
+  for (const r of drawn.rows) {
+    const sides = sidesOf(r);
+    if (sides) byKey.set(matchupKey(sides.away, sides.home), r);
+  }
+  for (const slot of root.querySelectorAll("[data-live-slot]")) {
+    const row = byKey.get(slot.getAttribute("data-game"));
+    if (row) slot.innerHTML = liveSlot(row, feed);
+  }
+}
