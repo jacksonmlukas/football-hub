@@ -2240,7 +2240,7 @@ def _write_line(base, when, spread):
         pl.DataFrame({"game_id": ["g1"], "close_spread": [spread], "spread_price": [-110.0],
                       "close_total": [44.5], "total_price": [-110.0], "ml_home_prob": [None],
                       "captured_at": [when], "polls_unmoved": [1], "unmoved_since": [when]},
-                     schema=store.SNAPSHOT_COLUMNS),
+                     schema=store.PRE_512_COLUMNS),
         2026, 1, when, base=base)
 
 

@@ -19,7 +19,8 @@ def _built():
     from hub.models.market import MARGIN_SD, normal_cdf
     kick = datetime(2026, 10, 18, 17, 0)
     cap = {("g", datetime(2026, 10, 17, 9)): {"close_spread": -3.5, "close_total": 44.5,
-                                              "ml_home_prob": None}}
+                                              "ml_home_prob": None, "spread_price": -110.0,
+                                              "spread_price_away": -110.0}}
     for priced in (datetime(2026, 10, 17, 9), None):
         row = {"game_id": "g", "model": "market_baseline", "priced_at": priced,
                "home_win_prob": normal_cdf(-3.5 / MARGIN_SD),
@@ -46,6 +47,16 @@ def test_a_row_with_market_fields_keeps_them_true(row):
         assert kickoff.utcoffset() is not None
     else:
         assert row["kickoff_missing"], "a null kickoff says why"
+    for field, why in (("vig", "vig_missing"), ("vig_ml", "vig_ml_missing")):
+        if field not in row:                  # a row published before #512 carries neither
+            continue
+        if row[field] is None:
+            assert row[why], f"a null {field} says why, and is never 0"
+        else:
+            # An overround is a margin the book keeps: above 0 for a priced two-sided market
+            # (a fair coin is 0 exactly, never negative at the median) and under 0.25.
+            assert 0 <= row[field] < 0.25, f"{field} {row[field]} is not an overround"
+            assert row[why] is None, f"{field} carries a value and a reason"
     if row["market_prob"] is None:
         assert row["market_missing"], "a null price says why, and is never 0"
         return

@@ -59,7 +59,7 @@ def _capture(base, game, when, spread, total=44.5, ml=None):
         pl.DataFrame({"game_id": [game], "close_spread": [spread], "spread_price": [-110.0],
                       "close_total": [total], "total_price": [-110.0], "ml_home_prob": [ml],
                       "captured_at": [when], "polls_unmoved": [1], "unmoved_since": [when]},
-                     schema=store.SNAPSHOT_COLUMNS), 2026, 6, when, base=base)
+                     schema=store.PRE_512_COLUMNS), 2026, 6, when, base=base)
 
 
 def _rows(site, base, preds):
@@ -182,8 +182,8 @@ def test_a_kickoff_equal_to_the_capture_still_publishes_the_price(site, base, mo
 
 
 def test_attach_leaves_rows_that_carry_the_fields_untouched():
-    rows = [{"game_id": "g1", "market_prob": 0.5}]
-    assert market_row.attach(rows, 2026) == [{"game_id": "g1", "market_prob": 0.5}]
+    rows = [{"game_id": "g1", "market_prob": 0.5, "vig": None}]
+    assert market_row.attach(rows, 2026) == [{"game_id": "g1", "market_prob": 0.5, "vig": None}]
 
 
 def test_moment_reads_what_a_row_holds_and_refuses_what_it_cannot():
@@ -202,3 +202,80 @@ def test_an_unreadable_store_prices_nothing_and_the_row_says_the_capture_is_abse
     monkeypatch.setattr(market_row.store, "lines", boom)
     row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
     assert row["market_prob"] is None and "not in the store" in row["market_missing"]
+
+
+# --- the vig (#512) -------------------------------------------------------------------------
+
+def _capture_priced(base, game, when, **prices):
+    cols = {"spread_price": -110.0, "spread_price_away": None, "ml_home_price": None,
+            "ml_away_price": None} | prices
+    store.write_snapshot(
+        pl.DataFrame({"game_id": [game], "close_spread": [-3.5], "close_total": [44.5],
+                      "total_price": [-110.0], "ml_home_prob": [None],
+                      "captured_at": [when], "polls_unmoved": [1], "unmoved_since": [when],
+                      **{k: [v] for k, v in cols.items()}}, schema=store.SNAPSHOT_COLUMNS),
+        2026, 6, when, base=base)
+
+
+def test_minus_110_both_sides_is_the_textbook_4_76_percent():
+    """The control: 2 * (110 / 210) - 1 = 0.047619."""
+    got, why = market_row.overround(-110.0, -110.0)
+    assert got == pytest.approx(0.047619, abs=1e-6) and why is None
+    assert market_row.overround(100.0, 100.0) == (pytest.approx(0.0), None)   # a fair coin
+    assert market_row.overround(-150.0, 130.0)[0] == pytest.approx(0.6 + 100 / 230 - 1)
+
+
+@pytest.mark.parametrize("home, away, word", [
+    (-110.0, None, "away side"), (None, -110.0, "home side"),
+    (None, None, "neither"), (-110.0, float("nan"), "away side"),
+    (1.91, 1.91, "not American")])
+def test_a_missing_side_or_a_non_american_price_is_null_with_a_reason_never_zero(
+        home, away, word):
+    got, why = market_row.overround(home, away)
+    assert got is None and why is not None and word in why
+
+
+def test_the_published_row_carries_the_spread_and_moneyline_vig(site, base):
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture_priced(base, "g1", when, spread_price_away=-110.0, ml_home_price=-150.0,
+                    ml_away_price=130.0)
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert row["vig"] == pytest.approx(0.047619, abs=1e-6) and row["vig_missing"] is None
+    assert row["vig_ml"] == pytest.approx(0.6 + 100 / 230 - 1)
+    assert row["vig_ml_missing"] is None
+
+
+def test_a_capture_that_predates_both_sides_gives_null_vig_and_says_so(site, base):
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture(base, "g1", when, -3.5)                       # the pre-#512 shape: one side only
+    row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
+    assert row["market_prob"] is not None                  # the price itself is untouched
+    assert row["vig"] is None and "predates" in row["vig_missing"]
+    assert row["vig_ml"] is None and "predates" in row["vig_ml_missing"]
+
+
+def test_a_row_with_no_priced_capture_has_a_null_vig_and_a_reason(site, base):
+    row = _rows(site, base, _preds([("g1", 3.0, None)]))["g1"]
+    assert row["vig"] is None and row["vig_ml"] is None
+    assert row["vig_missing"] and row["vig_ml_missing"]
+
+
+def test_a_row_published_before_the_vig_gets_it_from_its_capture_and_nothing_else(base):
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture_priced(base, "g1", when, spread_price_away=-120.0)
+    old = {"game_id": "g1", "priced_at": when, "market_prob": 0.61, "market_spread": -3.5}
+    got = market_row.attach([dict(old)], 2026, base)[0]
+    assert {k: v for k, v in got.items() if k not in market_row.VIG_FIELDS} == old
+    assert got["vig"] == pytest.approx(market_row.overround(-110.0, -120.0)[0])
+    assert got["vig_ml"] is None and got["vig_ml_missing"]
+
+
+def test_a_pre_vig_row_whose_price_was_withheld_gets_no_vig_and_its_reason(base):
+    """A capture the row refused to publish (in play) is not read for a vig either."""
+    when = dt.datetime(2026, 10, 17, 9, 0)
+    _capture_priced(base, "g1", when, spread_price_away=-120.0)
+    held = {"game_id": "g1", "priced_at": when, "market_prob": None,
+            "market_missing": "the only capture is after kickoff (in play), never a market price"}
+    got = market_row.attach([dict(held)], 2026, base)[0]
+    assert got["vig"] is None and "after kickoff" in got["vig_missing"]
+    assert got["vig_ml"] is None

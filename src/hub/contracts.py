@@ -851,11 +851,21 @@ NFELOQB = Contract(
 # Partitions written before #210 have neither column and stay readable for the reason the
 # pre-#211 ones do: the store unions by name and the reader derives the two on the way out.
 # Nothing rewrites a dated partition to add them.
+#
+# **The other side of each price, since #512.** `spread_price_away`, `ml_home_price` and
+# `ml_away_price` are the medians that, beside `spread_price`, give both sides of the spread
+# and of the moneyline, so the overround the de-vigged `ml_home_prob` removed is recoverable
+# and `hub.market_row` can publish it. Partitions before #512 lack them and read as nulls, the
+# way the pre-#211 ones do; a vig is never derived for a capture that did not carry both
+# sides. A moneyline price is not main-market juice: a 30-point favourite is honestly -10000
+# and its dog +3000, so those two bounds are wide, and still refuse a decimal price.
 ODDS_SNAPSHOT = Contract(
     name="odds_snapshot",
     required={"game_id": pl.Utf8, "close_spread": pl.Float64,
               "spread_price": pl.Float64, "close_total": pl.Float64,
               "total_price": pl.Float64, "ml_home_prob": pl.Float64,
+              "spread_price_away": pl.Float64, "ml_home_price": pl.Float64,
+              "ml_away_price": pl.Float64,
               "captured_at": pl.Datetime,
               "polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime},
     non_null=("game_id", "close_spread", "captured_at", "polls_unmoved", "unmoved_since"),
@@ -863,6 +873,8 @@ ODDS_SNAPSHOT = Contract(
     # and it is what makes AS_OF_LINES more than a normal join.
     ranges={"close_spread": (-40, 40), "close_total": (20, 100),
             "spread_price": (-2000, 2000), "total_price": (-2000, 2000),
+            "spread_price_away": (-2000, 2000), "ml_home_price": (-20000, 20000),
+            "ml_away_price": (-20000, 20000),
             "ml_home_prob": (0, 1), "polls_unmoved": (1, 10000)},
     min_rows=1,
 )

@@ -35,9 +35,19 @@ show the capture precedes it, so the price is withheld too. Missing is `null` wi
 **Degrades.** A schedule that cannot be fetched or a store with no lines leaves the fields
 null with the reason; publishing the prediction is never made to depend on them.
 
-**Vig is not published.** The snapshot stores the de-vigged moneyline probability and one
-side's spread price; the overround removed is not captured, so there is nothing true to put
-in a `vig` field. It arrives when the capture carries both sides.
+**The vig, since #512.** The snapshot keeps both sides' median prices (`spread_price` and
+`spread_price_away`; `ml_home_price` and `ml_away_price`), so the overround -- the implied
+probabilities of the two sides summed, less one -- can be published for the betting market a row is
+priced from:
+
+* `vig` -- the spread market's overround, `vig_missing` saying why it is null.
+* `vig_ml` -- the moneyline's, `vig_ml_missing` likewise.
+
+-110 / -110 is 0.0476 (2 * 110/210 - 1). A side that is absent, or a price that is not American
+odds, gives null with a reason; a capture that predates #512 carries neither side's partner
+and says so. Nothing is imputed, and a vig is never 0 for want of data. The overround of the
+*medians* is published, not a median of per-book overrounds. A row published before #512 gets
+the vig read from the capture it names, and nothing else on it is rewritten.
 """
 from __future__ import annotations
 
@@ -52,7 +62,9 @@ import polars as pl
 from hub import schedule, store
 
 MARKET_FIELDS = ("kickoff", "kickoff_missing", "market_spread", "market_total", "market_prob",
-                 "market_prob_ml", "market_missing")
+                 "market_prob_ml", "market_missing", "vig", "vig_missing", "vig_ml",
+                 "vig_ml_missing")
+VIG_FIELDS = ("vig", "vig_missing", "vig_ml", "vig_ml_missing")
 
 
 def _moment(value: Any) -> datetime | None:
@@ -67,6 +79,47 @@ def _moment(value: Any) -> datetime | None:
         except ValueError:
             return None
     return got.astimezone(UTC).replace(tzinfo=None) if got.tzinfo else got
+
+
+_PRICE_COLUMNS = ("spread_price", "spread_price_away", "ml_home_price", "ml_away_price")
+
+
+def _implied(price: float) -> float:
+    """Implied probability of one American price, vig included."""
+    return 100.0 / (price + 100.0) if price > 0 else -price / (-price + 100.0)
+
+
+def overround(home: Any, away: Any) -> tuple[float | None, str | None]:
+    """`(overround, None)` for a two-sided market, else `(None, why)`.
+
+    The overround is the two sides' implied probabilities summed, less one: -110 / -110 is
+    2 * (110 / 210) - 1 = 0.0476. A side that is missing, or a price that cannot be American
+    odds (inside the hole between -100 and +100), makes the pair unreadable, and an unreadable
+    pair is null with the reason, never 0.
+    """
+    h, a = _finite(home), _finite(away)
+    if h is None and a is None:
+        return None, "neither side's price was captured"
+    if h is None or a is None:
+        return None, f"the {'home' if h is None else 'away'} side's price was not captured"
+    if abs(h) < 100.0 or abs(a) < 100.0:
+        return None, "a price is not American odds"
+    return _implied(h) + _implied(a) - 1.0, None
+
+
+def vig_fields(cap: Mapping[str, Any] | None, why: str | None) -> dict[str, Any]:
+    """The four vig fields for one capture; `why` is the reason there is no capture to read."""
+    if cap is None:
+        reason = why or "no capture to read the prices from"
+        return {"vig": None, "vig_missing": reason, "vig_ml": None, "vig_ml_missing": reason}
+    out: dict[str, Any] = {}
+    for key, home, away in (("vig", "spread_price", "spread_price_away"),
+                            ("vig_ml", "ml_home_price", "ml_away_price")):
+        out[key], out[f"{key}_missing"] = overround(cap.get(home), cap.get(away))
+        if out[key] is None and _finite(cap.get(away)) is None:
+            # The partner price is what #512 added: its absence may be a capture that predates it.
+            out[f"{key}_missing"] += " (a capture before #512 predates both-sides prices)"
+    return out
 
 
 def kickoffs(season: int) -> tuple[dict[str, datetime | None], str | None]:
@@ -93,7 +146,7 @@ def captures(season: int, base: Path | None) -> dict[tuple[str, datetime], dict[
     except Exception:  # a store that cannot be read prices nothing; the rows say so
         return {}
     keep = [pl.col(c) if c in polls.columns else pl.lit(None, dtype=pl.Float64).alias(c)
-            for c in ("close_spread", "close_total", "ml_home_prob")]
+            for c in ("close_spread", "close_total", "ml_home_prob", *_PRICE_COLUMNS)]
     polls = polls.select("game_id", "captured_at", *keep).drop_nulls(["game_id", "captured_at"])
     return {(r["game_id"], r["captured_at"]): r for r in polls.to_dicts()}
 
@@ -112,6 +165,7 @@ def market_fields(row: Mapping[str, Any], kickoff: datetime | None, kickoff_why:
         "market_spread": None, "market_total": None, "market_prob": None,
         "market_prob_ml": None, "market_missing": None,
     }
+    out.update(vig_fields(None, "the betting-market fields are null: see market_missing"))
     priced = _moment(row.get("priced_at"))
     if priced is None:
         out["market_missing"] = (f"no capture priced this game (price_source "
@@ -130,6 +184,7 @@ def market_fields(row: Mapping[str, Any], kickoff: datetime | None, kickoff_why:
             out["market_total"] = _finite(cap.get("close_total"))
             out["market_prob"] = normal_cdf(spread / MARGIN_SD)
             out["market_prob_ml"] = _finite(cap.get("ml_home_prob"))
+            out.update(vig_fields(cap, None))
     return out
 
 
@@ -137,10 +192,20 @@ def attach(rows: list[dict[str, Any]], season: int,
            base: Path | None = None) -> list[dict[str, Any]]:
     """`rows` with the betting-market fields added to every row that does not already carry them."""
     todo = [r for r in rows if "market_prob" not in r]
-    if not todo:
+    # A row published before #512 carries its market fields and not the vig. The capture it
+    # names is immutable, so the vig is read from it and nothing else on the row is touched.
+    vig_only = [r for r in rows if "market_prob" in r and "vig" not in r]
+    if not todo and not vig_only:
         return rows
     kicks, why = kickoffs(season)
     seen = captures(season, base)
     for r in todo:
         r.update(market_fields(r, kicks.get(str(r.get("game_id"))), why, seen))
+    for r in vig_only:
+        priced = _moment(r.get("priced_at"))
+        if r.get("market_prob") is None or priced is None:
+            r.update(vig_fields(None, r.get("market_missing")))
+            continue
+        cap = seen.get((str(r.get("game_id")), priced))
+        r.update(vig_fields(cap, "the capture named by priced_at is not in the store"))
     return rows
