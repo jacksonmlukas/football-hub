@@ -40,7 +40,7 @@ Two things stop that here:
 market and does not contaminate a team total. `hub.exhibits.weekly_projection` regresses a thin sample
 toward what a player's *preseason* FantasyPros ECR implies (`fit_consensus_prior`,
 `consensus_target`), and `fit_shrink(target="market")` names that variant with the word this
-repo reserves for three different things -- see the *Market signals* section of `CONTEXT.md`,
+repo reserves for three different things -- see the *Market signals* section of `GLOSSARY.md`,
 which distinguishes the **Draft market**, the **Consensus** and the **Betting market**. A
 scan that read the word `market` would fire on `PURE_MARKET_K` and on every one of those
 docstrings; this one reads column names off the AST, so the prose is free to discuss the
@@ -71,7 +71,7 @@ SRC = ROOT / "src" / "hub"
 # `test_every_market_column_is_still_declared_where_this_file_says` resolves, so an entry
 # cannot claim a provenance it does not have and a rename cannot pass quietly.
 MARKET_COLUMNS: dict[str, str] = {
-    # The schedule's own two, which move -- `CONTEXT.md`'s *Snapshot* entry draws the
+    # The schedule's own two, which move -- `GLOSSARY.md`'s *Snapshot* entry draws the
     # distinction between these and a dated capture. Everything the Panel offers is derived
     # from them.
     "spread_line": "contracts.SCHEDULES.ranges",
@@ -298,7 +298,7 @@ def test_the_weekly_model_references_no_betting_market_column(module, why):
         f"aggregating those players into a team total launders the market's own number into "
         f"what reads as an independent estimate -- the aggregate stops being a comparison at "
         f"all. The **Consensus** prior is not this and is deliberately allowed: see this "
-        f"file's docstring and the *Market signals* section of CONTEXT.md.\n"
+        f"file's docstring and the *Market signals* section of GLOSSARY.md.\n"
         f"If the answer really is that the projection should read the line, that is a "
         f"decision about what every team-level aggregate downstream means, and it belongs in "
         f"an ADR before it belongs in this module.")

@@ -58,7 +58,7 @@ Two tests, deliberately not interchangeable:
   lost.
 
 Confusing the two is how a well-built, well-tested model ships while being confidently worse
-than a one-line rule. `CONTEXT.md` defines both.
+than a one-line rule. `GLOSSARY.md` defines both.
 
 ## Evaluation methodology
 
@@ -105,7 +105,7 @@ agent's context, which is the most expensive mistake available in this repo.
 
 ## Docs worth reading first
 
-- [`CONTEXT.md`](CONTEXT.md) — the glossary. Three different things get called "the market"
+- [`GLOSSARY.md`](GLOSSARY.md) — the glossary. Three different things get called "the market"
   here, and the entry exists to stop that.
 - [`docs/architecture.md`](docs/architecture.md) — the index of all twenty-seven decision
   records, each with what it rests on and whether that still holds.

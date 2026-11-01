@@ -99,7 +99,7 @@ Worse than missing in one respect: the module is present, so a reader assumes th
 
 Not gaps, despite looking like ones:
 
-- `CONTEXT.md`, `docs/adr/` — `docs/agents/domain.md` explicitly says to proceed silently when
+- `GLOSSARY.md`, `docs/adr/` — `docs/agents/domain.md` explicitly says to proceed silently when
   absent, and that `/domain-modeling` creates them lazily. Working as designed.
 - `.scratch/` — only relevant to the local-markdown issue tracker, and GitHub was chosen.
 

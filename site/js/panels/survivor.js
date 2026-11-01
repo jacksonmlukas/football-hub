@@ -12,7 +12,7 @@ import { table } from "../table.js";
 //
 // The scope is *rendered* here, not merely published. `publish.survivor` wrote
 // `weeks_played` and nothing read it -- no page code, no test, no CLI -- and
-// `weeks_remaining` was read by one test that rendered nothing (issue #57). CONTEXT.md's
+// `weeks_remaining` was read by one test that rendered nothing (issue #57). GLOSSARY.md's
 // "Remaining plan" is the plan *together with* the scope that makes it readable, so showing
 // it is what makes the writer's claim true: a plan whose first row is week 9 has to say what
 // became of weeks 1 to 8, and a reader should not have to open the JSON to find out.

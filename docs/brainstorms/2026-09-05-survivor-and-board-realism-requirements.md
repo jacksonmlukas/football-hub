@@ -72,7 +72,7 @@ and it is the comparison `docs/method.md` rule 5 requires: gate against the simp
 that already works, not against nothing.
 
 **Beating a posted price is tabled, and instrumented instead.** There is no record to point
-at, `MARGIN_SD` is independently corroborated, and both `CONTEXT.md` and the repo's own audit
+at, `MARGIN_SD` is independently corroborated, and both `GLOSSARY.md` and the repo's own audit
 treat the betting market as efficient. A season of logged closing-line data answers the
 question far more cheaply than a research programme, and the logging is worth having anyway.
 
@@ -212,7 +212,7 @@ flowchart TB
 
 ### Outside this product's identity
 
-- Beating a posted price. The betting market stays what `CONTEXT.md` says it is — an efficient benchmark the repo audits itself against, never a target. Closing lines get logged; nothing is modelled against them.
+- Beating a posted price. The betting market stays what `GLOSSARY.md` says it is — an efficient benchmark the repo audits itself against, never a target. Closing lines get logged; nothing is modelled against them.
 - Following anyone else's published survivor picks. The market probabilities are an input; another handicapper's selections are not.
 
 ---

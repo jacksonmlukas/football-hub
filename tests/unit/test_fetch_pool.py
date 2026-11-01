@@ -7,7 +7,7 @@ through `tests/golden/fixtures/pool_payload.synthetic.json`, a hand-built payloa
 shape `hub.fetch.pool` assumes. What the first live run has to confirm is listed in that
 module's docstring; nothing here can stand in for it.
 
-Two words carry their `CONTEXT.md` meanings throughout. A **Ledger** is the set of teams an
+Two words carry their `GLOSSARY.md` meanings throughout. A **Ledger** is the set of teams an
 entry has already spent, one per entry; the **Decision journal** is a different record and
 is not touched by this module.
 """

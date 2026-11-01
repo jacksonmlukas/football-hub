@@ -18,7 +18,7 @@ rank back with a durability bonus attached. A decision journal sits under both.
 > **Renamed 2026-09-05.** U5's record was "the decision ledger" throughout this plan. **Ledger**
 > is the set of teams an entry has spent — the sense R2, R17 and U3 use, and the one shipped code
 > already carries (`hub.season.pool` takes `ledger`/`ledgers`, `buyback_restores_ledger` is a pool-config
-> field). One word for both was the collision; U5's is the **Decision journal** now, and `CONTEXT.md`
+> field). One word for both was the collision; U5's is the **Decision journal** now, and `GLOSSARY.md`
 > defines both. The used-team uses below are correct and unchanged.
 
 ---

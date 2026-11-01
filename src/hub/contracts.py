@@ -732,7 +732,7 @@ BIGTEN_CAPTURES = Contract(
 # last-known state is read back through, so a cached file that has drifted is refused on the
 # way out rather than served as the field.
 #
-# `used` is the entry's Ledger -- the teams it has spent, in the CONTEXT.md sense -- and is
+# `used` is the entry's Ledger -- the teams it has spent, in the GLOSSARY.md sense -- and is
 # a list column rather than a joined string so an empty Ledger is `[]` and not `""`. The
 # writer declares the dtype, because a field where nobody has spent anything yet infers as
 # `List(Null)`, and the family check refuses that by design. No identity column exists to

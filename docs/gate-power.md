@@ -2094,7 +2094,7 @@ floor, not a ceiling.
 - It cannot touch the weekly, lineup, draft, coverage, margin or quarterback-diagnostic gates:
   all six already read `run_gate` → `summarise(cluster=SEASON_CLUSTER)`, independent of
   `paired_gain`'s own `cluster` argument, so #311 does not move any of their published figures.
-- It cannot touch a screen: `weekly_screen` is a different test (`CONTEXT.md`) and #312 is its
+- It cannot touch a screen: `weekly_screen` is a different test (`GLOSSARY.md`) and #312 is its
   own restatement.
 
 ## What happens either way
@@ -3605,7 +3605,7 @@ now and the dollar figure named later. Indifferent to ruin: a bar for whether a 
 A **pick** is a side (favorite/underdog against the closing spread, or over/under against the
 closing total) the model names for a game, at a flat one-unit stake, priced at the close —
 `hub.fetch.odds`' last snapshot before kickoff, the `Snapshot`/`Live price` vocabulary
-`CONTEXT.md` already defines and this section reads rather than re-derives. A graded pick's
+`GLOSSARY.md` already defines and this section reads rather than re-derives. A graded pick's
 realised profit is **+100/110 unit** if the side covers, **−1 unit** if it does not, and is
 excluded from `n` on a push. **A season's EV is the mean realised profit per graded pick over
 that season's games** — the repeated measure is the game, per `docs/method.md` rule 3, never
@@ -3809,7 +3809,7 @@ good model.
   #375's question, not this bar's — the same `ADOPTED:` comment that created both tickets
   together keeps them apart.
 - No claim that a model's edge is causal, or that the closing line is inefficient in a way this
-  gate can itself demonstrate a mechanism for — `CONTEXT.md`'s own definition of the betting
+  gate can itself demonstrate a mechanism for — `GLOSSARY.md`'s own definition of the betting
   market ("treated as already-efficient... the repo backtests against it to audit itself,
   never to beat it") is read literally: this bar tests whether a model beats the close
   *empirically*, once, on held-out seasons, and a pass is evidence, not an explanation.
@@ -4752,7 +4752,7 @@ the harness extension (`scripts/gate_horizon.py --rule-c`, tests in
 
 ## The rule being measured
 
-A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md; the code's
+A season has one **Disposition**: a win, a loss, or an **Abstention** (GLOSSARY.md; the code's
 field is still `ties`). A season with a win or a loss is **resolved**.
 
 - **ADOPT** — at least one resolved season, *every resolved season a win*, and the t interval

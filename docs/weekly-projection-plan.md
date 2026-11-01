@@ -90,7 +90,7 @@ scoring turns the vector into points — never the other way round.
 The structural claim, which is testable and which the persistence table above already
 supports: **week-level information moves team volume and player share -- together, **Usage** --
 and barely touches efficiency.** A model that tries to predict this week's yards per carry is predicting noise. `Usage` and
-`Weekly projection` were added to [CONTEXT.md](../CONTEXT.md) rather than reusing `xFP`, which
+`Weekly projection` were added to [GLOSSARY.md](../GLOSSARY.md) rather than reusing `xFP`, which
 already owns the word *opportunity*.
 
 ### The data is already here
