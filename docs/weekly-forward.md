@@ -255,6 +255,36 @@ REMOVEs 2000 of 2000.
 > weeks; stage 2 still passes against +10.80). The arm pin does not move:
 > `hub.models.experiment` is closure-exempt. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
 
+> **Re-run 2026-11-01 (#529), on the corrected SE; the table above is kept as published.**
+> `scripts/weekly_forward_power.py --table --trials 10000 --workers 6` (weeks 6, 8, 9, 10) and
+> `--weeks 14`, no code change, same seeds `SeedSequence([432, cell])`. The null is lower, as
+> predicted: at δ = 0 and 10 weeks P(ADOPT) **0.0196**, P(REMOVE) **0.0209** (was 0.0247 /
+> 0.0236; SE 0.0014), still under 0.05. Power is lower at every cell with an effect, by up to
+> about 0.05 of probability at the larger effects. Old → new:
+>
+> | admitted weeks | δ = −1.5 | −0.825 | −0.3 | 0 | +0.3 | +0.5 | +1.0 | +1.5 | +2.0 |
+> |---|---|---|---|---|---|---|---|---|---|
+> | 6 P(ADOPT) | 0.0003 → 0.0002 | 0.0019 → 0.0015 | 0.0113 → 0.0088 | 0.0203 → 0.0157 | 0.0428 → 0.0343 | 0.0694 → 0.0559 | 0.1517 → 0.1249 | 0.3024 → 0.2567 | 0.4658 → **0.4105** |
+> | 6 P(REMOVE) | 0.2911 → 0.2483 | 0.1229 → 0.0990 | 0.0415 → 0.0335 | 0.0252 → 0.0199 | 0.0109 → 0.0083 | 0.0061 → 0.0045 | 0.0016 → 0.0011 | 0.0002 → 0.0001 | 0.0000 → 0.0000 |
+> | 8 P(ADOPT) | 0.0000 → 0.0000 | 0.0013 → 0.0009 | 0.0104 → 0.0088 | 0.0253 → 0.0206 | 0.0532 → 0.0445 | 0.0775 → 0.0651 | 0.2154 → 0.1865 | 0.4036 → 0.3596 | 0.6172 → **0.5723** |
+> | 8 P(REMOVE) | 0.4037 → 0.3591 | 0.1574 → 0.1371 | 0.0543 → 0.0457 | 0.0284 → 0.0245 | 0.0105 → 0.0091 | 0.0051 → 0.0039 | 0.0012 → 0.0010 | 0.0002 → 0.0002 | 0.0000 → 0.0000 |
+> | 9 P(ADOPT) | 0.0002 → 0.0002 | 0.0017 → 0.0016 | 0.0101 → 0.0081 | 0.0234 → 0.0197 | 0.0591 → 0.0514 | 0.0918 → 0.0787 | 0.2337 → 0.2073 | 0.4591 → 0.4195 | 0.6877 → **0.6476** |
+> | 9 P(REMOVE) | 0.4462 → 0.4075 | 0.1742 → 0.1505 | 0.0528 → 0.0459 | 0.0240 → 0.0189 | 0.0084 → 0.0063 | 0.0044 → 0.0038 | 0.0008 → 0.0006 | 0.0001 → 0.0001 | 0.0000 → 0.0000 |
+> | **10 P(ADOPT)** | 0.0000 → 0.0000 | 0.0014 → 0.0010 | 0.0094 → 0.0076 | **0.0247 → 0.0196** | **0.0586 → 0.0493** | **0.1006 → 0.0874** | **0.2633 → 0.2356** | 0.4958 → **0.4594** | 0.7374 → **0.7024** |
+> | **10 P(REMOVE)** | 0.4945 → 0.4605 | **0.1940 → 0.1722** | 0.0577 → 0.0489 | **0.0236 → 0.0209** | 0.0102 → 0.0087 | 0.0039 → 0.0036 | 0.0010 → 0.0008 | 0.0001 → 0.0001 | 0.0000 → 0.0000 |
+> | 14 P(ADOPT) | 0.0000 → 0.0000 | 0.0004 → 0.0004 | 0.0087 → 0.0077 | 0.0242 → 0.0215 | 0.0703 → 0.0625 | 0.1202 → 0.1096 | 0.3518 → 0.3263 | 0.6509 → 0.6265 | 0.8833 → **0.8657** |
+> | 14 P(REMOVE) | 0.6615 → 0.6334 | 0.2612 → 0.2419 | 0.0679 → 0.0599 | 0.0254 → 0.0224 | 0.0081 → 0.0066 | 0.0036 → 0.0031 | 0.0002 → 0.0002 | 0.0000 → 0.0000 | 0.0000 → 0.0000 |
+>
+> The ordering the design rests on is unchanged (more weeks, more power; null under 0.05 at every
+> count; the stage-2 comparison is untouched). Sensitivity to the week component at 10 weeks (week
+> variance 0 / **2.00** / 4.00), old → new: P(ADOPT) at δ = +0.5 **0.1042 / 0.1006 / 0.0865 →
+> 0.0936 / 0.0874 / 0.0738**; at +1.5 **0.6610 / 0.4958 / 0.3905 → 0.6331 / 0.4594 / 0.3556**;
+> P(REMOVE) at −0.825 **0.2307 / 0.1940 / 0.1587 → 0.2103 / 0.1722 / 0.1395**. The 8-week row —
+> the count the 2026-10-20 per-player amendment below says is the most the measurement can now
+> admit — reads P(ADOPT) **0.5723** at +2.0 points a team-week and **0.1865** at +1.0 (was 0.6172
+> and 0.2154). Positive controls reproduce: δ = ±100 ADOPTs / REMOVEs 1.0000, and the 10-week
+> null (2,000 trials) is 0.0165 / 0.0185.
+
 (The 14-week row is not on the table's horizon: it is what counting weeks 1-4 would have
 bought, and is there so the cost of the weeks-1-5 decision is read off numbers.) The week
 component is the one fitted constant, and its sensitivity at 10 weeks (week variance 0 / **2.00** /
@@ -1074,7 +1104,7 @@ Friday captures stay refused exactly as before
 most weeks the measurement can now admit is **8** (weeks 7-14), against the 10 or 9 the power table
 above was computed for. `MIN_WEEKS` stays 6 and is not moved by this. The power at 8 clusters is
 the table's own row for that count (P(ADOPT) 0.6172 at +2.0 points a team-week as printed, which
-#520's amendment above marks stale and lower once re-run), lower than at 9 or 10, and the
+#520's amendment above marks stale and lower once re-run; **re-run 2026-11-01 (#529): 0.5723**, 0.1865 at +1.0), lower than at 9 or 10, and the
 decision rule's SHOW branch, already the likely one, is likelier. The table was
 simulated on whole weeks; leaving Thursday's players out moves each week's lineups a little and
 is not in it.
