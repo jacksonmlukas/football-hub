@@ -1,15 +1,10 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-10-28T16:59:06+00:00",
+  "generated_at": "2026-10-31T18:25:32+00:00",
   "shape": "rows",
-  "n": 17,
+  "n": 16,
   "rows": [
-    {
-      "week": 8,
-      "team": "CIN",
-      "win_prob": 0.7950617937505842
-    },
     {
       "week": 9,
       "team": "SEA",
@@ -99,10 +94,9 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.0030349383433335717,
+  "survival": 0.0038172358012786745,
   "unpriced_weeks": [],
   "weeks_remaining": [
-    8,
     9,
     10,
     11,
@@ -121,10 +115,12 @@
     4,
     5,
     6,
-    7
+    7,
+    8
   ],
   "spent": [
     "BAL",
+    "CIN",
     "HOU",
     "JAX",
     "KC",

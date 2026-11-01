@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-28T16:59:06+00:00",
+  "generated_at": "2026-10-31T18:25:32+00:00",
   "season": 2026,
   "week": 8,
   "artifacts": [
@@ -8,28 +8,28 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:59:00+00:00"
+      "generated_at": "2026-10-31T18:25:30+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:59:01+00:00"
+      "generated_at": "2026-10-31T18:25:31+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:59:02+00:00"
+      "generated_at": "2026-10-31T18:25:31+00:00"
     },
     {
       "name": "roster",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:58:51+00:00"
+      "generated_at": "2026-10-31T18:25:24+00:00"
     },
     {
       "name": "draft_board",
@@ -43,14 +43,14 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:59:06+00:00"
+      "generated_at": "2026-10-31T18:25:32+00:00"
     },
     {
       "name": "ledger",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:59:06+00:00"
+      "generated_at": "2026-10-31T18:25:32+00:00"
     },
     {
       "name": "bigten",
@@ -58,7 +58,7 @@
       "fetched": true,
       "stale": true,
       "reason": "the page parsed but linked no report documents; nothing was archived from it (2 links skipped: off-host)",
-      "generated_at": "2026-10-28T07:17:28+00:00"
+      "generated_at": "2026-10-31T07:13:39+00:00"
     },
     {
       "name": "cfbd",
@@ -66,7 +66,7 @@
       "fetched": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-10-28T16:58:43+00:00"
+      "generated_at": "2026-10-31T18:25:17+00:00"
     }
   ],
   "weeks": [
@@ -74,7 +74,7 @@
       "name": "preds_2026_wk08",
       "season": 2026,
       "week": 8,
-      "generated_at": "2026-10-28T16:59:00+00:00"
+      "generated_at": "2026-10-31T18:25:30+00:00"
     },
     {
       "name": "preds_2026_wk07",

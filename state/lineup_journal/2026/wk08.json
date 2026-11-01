@@ -1,23 +1,33 @@
 {
  "disagree": true,
  "published": {
-  "decided_at": "2026-10-28T16:59:05.955489+00:00",
+  "decided_at": "2026-10-31T18:25:32.573993+00:00",
+  "ecr_capture": {
+   "captured_at": "2026-10-31T14:16:40.704713+00:00",
+   "note": "consensus ranks as of Fri 2026-10-30, taken after Thursday's games, so in time only for players whose game had not started",
+   "purpose": "lineup",
+   "scrape_date": "2026-10-30"
+  },
   "ecr_from_week": 7,
-  "ecr_week": null,
-  "label": "model",
+  "ecr_week": 8,
+  "label": "provisional",
   "lineup": [
    "Bhayshul Tuten",
-   "Brenton Strange",
-   "Denzel Boston",
    "Drake London",
    "Ja'Marr Chase",
    "Javonte Williams",
    "Jordan Love",
-   "KC Concepcion"
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
   ],
-  "reason": "no pre-kickoff consensus capture for week 8; no earlier capture to serve as last-good; the model's lineup (mu) is served instead",
+  "locked": [
+   "Jordan Love",
+   "Matthew Golden"
+  ],
+  "reason": null,
   "rule": "ecr",
-  "source": "mu",
+  "source": "ecr",
   "week": 8
  },
  "realised": {
