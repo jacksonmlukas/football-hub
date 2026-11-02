@@ -445,6 +445,21 @@ def test_one_artifact_is_fetched_once_however_many_weeks_are_read(node):
     assert json.loads(_run(node, body)) == ["wk01", "wk18"]
 
 
+def test_a_failed_fetch_is_not_kept_for_the_life_of_the_page(node):
+    """`load` resolves null on any failure. Kept in the freeze, one transient 5xx or dropped
+    connection would blank the slate until reload (#537); only a served artifact is frozen,
+    so the next ask fetches again -- and a served one is then fetched once, not again."""
+    body = (f"import {{ frozen }} from {_mod('artifacts.js')};\n"
+            "let n = 0;\n"
+            "globalThis.fetch = async () => { n += 1; return n === 1 ? { ok: false } "
+            ": { ok: true, json: async () => ({ rows: [1] }) }; };\n"
+            "const first = await frozen('wk01');\n"
+            "const second = await frozen('wk01');\n"
+            "const third = await frozen('wk01');\n"
+            "console.log(JSON.stringify([first, second, third, n]));")
+    assert json.loads(_run(node, body)) == [None, {"rows": [1]}, {"rows": [1]}, 2]
+
+
 def test_the_frozen_predictions_live_in_one_module_level_map_nothing_can_replace(node):
     """The freeze is structural (#476): the cache is one `const` map at the top of
     `artifacts.js`, held by `frozen` alone. It is not exported, so the live poll -- which lives in
