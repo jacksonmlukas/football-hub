@@ -1,4 +1,4 @@
-"""`site/data/leaderboard.json` -- the interim LLM-forecaster leaderboard, for the Study view (#543).
+"""`site/data/leaderboard.json` -- the interim LLM-forecaster leaderboard (#543).
 
 `forecast-score.yml` (#453) writes `leaderboard/interim.json` to the **forecasts branch** and
 commits nothing to main. The Study view fetches `data/leaderboard.json` and has nowhere else
@@ -41,7 +41,7 @@ SOURCE = f"forecasts:{PATH}"
 COUNT_KEY = "n_contestants"
 
 
-def interim_from_git(ref: str = REF, path: str = PATH, root: Path = ROOT) -> Any:
+def interim_from_git(ref: str = REF, path: str = PATH, root: Path | None = None) -> Any:
     """The interim leaderboard as committed on `ref`, parsed; None if it cannot be read.
 
     Reads the git object and does not check anything out, so the working tree is untouched.
@@ -49,7 +49,8 @@ def interim_from_git(ref: str = REF, path: str = PATH, root: Path = ROOT) -> Any
     caller's answer to all of them is the same: keep what is published.
     """
     try:
-        done = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=root, capture_output=True,
+        done = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=root or ROOT,
+                              capture_output=True,
                               text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -62,8 +63,8 @@ def interim_from_git(ref: str = REF, path: str = PATH, root: Path = ROOT) -> Any
 
 
 def _usable(doc: Any) -> bool:
-    # GUARD a-board-with-no-contestants-is-not-published [unit/test_publish_leaderboard.py]:
-    # deleting it lets an empty or malformed forecasts-branch file replace a real board.
+    # GUARD an-empty-or-malformed-source-is-not-published [unit/test_publish_leaderboard.py]:
+    # deleting it lets an empty or malformed forecasts-branch file replace the published copy.
     return (isinstance(doc, dict) and isinstance(doc.get("contestants"), list)
             and bool(doc["contestants"]))
     # /GUARD
