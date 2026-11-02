@@ -137,7 +137,7 @@ const body = { innerHTML: "" };
 const els = {};
 const mk = id => ({ id, hidden: false, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; },
                     removeAttribute(k) { delete this.attrs[k]; },
-                    querySelector: () => (id === "v-study") ? body : null });
+                    querySelector: () => null });
 for (const v of ["week", "games", "record", "study", "ledger"]) {
   els["v-" + v] = mk("v-" + v); els["nav-" + v] = mk("nav-" + v);
 }
@@ -177,10 +177,11 @@ def test_switching_views_leaves_only_the_last_one_visible(node):
     assert out["visible"] == ["v-week"] and out["current"] == ["nav-week"]
 
 
-def test_study_shows_a_placeholder_naming_its_ticket(node):
-    for view, ticket in (("study", 487),):
+def test_no_view_shows_a_placeholder_any_more(node):
+    """Study (#487) and the Ledger (#488) were the last two; render() draws every view's body."""
+    for view in VIEW_IDS:
         out = _router(node, f"r.show(doc, '#/{view}');\nconsole.log(JSON.stringify(state()));")
-        assert f"not built yet (issue #{ticket})" in out["body"], out
+        assert out["body"] == "", out
 
 
 def test_the_routers_views_are_the_pages_views_in_the_pages_order(node):
