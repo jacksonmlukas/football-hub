@@ -1,6 +1,7 @@
 // The page-level backtest statement (#354).
 
 import { esc } from "../format.js";
+import { hrefFor } from "../router.js";
 import { STATE, failureWarn, staleNote, staleOf } from "../state.js";
 
 // The page-level backtest statement (#354). `n_preregistered = 0` qualifies every model number on
@@ -50,3 +51,19 @@ export function backtestStatement(tr, art) {
   };
 }
 // /GUARD
+
+// The one-line pointer on the This week and Games views (#486): the counts the Record's statement
+// states, and where the scoring is. Read off the same artifact and the same two fields as
+// `backtestStatement` (`n_preregistered`, `n_scored`), so the two cannot disagree; the backtest
+// count is what the statement calls "scored after the fact" (scored minus pre-registered). A count
+// that could not be read is said not to be readable, never shown as 0. Returns markup; every
+// figure goes through `esc`.
+export function modelNote(tr) {
+  const link = ` How they score: <a href="${esc(hrefFor("record"))}">Record</a>.`;
+  if (!tr) return "Model numbers: no track record published." + link;
+  const pre = tr.n_preregistered ?? null;
+  const n = tr.n_scored ?? null;
+  if (pre === null) return "Model numbers: the pre-registered count could not be read." + link;
+  const back = typeof n === "number" ? `, ${esc(Math.max(0, n - pre))} backtest` : "";
+  return `Model numbers: ${esc(pre)} pre-registered${back}.` + link;
+}
