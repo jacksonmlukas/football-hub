@@ -222,3 +222,23 @@ def test_the_pinned_clock_is_what_fixes_the_ages(browser, base_url):
     later = capture(browser, base_url, "390", "light", now="2026-10-20T18:00:00Z")
     assert a.read_bytes() == b.read_bytes()
     assert changed_fraction(a, later) > 0, "ages did not respond to the clock"
+
+
+def test_the_social_preview_is_1200_by_630_and_matches_the_committed_image(tmp_path):
+    """#489: `scripts/render_og_image.py` is run, not just kept. Its output is exactly 1200x630
+    on every OS; it is compared with the committed `site/og-image.png` only on darwin, because
+    that file was rendered there and Chromium's text differs by OS (a per-OS copy would add a
+    second PNG to keep in step for no extra protection)."""
+    import subprocess
+
+    out = tmp_path / "og.png"
+    done = subprocess.run([sys.executable, str(ROOT / "scripts" / "render_og_image.py"),
+                           "--out", str(out)], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert Image.open(out).size == (1200, 630)
+    if OS_KEY == "darwin":
+        committed = SITE / "og-image.png"
+        frac = changed_fraction(committed, out, tmp_path / "diff.png")
+        assert frac <= MAX_CHANGED_FRACTION, (
+            f"{frac:.4%} of pixels differ from {committed}; if the page changed on purpose, "
+            "re-run scripts/render_og_image.py and commit the PNG.")

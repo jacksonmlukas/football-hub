@@ -45,6 +45,10 @@ def png_size(path: Path) -> tuple[int, int]:
 def problems(html: str) -> list[str]:
     tags = meta_tags(html)
     found = [f"missing {k}" for _, k in REQUIRED if not tags.get(k)]
+    if not tags.get("description", "").strip():
+        found.append("missing description")
+    if tags.get("og:url") != PAGES_ROOT:
+        found.append(f"og:url is not {PAGES_ROOT}")
     if tags.get("twitter:card") != "summary_large_image":
         found.append("twitter:card is not summary_large_image")
     for k in ("og:image", "twitter:image"):
@@ -85,4 +89,6 @@ def test_the_checks_reject_a_broken_page():
     assert problems(good.replace("summary_large_image", "summary"))
     assert problems(good.replace(f'"og:image" content="{PAGES_ROOT}og-image.png"',
                                  f'"og:image" content="{PAGES_ROOT}other.png"'))
+    assert problems(drop(good, "description")), "dropping the description was not caught"
+    assert problems(good.replace(f'"og:url" content="{PAGES_ROOT}"', '"og:url" content="x"'))
     assert meta_tags("<meta property=x>") == {}
