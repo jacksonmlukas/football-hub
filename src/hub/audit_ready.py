@@ -11,7 +11,8 @@ wrong as an audit gate. The prose test went stale silently; nothing could notice
 join `publish._finished` makes) are the games the published record scored. It never fetches
 nflverse and never opens `data/`, so it answers the same on a machine with the network down.
 
-**What it answers.** Exit 0 only when every predicted `game_id` is among the scored ids.
+**What it answers.** Exit 0 only when every predicted `game_id` is among the scored ids or the record's
+`tied_game_ids` (a tie is dropped from the record, not unplayed).
 Otherwise non-zero, naming each unscored game. There is no postponed special case: a game that
 was moved is named like any other, and what to do about it is the maintainer's call on the list.
 
@@ -87,8 +88,14 @@ def check(season: int, week: int, site: Path) -> list[str]:
     """The predicted games of this week the published record has not scored (empty = ready)."""
     name = publish.preds_name(season, week) + ".json"
     ids = predicted(_read(site / name, name), name)
-    scored = scored_ids(_read(site / "track_record.json", "track_record.json"), season)
-    return [g for g in ids if g not in scored]
+    record = _read(site / "track_record.json", "track_record.json")
+    scored = scored_ids(record, season)
+    tied = record.get("tied_game_ids")
+    # A tie leaves the record by convention (`margin.DROP_TIES`), so it is in no
+    # `scored_game_ids`; a game that finished level has nothing left to wait for. A record
+    # without the field names none, which is the old behaviour (#537).
+    settled = scored | (set(tied) if isinstance(tied, list) else set())
+    return [g for g in ids if g not in settled]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

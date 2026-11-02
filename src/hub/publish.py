@@ -557,6 +557,9 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # being none among the published predictions, and that stays true only as long as
         # something re-derives it (#52).
         n_tied=_n_tied(finished),
+        # Which games, for `hub.audit_ready` (#537): a tie is in no season's `scored_game_ids`,
+        # so without the ids a week holding one could never read as scored.
+        tied_game_ids=sorted(set(finished.filter(pl.col("result") == 0)["game_id"].to_list())),
         # Counted from the commit history (#422), not asserted: see `hub.prereg`. None is
         # "could not tell", which the page words differently from 0 -- a literal 0 here for
         # four weeks called 64 predictions committed before kickoff a backtest.
