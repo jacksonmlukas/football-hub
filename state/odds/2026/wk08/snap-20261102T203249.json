@@ -1,0 +1,21 @@
+{
+ "captured_at": "2026-11-02T20:32:49.853204",
+ "rows": [
+  {
+   "captured_at": "2026-11-02T20:32:49.853204",
+   "close_spread": 3.0,
+   "close_total": 46.5,
+   "game_id": "2026_08_CHI_SEA",
+   "ml_away_price": 153.0,
+   "ml_home_price": -177.0,
+   "ml_home_prob": 0.6168582375478927,
+   "polls_unmoved": 1,
+   "spread_price": -118.0,
+   "spread_price_away": -104.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-02T20:32:49.853204"
+  }
+ ],
+ "season": 2026,
+ "week": 8
+}
