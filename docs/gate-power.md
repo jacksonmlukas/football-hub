@@ -4711,6 +4711,56 @@ table, **0.0008** against 0.0007 and **0.0075** against 0.0076, by separately se
 Run 2026-10-06, `gate_horizon.py --rule16 --trials 40000 --workers 6`, 15 minutes, worst SE of
 any reported rate 0.0020; raw counts not committed (`$TMPDIR/418-run`).
 
+**Restated 2026-11-01 (#536, rule 13; the attribution above is kept).** `gate_horizon.py --rule16
+--trials 40000 --workers 6` re-run alone, no code change, on main carrying #520's corrected SE.
+The harness records two rules in one pass: `abstain` is (A), the rule the 2026-10-06 table was
+computed under, and `ship` is (C), what `gate` returns now (#381). **The like-for-like comparison
+is (A)**: the old table's "power" column is (A) (its "ship" was (A) on that date), so reading the
+new `ship` column against it would compare two rules. (A), old → new:
+
+| weekly, δ=0.3, k=4 | null (A) | power (A) | interval alone | null (C), new | power (C), new |
+|---|---|---|---|---|---|
+| 1. rule-16's process | 0.0162 → 0.0142 | 0.1937 → **0.1685** | 0.257 → 0.1970 | 0.0228 | 0.1970 |
+| 2. + bootstrap 4000 | 0.0198 → 0.0173 | 0.1895 → 0.1664 | 0.254 → 0.1954 | 0.0258 | 0.1953 |
+| 3. + m=20 | 0.0120 → 0.0111 | 0.1522 → 0.1376 | 0.254 → 0.1918 | 0.0243 | 0.1916 |
+| 4. + estimated τ | 0.0138 → 0.0129 | 0.1420 → 0.1271 | 0.228 → 0.1707 | 0.0261 | 0.1706 |
+| 5. + within-season spread (= #388's cell) | 0.0001 → 0.0001 | 0.0008 → **0.0008** | 0.135 → 0.1006 | 0.0094 | 0.0614 |
+
+| draft, δ=2.0, k=4 | null (A) | power (A) | interval alone | null (C), new | power (C), new |
+|---|---|---|---|---|---|
+| 1. rule-16's process | 0.0107 → 0.0097 | 0.0350 → **0.0321** | 0.080 → 0.0582 | 0.0240 | 0.0579 |
+| 2. + bootstrap 4000 | 0.0121 → 0.0113 | 0.0348 → 0.0316 | 0.079 → 0.0577 | 0.0247 | 0.0574 |
+| 4. + estimated τ | 0.0077 → 0.0074 | 0.0306 → 0.0286 | 0.097 → 0.0701 | 0.0243 | 0.0692 |
+| 5. + within-season spread (= #388's cell) | 0.0014 → 0.0014 | 0.0075 → **0.0075** | 0.093 → 0.0671 | 0.0204 | 0.0606 |
+
+(The "interval alone" column is the old table's against the new run's. The new run's
+"null (C)" and "power (C)" are `gate`'s own verdict, which the old table did not carry; they have
+no old figure to set beside.)
+
+**Attribution, (A), same step order** (weekly power falls 0.1677, 0.1685 → 0.0008): the
+**within-season spread is 0.1263 (75%)**, m=40 to 20 is 0.0288 (17%), the estimated τ 0.0106 (6%),
+the bootstrap 0.0020 (1%, about 1 SE of a difference: not distinguished, as before). Old → new:
+**73% → 75%, 19% → 17%, 5% → 6%, 2% → 1%**. Draft power falls 0.0246 (0.0321 → 0.0075): spread
+0.0211 (**84% → 86%**), τ 0.0030 (**15% → 12%**), bootstrap 0.0005 (2%; not distinguished). The
+ordering and the conclusion are unchanged; the shares moved by at most 3 points, and the 0.0008 /
+0.0075 endpoints reproduce to the digit. **Under (C), the shipped rule, weekly** power falls
+0.1356 (0.1970 → 0.0614): spread 0.1091 (**81%**), τ 0.0210 (16%), m 0.0037 (3%), bootstrap 0.0017
+(1%). **Under (C), draft, there is no loss to apportion:** (C)'s power is 0.0579 at step 1 and
+0.0606 at step 5 (it rises 0.0118 at the τ step and falls 0.0086 at the spread step), so a net
+rise, and per-step shares of a total near zero are not reported. This is the reading of #529:
+(C) recovers what the spread cost (A), because (C) does not let one tie veto. (C) at #388's cell
+here is 0.0204 null / 0.0606 power, against #529's 0.0204 / 0.0596 (a separately seeded run).
+Run 2026-11-01, worst SE of any reported rate 0.0020.
+
+**Decisions resting on the moved attribution figures (none changed).** ADR-0019's 2026-10-06
+paragraph quotes "73% is that within-season spread, 19% is m, 5% the estimated τ, 2% the shipped
+bootstrap" (its line "Of the 0.193 weekly power lost between the two processes"), which this
+restatement moves to 75 / 17 / 6 / 1 on (A); that sentence supports the decision that **#388's
+estimated process, not rule-16's stand-in, is the baseline #381 reads**, and the finding that the
+draft rule-16 exemption stands at 0.0075. Neither depends on the percentages' exact values (the
+ordering holds and the within-season spread is still three quarters or more of the gap); the
+ADR's quotation is not edited here.
+
 **Original paragraph, as first written (2026-10-06, #388), kept as the record of what was
 believed before #418:**
 
