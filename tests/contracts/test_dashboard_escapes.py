@@ -627,7 +627,9 @@ def test_the_numbers_are_shown_in_the_branch_every_artifact_actually_lands_in(no
     visible per season -- which is a different claim from presenting a backtest as a record.
     The sentence that refuses the second one stays exactly where it was."""
     out = _record_body(node, PER_SEASON)
-    assert "backtest, not a record" in out, "the framing that makes showing these honest"
+    # The sentence that refuses "a record" is the page-level statement's, in the same section
+    # (#486); the body states the counts it is made of as chips.
+    assert "0 pre-registered" in out and "19 backtest" in out, "the counts that make showing these honest"
     assert "0.5563" in out and "0.4111" in out, "per-season metrics are still withheld"
     assert "2025" in out and "2026" in out
     assert "<svg" in out, "no calibration curve at all"
@@ -640,7 +642,7 @@ def test_a_pre_registered_record_reads_the_same_way(node):
     """Same numbers, different framing: once predictions are pre-registered the panel stops
     calling itself a backtest and says how many were."""
     out = _record_body(node, dict(PER_SEASON, n_preregistered=19))
-    assert "backtest" not in out
+    assert "not a record" not in out and "0 backtest" in out
     assert "19 pre-registered" in out
     assert "0.5563" in out and "0.4111" in out and "<svg" in out
 
@@ -648,8 +650,7 @@ def test_a_pre_registered_record_reads_the_same_way(node):
 def test_a_partly_pre_registered_record_says_how_many_are_which(node):
     """#422: 64 pre-registered and 16 backfilled must not share one framing."""
     out = _record_body(node, dict(PER_SEASON, n_scored=80, n_preregistered=64))
-    assert "64 pre-registered, 80 scored" in out
-    assert "16 scored after the" in out and "a backtest, not a record" in out
+    assert "64 pre-registered" in out and "16 backtest" in out
 
 
 def test_an_unknown_pre_registration_count_is_not_rendered_as_zero(node):
@@ -666,7 +667,8 @@ def test_an_artifact_written_before_the_split_shows_its_pooled_numbers(node):
     a panel that needs the new key would go blank on the deploy that shipped it. Nothing
     here can unpool a pooled curve, so it is shown as it is rather than relabelled."""
     out = _record_body(node, LEGACY_RECORD)
-    assert "backtest, not a record" in out
+    assert "0 pre-registered" in out and "16 backtest" in out
+    assert "When we said" not in out, "a calibration sentence drawn from a pool"
     assert "0.5563" in out and "<svg" in out
     assert "<th>season</th>" not in out, "invented a per-season split the artifact lacks"
 
@@ -2525,11 +2527,14 @@ def _fresh_record(**kw) -> dict:
     return {**committed, "generated_at": _days_ago(1 / 1440), **kw}
 
 
-def test_the_page_renders_the_statement_once_under_the_header_before_every_zone():
+def test_the_page_renders_the_statement_once_under_the_records_heading():
+    """#486: the statement moved from under the header into the Record view, between the panel's
+    heading and its body, and is still said once. It is not in the other views."""
     layout = _layout(PAGE.read_text())
     slot = layout["st-backtest"]
-    assert slot["in"] == [] and not slot["hidden"], "outside every zone and panel, never hidden"
-    assert layout["subtitle"]["order"] < slot["order"] < layout["z-week"]["order"]
+    assert slot["in"][-2:] == ["z-record", "p-record"] and not slot["hidden"]
+    assert "v-record" in slot["in"] and "v-week" not in slot["in"]
+    assert layout["zh-record"]["order"] < slot["order"]
     assert len([i for i in layout if i.startswith("st-")]) == 1
 
 
