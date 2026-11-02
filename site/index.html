@@ -314,6 +314,27 @@
   .gt-pop dt { color: var(--muted); }
   .gt-pop dd { margin: 0; overflow-wrap: anywhere; }
   .gt-vs { margin-top: 0.15rem; }
+  /* The Ledger (#488): one row per verdict. The verdict is a block above the name at every
+     width (a phone is the width a reader meets first), set in the display face. Colours are the
+     #478 tokens only: loss for a removal, turf for what stayed, muted for no effect, the
+     unconfirmed ink for a claim that is not established. */
+  .lg-intro { margin: 0.6rem 0 0; font-size: 0.9rem; line-height: 1.5; }
+  .lg-list { list-style: none; margin: 0.8rem 0 0; padding: 0; }
+  .lg-row { display: grid; gap: 0.1rem; padding: 0.6rem 0; border-top: 1px solid var(--line);
+            min-width: 0; }
+  .lg-verdict { display: block; font: 700 1.25rem/1.1 var(--font-display); letter-spacing: 0.03em;
+                text-transform: uppercase; }
+  .lg-loss { color: var(--bad); }
+  .lg-kept { color: var(--turf); }
+  .lg-null { color: var(--muted); }
+  .lg-unconfirmed { color: var(--st-unc-ink); }
+  .lg-name { font-weight: 600; overflow-wrap: anywhere; }
+  .lg-figure { color: var(--muted); font-size: 0.82rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .lg-links { font-size: 0.8rem; display: flex; gap: 0.75rem; }
+  .lg-sub { font: 700 1.1rem/1.2 var(--font-display); margin: 1.2rem 0 0.2rem; letter-spacing: 0.02em; }
+  .lg-steps { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.5; }
+  .lg-method { margin: 0.3rem 0 0; font-size: 0.88rem; line-height: 1.5; }
+
   /* Record (#486). The counts as chips, then one sentence at reading size, then the curve. The
      bullet rows draw the claim as a tick, its tolerance as a band and the measured coverage as the
      bar; colour is tokens only (turf for the measure, the accent for the claim). Nothing animates,
@@ -429,7 +450,7 @@
 </div>
 </div>
 
-<!-- Views four and five hold a placeholder sentence (router.js draws it) until #487 and #488. -->
+<!-- View four holds a placeholder sentence (router.js draws it) until #487. -->
 <div class="view" id="v-study">
 <div class="zone" id="z-study" role="region" aria-labelledby="zh-study">
   <div class="zone-head"><h2 class="zone-title" id="zh-study">Study</h2>
@@ -442,7 +463,9 @@
 <div class="zone" id="z-ledger" role="region" aria-labelledby="zh-ledger">
   <div class="zone-head"><h2 class="zone-title" id="zh-ledger">Ledger</h2>
     <span class="zone-when">what was measured and cut</span></div>
-  <div class="view-body"></div>
+  <div class="grid">
+    <section id="p-ledger" class="wide"><h3>What got measured, and what got cut <span class="age"></span></h3><div class="body"></div></section>
+  </div>
 </div>
 </div>
 

@@ -8,6 +8,7 @@ import { panel } from "./dom.js";
 import { ago, cap, pct } from "./format.js";
 import { boardBody } from "./panels/board.js";
 import { statusLine, statusRecords } from "./panels/footer.js";
+import { ledgerBody } from "./panels/ledger.js";
 import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
@@ -141,6 +142,16 @@ export async function render() {
                         html: trackRecordBody(tr, trArt) });
   } else {
     panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
+  }
+
+  // --- the ledger: every verdict, drawn from the artifact and nothing else (#488)
+  const led = await load("ledger");
+  const ledArt = findArt(man, "ledger");
+  if (led && Array.isArray(led.rows)) {
+    panel("p-ledger", { age: `${led.rows.length} entries · ${ago(led.generated_at)}`,
+                        stale: staleOf(ledArt), html: ledgerBody(led) });
+  } else {
+    panel("p-ledger", { age: "", warn: failureWarn(ledArt, "No ledger published yet.") });
   }
 
   // --- survivor
