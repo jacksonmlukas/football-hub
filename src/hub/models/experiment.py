@@ -1241,8 +1241,13 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     whose pooled interval crosses zero is SHOW. **Every sentence carries the count** ("3
     resolved of 4, 1 abstained"), never a bare verdict, and `GateRun.resolved`/`.abstained` and
     the ledger entry carry it as numbers. `docs/gate-power.md` (*(C) before it lands*) has the
-    null (0.014 weekly, 0.029 draft at k=4) and power (0.083 / 0.083); ADR-0019's 2026-10-06
-    amendment has the decision. #375's posterior supersedes this rule when it lands.
+    null and power; ADR-0019's 2026-10-06 amendment has the decision. #375's posterior
+    supersedes this rule when it lands.
+
+    *Restated 2026-11-01 (#529, #536; prior figures kept).* On the corrected SE (#520) the null
+    is **0.0095 weekly, 0.0204 draft** and the power **0.060 / 0.060** at k=4 (weekly 260 rows,
+    delta 0.3; draft 20 rooms, delta 2.0). As first written, before the correction: null 0.014
+    weekly, 0.029 draft; power 0.083 / 0.083.
 
     **A gate that measured no ceiling is NOT-RUNNABLE in both directions, since #363 (S6),
     option 1.** Before this, the precondition fired only when *both* the MDE and the ceiling
