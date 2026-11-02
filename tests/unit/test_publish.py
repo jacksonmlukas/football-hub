@@ -642,7 +642,7 @@ def _names(season=2026, week=1, base=None, out=None):
 def test_every_panel_the_page_reads_is_declared_once():
     """The manifest's order is the page's order, and adding a panel is one list entry."""
     assert _names() == ["preds_2026_wk01", "track_record", "live", "roster",
-                        "draft_board", "survivor", "ledger"]
+                        "draft_board", "survivor", "ledger", "leaderboard"]
 
 
 @pytest.mark.parametrize("name", _names())
@@ -1194,8 +1194,12 @@ def _producers_that_build_a_payload():
     fixture cannot empty -- run here it would honestly publish its rows over the stand-in.
     The rule is asserted for it against a docs root that is missing, in
     `test_publish_ledger.test_a_missing_docs_tree_keeps_last_good`.
+
+    `leaderboard` (#543) is excluded because its source is a git ref of the checkout this runs
+    in, which differs by machine; its last-good rule is asserted against injected sources in
+    `test_publish_leaderboard.py`.
     """
-    skip = {"live", "draft_board", "ledger"}
+    skip = {"live", "draft_board", "ledger", "leaderboard"}
     return [a.name for a in publish.artifacts(2026, 1) if a.name not in skip]
 
 
