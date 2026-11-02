@@ -37,11 +37,9 @@ export const hrefFor = id => `#/${id}`;
 export const placeholderHtml = view =>
   `<p class="empty">The ${esc(view.label)} view is not built yet (issue #${view.ticket}).</p>`;
 
-// Which views have their own renderer. The other four are drawn by `render()` into their
+// Which views have their own renderer. Every view is drawn by `render()` into their
 // panels, so showing them is only a matter of unhiding.
-const RENDERERS = {
-  ledger: el => { el.innerHTML = placeholderHtml(VIEWS[4]); },
-};
+const RENDERERS = {};
 
 // Show exactly one view: hide the rest, mark the matching link current, and run the view's
 // renderer into its `.view-body` if it has one. Returns the id shown.

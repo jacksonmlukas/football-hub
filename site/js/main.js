@@ -155,6 +155,16 @@ export async function render() {
     panel("p-study", { age: "", html: studyBody(null) });
   }
 
+  // --- the ledger: every verdict, drawn from the artifact and nothing else (#488)
+  const led = await load("ledger");
+  const ledArt = findArt(man, "ledger");
+  if (led && Array.isArray(led.rows)) {
+    panel("p-ledger", { age: `${led.rows.length} entries · ${ago(led.generated_at)}`,
+                        stale: staleOf(ledArt), html: ledgerBody(led) });
+  } else {
+    panel("p-ledger", { age: "", warn: failureWarn(ledArt, "No ledger published yet.") });
+  }
+
   // --- survivor
   const sArt = findArt(man, "survivor");
   const surv = await load("survivor");

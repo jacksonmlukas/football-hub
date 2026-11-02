@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,7 +29,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SITE = ROOT / "site"
+# The excision harness in test_dashboard_escapes.py hands a child run a mutated copy of the page
+# through this variable, so a guard marked in `site/js/panels/study.js` is proved by deleting it.
+SITE = Path(os.environ.get("HUB_DASHBOARD_PAGE") or ROOT / "site" / "index.html").parent
 JS = SITE / "js"
 FIXTURE = ROOT / "tests" / "fixtures" / "site" / "leaderboard" / "leaderboard.json"
 RENDER = Path(__file__).resolve().parent / "dashboard_render.mjs"
