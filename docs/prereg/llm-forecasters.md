@@ -242,4 +242,4 @@ Weekly numbers are descriptive only; the confirmatory (H1) and secondary (H2) an
 
 | Date | Change | Reason | Affects confirmatory tests? |
 | --- | --- | --- | --- |
-|  |  |  |  |
+| 2026-11-02 | The forecast workflow's cron minutes moved off the round quarter-hours (13:52, then 7, 22, 37, 52 past from 14:07 to 16:22 UTC), and a second trigger was added: a local scheduled task on the maintainer's Mac that runs `gh workflow run forecast.yml` on Thursday, Sunday and Monday mornings ET. | 0 of 13 scheduled runs fired on 2026-11-02; on 2026-10-31 and 2026-11-01, 3 of 13 fired each day, hours late (#544). Forecasting itself is unchanged: the same `should-run` gate, the same 09:30-11:30 ET window, and a done day is never re-run. | No |
