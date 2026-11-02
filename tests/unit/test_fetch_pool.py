@@ -731,6 +731,27 @@ def test_an_unset_host_is_reported_before_any_cookie_is_read(store, session, tra
     assert pool.URL_ENV in capsys.readouterr().err
 
 
+def test_the_transport_never_follows_a_redirect_with_the_cookie(monkeypatch):
+    """The session cookie goes to the host the operator configured and nowhere else (#537).
+    `requests` follows a 302 on its own, to wherever it points; the transport asks not to and
+    says a redirect is an answer it did not expect (usually an expired session's login page)."""
+    import requests
+    seen = {}
+
+    class _Redirect:
+        status_code = 302
+        def raise_for_status(self): pass
+        def json(self): raise AssertionError("a redirect has no body to read")
+
+    def _get(url, **kw):
+        seen.update(kw)
+        return _Redirect()
+    monkeypatch.setattr(requests, "get", _get)
+    with pytest.raises(RuntimeError, match="redirect"):
+        pool._transport("https://pool.example.test/api/pools/1", COOKIE)
+    assert seen["allow_redirects"] is False
+
+
 def test_the_transport_refuses_a_live_call_from_the_default_suite(monkeypatch):
     """`hub.fetch.cfbd`'s guard, at the one function here that touches the network."""
     import requests
