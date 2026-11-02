@@ -183,10 +183,9 @@ def changed_fraction(a: Path, b: Path, diff_to: Path | None = None) -> float:
     return changed / (ia.size[0] * ia.size[1])
 
 
-# The views with content of their own today. Study holds one placeholder sentence until #487, and
-# gets its baselines then. This week keeps the unsuffixed names it has
+# The views with content of their own today: all five. This week keeps the unsuffixed names it has
 # always had, so its history in git is one file per width and scheme.
-VIEW_NAMES = ("week", "games", "record", "ledger")
+VIEW_NAMES = ("week", "games", "record", "study", "ledger")
 
 
 @pytest.mark.parametrize("view", VIEW_NAMES)

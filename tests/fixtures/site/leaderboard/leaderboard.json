@@ -1,0 +1,359 @@
+{
+ "contestants": [
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.021,
+    "games": 28,
+    "hi": 0.039,
+    "lo": 0.003,
+    "weeks": 2
+   },
+   "contestant": "llm1:blind",
+   "log_loss_diff": {
+    "estimate": 0.061,
+    "games": 28,
+    "hi": 0.113,
+    "lo": 0.009,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.003,
+    "games": 28,
+    "hi": 0.01,
+    "lo": -0.004,
+    "weeks": 2
+   },
+   "contestant": "llm1:line_aware",
+   "log_loss_diff": {
+    "estimate": 0.008,
+    "games": 28,
+    "hi": 0.029,
+    "lo": -0.013,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 27,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.03,
+    "games": 27,
+    "hi": 0.052,
+    "lo": 0.008,
+    "weeks": 2
+   },
+   "contestant": "llm2:blind",
+   "log_loss_diff": {
+    "estimate": 0.087,
+    "games": 27,
+    "hi": 0.147,
+    "lo": 0.027,
+    "weeks": 2
+   },
+   "missing": 1,
+   "missing_games": [
+    "2026_10_AAA_BBB"
+   ],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 27,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": -0.001,
+    "games": 27,
+    "hi": 0.006,
+    "lo": -0.008,
+    "weeks": 2
+   },
+   "contestant": "llm2:line_aware",
+   "log_loss_diff": {
+    "estimate": -0.004,
+    "games": 27,
+    "hi": 0.015,
+    "lo": -0.023,
+    "weeks": 2
+   },
+   "missing": 1,
+   "missing_games": [
+    "2026_10_AAA_BBB"
+   ],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.015,
+    "games": 28,
+    "hi": 0.032,
+    "lo": -0.002,
+    "weeks": 2
+   },
+   "contestant": "llm3:blind",
+   "log_loss_diff": {
+    "estimate": 0.044,
+    "games": 28,
+    "hi": 0.093,
+    "lo": -0.005,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 26,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.004,
+    "games": 26,
+    "hi": 0.012,
+    "lo": -0.004,
+    "weeks": 2
+   },
+   "contestant": "llm3:line_aware",
+   "log_loss_diff": {
+    "estimate": 0.012,
+    "games": 26,
+    "hi": 0.036,
+    "lo": -0.012,
+    "weeks": 2
+   },
+   "missing": 2,
+   "missing_games": [
+    "2026_10_AAA_BBB",
+    "2026_11_AAA_BBB"
+   ],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.041,
+    "games": 28,
+    "hi": 0.067,
+    "lo": 0.015,
+    "weeks": 2
+   },
+   "contestant": "llm4:blind",
+   "log_loss_diff": {
+    "estimate": 0.119,
+    "games": 28,
+    "hi": 0.19,
+    "lo": 0.048,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.005,
+    "games": 28,
+    "hi": 0.014,
+    "lo": -0.004,
+    "weeks": 2
+   },
+   "contestant": "llm4:line_aware",
+   "log_loss_diff": {
+    "estimate": 0.015,
+    "games": 28,
+    "hi": 0.042,
+    "lo": -0.012,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 12,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.003,
+    "games": 12,
+    "hi": 0.013,
+    "lo": -0.007,
+    "weeks": 2
+   },
+   "contestant": "llm4+retrieval:line_aware",
+   "log_loss_diff": {
+    "estimate": 0.01,
+    "games": 12,
+    "hi": 0.04,
+    "lo": -0.02,
+    "weeks": 2
+   },
+   "missing": 8,
+   "missing_games": [
+    "2026_10_AAA_BBB",
+    "2026_11_AAA_BBB",
+    "2026_12_AAA_BBB",
+    "2026_13_AAA_BBB",
+    "2026_14_AAA_BBB",
+    "2026_15_AAA_BBB",
+    "2026_16_AAA_BBB",
+    "2026_17_AAA_BBB"
+   ],
+   "scorable": 20
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.012,
+    "games": 28,
+    "hi": 0.026,
+    "lo": -0.002,
+    "weeks": 2
+   },
+   "contestant": "hub",
+   "log_loss_diff": {
+    "estimate": 0.036,
+    "games": 28,
+    "hi": 0.076,
+    "lo": -0.004,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.052,
+    "games": 28,
+    "hi": 0.082,
+    "lo": 0.022,
+    "weeks": 2
+   },
+   "contestant": "home_constant",
+   "log_loss_diff": {
+    "estimate": 0.152,
+    "games": 28,
+    "hi": 0.232,
+    "lo": 0.072,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.03,
+    "games": 28,
+    "hi": 0.04,
+    "lo": 0.02,
+    "weeks": 2
+   },
+   "brier_diff": {
+    "estimate": 0.068,
+    "games": 28,
+    "hi": 0.101,
+    "lo": 0.035,
+    "weeks": 2
+   },
+   "contestant": "coin_flip",
+   "log_loss_diff": {
+    "estimate": 0.201,
+    "games": 28,
+    "hi": 0.291,
+    "lo": 0.111,
+    "weeks": 2
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 28
+  }
+ ],
+ "first_scored_week": 10,
+ "h2_implementation": "hub.forecasters.score@58fbfb71d617",
+ "interim": true,
+ "label": "Interim: descriptive, not a test.",
+ "market_snapshot_ids": [
+  "odds-0a1b2c3d4e5f"
+ ],
+ "missing_games": [],
+ "packet_refused": 0,
+ "scored_weeks": [
+  10,
+  11
+ ],
+ "season": 2026,
+ "through_week": 11
+}
