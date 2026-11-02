@@ -217,9 +217,23 @@ def test_for_roster_degrades_when_the_schedule_cannot_be_read(monkeypatch):
 def test_for_roster_ranks_the_open_week(monkeypatch):
     from hub import market_row, schedule
     monkeypatch.setattr(schedule, "priced_games", lambda *a, **k: _games())
-    monkeypatch.setattr(market_row, "captures", lambda season, base: SEEN)
+    monkeypatch.setattr(market_row, "captures_why", lambda season, base: (SEEN, None))
     s = stream.for_roster(_roster(), season=2026, at=AT)
     assert s["week"] == 5 and _order(s["dst"])[0] == ("EEE", 1)
+
+
+def test_for_roster_with_a_failed_store_shows_its_reason_not_an_absent_capture(monkeypatch):
+    from hub import schedule, store
+
+    def boom(*a, **k):
+        raise OSError("disk gone")
+    monkeypatch.setattr(schedule, "priced_games", lambda *a, **k: _games())
+    monkeypatch.setattr(store, "lines", boom)
+    s = stream.for_roster(_roster(), season=2026, at=AT)
+    reasons = {r["team"]: r["missing"] for r in s["dst"] if r["team"] in {"AAA", "BBB"}}
+    assert reasons and all("capture store was unreadable (OSError)" in v
+                           for v in reasons.values())
+    assert not any("not in the store" in str(r["missing"]) for r in s["dst"] + s["k"])
 
 
 def test_for_roster_with_no_open_week_says_so(monkeypatch):

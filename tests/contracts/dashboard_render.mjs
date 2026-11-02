@@ -32,15 +32,18 @@ globalThis.fetch = async (url) => {
 
 const { render } = await import(pathToFileURL(`${cfg.site}/js/main.js`).href);
 await render();
-const out = { footer: els.footer.innerHTML, panels: {} };
+const out = { footer: els.footer.innerHTML, panels: {}, notes: {},
+              head: { text: els["week-head"]?.textContent ?? "", hidden: els["week-head"]?.hidden } };
 for (const [id, e] of Object.entries(els)) {
   if (id.startsWith("p-")) {
     out.panels[id] = {
       body: e._c[".body"]?.innerHTML ?? "", cls: e._c[".body"]?.className ?? "",
       age: e._c[".age"]?.textContent ?? "",
+      hidden: e.hidden,
     };
   }
   // A statement slot (#354) is its own element, not a panel's child: it carries the state class.
+  if (id.startsWith("mn-")) out.notes[id] = e.innerHTML;
   if (id.startsWith("st-")) out.panels[id] = { body: e.innerHTML, cls: e.className, age: "" };
 }
 console.log(JSON.stringify(out));

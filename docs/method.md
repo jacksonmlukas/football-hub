@@ -9,6 +9,9 @@ Almost every rule below exists because a specific mistake was made here first. T
 point of the page: the method is not recited from a textbook, it is what is left after the
 errors were caught. Each rule names the incident that produced it.
 
+The live version of the page is the [Ledger view](https://jacksonmlukas.github.io/football-hub/#/ledger),
+which shows one row per verdict, each linked to the ADR behind it.
+
 ---
 
 ## Two questions, and they are not interchangeable
@@ -811,7 +814,7 @@ The most useful artifact in this repo is the record of what was measured and the
 
 | | |
 |---|---|
-| The two tests, defined | [`CONTEXT.md`](../CONTEXT.md) |
+| The two tests, defined | [`GLOSSARY.md`](../GLOSSARY.md) |
 | Six screens, five null | [signal-screens.md](signal-screens.md) |
 | The one positive screen | [snap-trend-signal.md](snap-trend-signal.md) |
 | The one adopted model | [weekly-injury.md](weekly-injury.md) |

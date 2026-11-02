@@ -9,7 +9,7 @@ It lived as `hub.draft.state.player_key`: a **private** helper in the module tha
 players have been taken, imported by ten modules across three packages, two of them reaching
 for it inside a function body -- which is what a caller does when an import feels wrong. It is
 not draft state. It is how this repo decides that two spellings are one player, which is a
-domain concept, and it now has a name in `CONTEXT.md` and a module of its own.
+domain concept, and it now has a name in `GLOSSARY.md` and a module of its own.
 
 A leaf on purpose: it imports nothing from `hub`, so anything may import it without dragging
 a board builder along.

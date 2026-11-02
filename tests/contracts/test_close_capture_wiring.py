@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,8 +53,123 @@ def test_an_unknown_is_not_a_reason_to_spend(tmp_path):
     assert _run(tmp_path, due_exit=2, league="nfl") == []
 
 
-def test_a_college_window_never_dispatches(tmp_path):
-    assert _run(tmp_path, due_exit=0, league="cfb") == []
+def test_a_due_capture_in_the_college_window_dispatches_too(tmp_path):
+    """A December Saturday NFL game is played inside the college loop (#532)."""
+    assert _run(tmp_path, due_exit=0, league="cfb") == ["odds-close.yml"]
+
+
+def test_a_college_window_with_nothing_due_dispatches_nothing(tmp_path):
+    assert _run(tmp_path, due_exit=1, league="cfb") == []
+
+
+# --- the two-loop case (#532) ------------------------------------------------------------
+#
+# The stub `uv` answers `hub.closing --due` with the REAL `hub.closing.is_due` over one NFL
+# Saturday kickoff and an attempt file in a scratch directory, and the dispatch command runs the
+# REAL `hub.closing.capture` against the same file with a counting fetch. So what keeps a
+# second hook from capturing again is the production attempt record and the weekly cap, not a
+# rule of the harness.
+
+_KICK = "2026-12-12T20:00:00"                         # a Saturday, inside the college window
+_NOW = "2026-12-12T19:50:00"                          # ten minutes before kickoff
+
+_HARNESS = """
+import sys
+from datetime import datetime
+from pathlib import Path
+import polars as pl
+from hub import closing
+
+work = Path(sys.argv[1])
+mode = sys.argv[2]
+now = datetime.fromisoformat("NOW")
+kicks = pl.DataFrame({"game_id": ["2026_14_AAA_BBB"], "kickoff": [datetime.fromisoformat("KICK")]})
+closing.ATTEMPTS_FILE = work / "attempts.json"
+if mode == "due":
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.replace(tzinfo=tz)
+    closing.datetime = _Clock
+    closing.kickoff_table = lambda season: kicks
+    closing.store.lines = lambda season, base=None: pl.DataFrame()
+    sys.exit(0 if closing.is_due() else 1)
+calls = work / "fetch-calls"
+def fetch(*a, **k):
+    with calls.open("a") as f:
+        f.write("call\\n")
+closing.capture(now=now, kickoffs=kicks, archive=pl.DataFrame(), fetch=fetch,
+                state_path=work / "quota.json", attempts_path=work / "attempts.json")
+"""
+
+
+def _two_loop_env(tmp_path: Path) -> dict[str, str]:
+    harness = tmp_path / "harness.py"
+    harness.write_text(_HARNESS.replace("NOW", _NOW).replace("KICK", _KICK))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    uv = bin_dir / "uv"
+    uv.write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" "{harness}" "{tmp_path}" due\n')
+    uv.chmod(0o755)
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path),
+            "PYTHONPATH": str(ROOT / "src")}
+
+
+def _capture_cmd(tmp_path: Path) -> Path:
+    """What the dispatched `odds-close.yml` run does: `hub.closing.capture`, for real."""
+    cmd = tmp_path / "capture.sh"
+    cmd.write_text(f'#!/usr/bin/env bash\necho run >> "{tmp_path}/runs"\nexec "{sys.executable}" "{tmp_path}/harness.py" '
+                   f'"{tmp_path}" capture\n')
+    cmd.chmod(0o755)
+    return cmd
+
+
+def _runs(tmp_path: Path) -> int:
+    f = tmp_path / "runs"
+    return len(f.read_text().splitlines()) if f.exists() else 0
+
+
+def _fetches(tmp_path: Path) -> int:
+    f = tmp_path / "fetch-calls"
+    return len(f.read_text().splitlines()) if f.exists() else 0
+
+
+def _hook(env: dict[str, str], league: str, dispatch: Path) -> None:
+    subprocess.run([str(DISPATCH), str(dispatch)], env={**env, "LIVE_LOOP_LEAGUE": league},
+                   check=True, capture_output=True, text=True, timeout=60)
+
+
+def test_a_saturday_nfl_kickoff_in_the_college_loop_gets_one_capture(tmp_path):
+    _hook(_two_loop_env(tmp_path), "cfb", _capture_cmd(tmp_path))
+    assert _fetches(tmp_path) == 1
+
+
+@pytest.mark.parametrize("order", [("cfb", "nfl"), ("nfl", "cfb")])
+def test_both_loops_hooks_for_the_same_kickoff_capture_once(tmp_path, order):
+    """Each hook fires after the other's dispatched run has landed its attempt."""
+    env = _two_loop_env(tmp_path)
+    for league in order:
+        _hook(env, league, _capture_cmd(tmp_path))
+    assert _runs(tmp_path) == 1, "the second hook dispatched a window already spent"
+    assert _fetches(tmp_path) == 1
+
+
+def test_two_hooks_that_both_saw_it_due_still_capture_once(tmp_path):
+    """The hand-over overlap: both ask before either run lands, so both dispatch. The runs are
+    serialised (`odds-close.yml` never cancels); the second finds the window spent."""
+    env = _two_loop_env(tmp_path)
+    queue = tmp_path / "queue.sh"
+    queued = tmp_path / "queued"
+    queue.write_text(f'#!/usr/bin/env bash\necho dispatched >> "{queued}"\n')
+    queue.chmod(0o755)
+    for league in ("cfb", "nfl"):
+        _hook(env, league, queue)
+    runs = queued.read_text().splitlines()
+    assert len(runs) == 2, "both hooks should have dispatched before either run landed"
+    for _ in runs:
+        subprocess.run([str(_capture_cmd(tmp_path))], env=env, check=True,
+                       capture_output=True, text=True, timeout=60)
+    assert _fetches(tmp_path) == 1
 
 
 def test_the_loop_runs_the_hook_before_the_refresh_so_an_espn_outage_cannot_skip_it():

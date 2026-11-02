@@ -1,0 +1,29 @@
+{
+ "captured_at": "2026-10-26T00:08:19.884592",
+ "rows": [
+  {
+   "captured_at": "2026-10-26T00:08:19.884592",
+   "close_spread": 3.0,
+   "close_total": 43.5,
+   "game_id": "2026_07_KC_SEA",
+   "ml_home_prob": 0.5940252776713902,
+   "polls_unmoved": 1,
+   "spread_price": -107.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-26T00:08:19.884592"
+  },
+  {
+   "captured_at": "2026-10-26T00:08:19.884592",
+   "close_spread": -4.5,
+   "close_total": 44.0,
+   "game_id": "2026_07_DAL_PHI",
+   "ml_home_prob": 0.33635187580853815,
+   "polls_unmoved": 5,
+   "spread_price": -109.99999999999999,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-24T17:19:31.863428"
+  }
+ ],
+ "season": 2026,
+ "week": 7
+}

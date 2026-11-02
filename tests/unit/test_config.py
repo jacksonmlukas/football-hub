@@ -1118,8 +1118,30 @@ def test_the_repos_own_conf_still_agrees_with_the_dataclass_defaults():
     (`docs/td-dispersion.md`): the gate of that document read ADOPT, six of six held-out seasons.
     Restoring the old three values to the live constants reproduces `f6b8c28a` and `4fad9f78`,
     so no other declared constant moved.
+
+    **Moved again 2026-10-18 (#375): `839ceda9` -> `f7aaf995`**, `fitted_digest` `9f2d0b0c` ->
+    `58da3a91`, fifty-five covered declarations to sixty. Exactly five names entered, all in
+    `hub.models.posterior` and all `chosen` per #375's pre-registration (`docs/gate-power.md`,
+    2026-10-18): `S_REF`, `REVERSIBLE`, `P_COSTLY`, `SENSITIVITY`, `CREDIBLE`. **Not a model
+    change:** no prediction reads them -- they set the posterior a gate prints beside its
+    verdict word -- so no price moves; the version moves because the pre-registration declares
+    them `chosen` rather than `not_an_input`. Removing exactly those five names from the live
+    constants reproduces `9f2d0b0c` and, through `config_digest`, `839ceda9`.
+
+    **Moved again 2026-10-21 (#375): `f7aaf995` -> `e90a851d`**, `fitted_digest` `58da3a91` ->
+    `f893f282`, sixty covered declarations unchanged. One name moved, by value:
+    `posterior.P_COSTLY` 0.9 -> 0.95 (ADOPTED by the maintainer: 0.9's null ADOPT rate was
+    7-10% under heterogeneity). **Not a model change**, as above: no prediction reads it.
+    Restoring 0.9 reproduces `58da3a91`, so no other declared constant moved.
+
+    **Moved again 2026-10-22 (#375): `e90a851d` -> `7da635ca`**, `fitted_digest` `f893f282` ->
+    `0446c2c5`, sixty covered declarations to sixty-one. Exactly one name entered:
+    `posterior.SWITCHING_COST` (`chosen`, 0.0), the reversible tier's switching cost the
+    pre-registration had declared and the code had written inline (review of 2026-10-22).
+    **Not a model change**: no prediction reads it, and its value is the 0.0 the rule already
+    used. Removing that one name reproduces `f893f282`, so no other declared constant moved.
     """
-    assert config_digest(HubConfig()) == "839ceda9"
+    assert config_digest(HubConfig()) == "7da635ca"
     assert config_digest(config.resolved_config()) == config_digest(HubConfig())
 
 

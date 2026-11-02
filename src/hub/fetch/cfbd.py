@@ -141,6 +141,11 @@ FREE_TIER_MONTHLY = 1_000
 # would let a loop spend 900 calls before noticing.
 MAX_CALLS_PER_RUN = 12
 
+# How long an *empty* cached answer stands. CFBD answers `[]` for a week whose lines are not
+# posted yet, and an entry is otherwise permanent, so that week would never price. A day is one
+# call per empty key per day, which a loop cannot turn into a burn (#537).
+EMPTY_RETRY_AFTER = timedelta(days=1)
+
 ENDPOINTS: dict[str, str] = {
     "games": "/games",
     "lines": "/lines",
@@ -440,8 +445,13 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
     path = _cache_path(endpoint, year, week, cache)
     captured = captured_at(endpoint, year, week, cache=cache)
     held = path.exists()
-    if held and not _past_its_age(captured, refresh=refresh, max_age=max_age):
-        return pl.read_parquet(path)
+    on_disk = pl.read_parquet(path) if held else None
+    if on_disk is not None:
+        # An empty answer is bounded even where a populated one is not (#537).
+        bound = max_age if not on_disk.is_empty() else min(max_age or EMPTY_RETRY_AFTER,
+                                                           EMPTY_RETRY_AFTER)
+        if not _past_its_age(captured, refresh=refresh, max_age=bound):
+            return on_disk
 
     key = _api_key()
     refused = _cannot_spend(key, quota_path)
@@ -453,13 +463,13 @@ def bulk(endpoint: str, year: int, week: int | None = None, *,
     # already on disk -- CLAUDE.md's degradation rule, and the reason `make slate` marks
     # this source optional. And it says so out loud, because a served-stale payload that
     # reads like a fresh one is the whole of what #175 was filed about.
-    if refused is not None and held:
+    if refused is not None and on_disk is not None:
         where = _describe(endpoint, year, week)
         age = ("captured " + captured.isoformat() if captured
                else "whose capture time is unknown")
         print(f"  cfbd: {where} was not refreshed: {refused} "
               f"Serving the cached payload, {age}.")
-        return pl.read_parquet(path)
+        return on_disk
     # /GUARD
     if refused is not None:
         raise refused

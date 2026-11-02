@@ -8,7 +8,7 @@ introduced. What is genuinely shared is already in `hub.draft.prior_signal`.
 
 ## Why it was proposed
 
-`CONTEXT.md` defines a **Correction**, two modules implement one, and they expose the same
+`GLOSSARY.md` defines a **Correction**, two modules implement one, and they expose the same
 four public names in the same order. This repo has fixed that exact pattern four times — the
 **Panel**, the **Artifact**, the **Gate**, the **Cohort** — each a glossary term with no module
 behind it. A fifth looked likely.

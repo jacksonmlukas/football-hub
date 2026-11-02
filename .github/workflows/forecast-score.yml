@@ -1,0 +1,69 @@
+name: llm-forecast-score
+# The LLM-forecaster study's weekly interim leaderboard (docs/prereg/llm-forecasters.md,
+# "Reporting and deviations"; #453).
+#
+# **Off until `prereg-llm-v0` is tagged**, by the same repository variable as `forecast.yml` and
+# `forecast-close.yml`: the job runs only when LLM_FORECASTS_ENABLED is 'true'.
+#
+# **Tuesday**, once the week's games are in nflverse's schedule. `hub.forecasters.leaderboard`
+# scores the finished week(s) with `hub.forecasters.score`'s pinned seams and writes
+# `leaderboard/interim.json` -- `interim: true`, descriptive estimates only (no test, no
+# verdict), the missing-game list, and market snapshot ids (hashes) but no raw Odds API payload.
+#
+# **It refuses cleanly, never red, before there is anything to score.** Exit 3 (analysis not
+# pinned), 4 (no burn-in record, #451) and 5 (no scored week finished; the first is Week 10)
+# become a workflow warning and a successful run with nothing committed. Any other non-zero
+# exit fails the job.
+#
+# **Where output goes.** The `forecasts` branch only, through `commit-state.sh` pointed at the
+# `forecasts` worktree (STATE_REF=forecasts), as `forecast-close.yml` does. Nothing is
+# committed to main.
+
+on:
+  schedule:
+    - cron: "0 14 * * 2"        # Tuesday, after Monday night's game is in the schedule
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: llm-forecast-score
+  cancel-in-progress: false
+
+jobs:
+  score:
+    if: vars.LLM_FORECASTS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check out the forecasts branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin forecasts:forecasts; then
+            git worktree add forecasts-branch forecasts
+          else
+            git worktree add --orphan -b forecasts forecasts-branch
+          fi
+
+      - name: Score the finished weeks
+        run: |
+          rc=0
+          uv run python -m hub.forecasters.leaderboard --forecasts forecasts-branch \
+            --out forecasts-branch/leaderboard/interim.json || rc=$?
+          case "$rc" in
+            0) ;;
+            3|4|5) echo "::warning::interim leaderboard not published (refused, exit $rc); nothing to commit" ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Commit to the forecasts branch
+        env:
+          STATE_REPO: forecasts-branch
+          STATE_PATHS: leaderboard
+          STATE_REF: forecasts
+        run: .github/scripts/commit-state.sh 'forecasts - interim leaderboard'

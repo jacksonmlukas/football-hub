@@ -476,6 +476,15 @@ resting on a reader knowing that it cannot.
 _Avoid_: stale (which is what the manifest says about *all three* of those, and so cannot
 name this one), skipped, failed — a Kept producer did run.
 
+**Incomplete lineup**:
+This week's best partial lineup, published when withholding leaves a starting slot that nothing
+eligible can fill (#531): every slot that can be filled is, by the week's own source, and each
+empty slot is named with the best free agents at it who are not on bye. It is current, not
+stale — what it describes is this week — and it is never last week's call, which can start a
+player on bye. Withholding stays one-directional: a slot is named empty, never filled with a
+withheld player. A majority withheld is not incomplete but stale, as #419 had it.
+_Avoid_: stale (the panel is current, and says what it describes is this week).
+
 **Previous decision**:
 The lineup decision made at the sync before the current one: who was started, who sat, who was
 withheld, and when. It is what "what changed since the last regen" is measured against. Previous

@@ -1,7 +1,8 @@
 // The lineup call (#352) and what changed since the last regen (#355).
 
 import { ago, esc, fmt } from "../format.js";
-import { STATE, staleNote } from "../state.js";
+import { STATE, chipFrozen, chipUnconfirmed, staleNote } from "../state.js";
+import { table } from "../table.js";
 
 // Who a name is, where the reader cannot ask: the name with its position and NFL team beside
 // it (#352). A second reader has no league context to supply either, and a bare name is the
@@ -37,7 +38,7 @@ function pairSwaps(sit, start, byName) {
 // More than this many days between the two syncs and a regen was missed in between (the roster
 // regenerates Wednesday and Saturday: three and four days apart). Chosen, not fitted.
 const PREVIOUS_MAX_GAP_DAYS = 5;
-export function lineupChanges(ros, stale, byName) {
+export function lineupChanges(ros, stale, byName, movesOnly = false) {
   const prev = ros?.previous;
   const lists = ["start", "sit", "withheld"];
   const usable = prev && typeof prev === "object" && lists.every(k => Array.isArray(prev[k]));
@@ -61,13 +62,17 @@ export function lineupChanges(ros, stale, byName) {
   const ins = diff(prev.start, cur.start), outs = diff(prev.sit, cur.sit);
   if (ins.length) parts.push(`${named(ins)} in`);
   if (outs.length) parts.push(`${named(outs)} out`);
-  // Called last week and not at all this week -- not a name already shown as in or out above.
-  const callNow = [...cur.start, ...cur.sit];
-  const dropped = [...prev.start, ...prev.sit].filter(n => !callNow.includes(n));
-  if (dropped.length) parts.push(`${named(dropped)} no longer in the call`);
-  const barred = diff(prev.withheld, cur.withheld), cleared = diff(cur.withheld, prev.withheld);
-  if (barred.length) parts.push(`${named(barred)} now withheld`);
-  if (cleared.length) parts.push(`${named(cleared)} no longer withheld`);
+  // The moves only (#484): the rebuilt view names who is withheld in its own note, so the line
+  // under the call stops at who came in and who went out.
+  if (!movesOnly) {
+    // Called last week and not at all this week -- not a name already shown as in or out above.
+    const callNow = [...cur.start, ...cur.sit];
+    const dropped = [...prev.start, ...prev.sit].filter(n => !callNow.includes(n));
+    if (dropped.length) parts.push(`${named(dropped)} no longer in the call`);
+    const barred = diff(prev.withheld, cur.withheld), cleared = diff(cur.withheld, prev.withheld);
+    if (barred.length) parts.push(`${named(barred)} now withheld`);
+    if (cleared.length) parts.push(`${named(cleared)} no longer withheld`);
+  }
   const day = new Date(t0).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
   const said = parts.length ? `Since ${esc(day)}: ${parts.join("; ")}.` : `No change since ${esc(day)}.`;
   return wrap(cls, said + stamp);
@@ -95,6 +100,94 @@ export function ruleNote(rule) {
   return `<p class="legend lineup-rule">${said}</p>` + why;
 }
 
+// A gap (#531): withholding left a slot nothing eligible can fill, so the publisher sent this
+// week's best partial lineup with the empty slots named, labelled incomplete -- never last
+// week's starters. The gap is the headline, then who fills the rest, the moves toward it, and
+// for each empty slot the best free agents not on bye, through the table helper (which escapes
+// every cell). A note on the free-agent pool (served last-good, or missing) renders unconfirmed.
+export function gapHeadline(ros, byName) {
+  const gap = ros.incomplete;
+  const empty = Array.isArray(gap.empty_slots) ? gap.empty_slots : [];
+  const said = typeof gap.headline === "string" && gap.headline
+    ? gap.headline : `No eligible player for ${empty.join(", ")}.`;
+  const lineup = (Array.isArray(gap.lineup) ? gap.lineup : []).map(n => whoIs(n, byName)).join(", ");
+  const side = n => n == null ? "&mdash;" : whoIs(n, byName);
+  const swaps = pairSwaps(ros.sit ?? [], ros.start ?? [], byName)
+    .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
+  const fas = gap.free_agents && typeof gap.free_agents === "object" ? gap.free_agents : {};
+  const pickups = [...new Set(empty)].map(slot => {
+    const rows = Array.isArray(fas[slot]) ? fas[slot] : [];
+    return rows.length
+      ? `<p class="legend">Free agents for ${esc(slot)}, not on bye this week:</p>` + table([
+          { label: "player", get: r => r.player ?? "" },
+          { label: "pos", get: r => r.pos ?? "" },
+          { label: "team", get: r => r.nfl_team ?? "" },
+          { label: "espn /g", get: r => r.proj_per_game == null ? "—" : fmt(r.proj_per_game, 1) },
+          { label: "owned", get: r => r.percent_owned == null ? "—" : `${fmt(r.percent_owned, 0)}%` },
+        ], rows)
+      : "";
+  }).join("");
+  const pool = gap.free_agents_note
+    ? `<p class="${STATE.unconfirmed}">${esc(gap.free_agents_note)}.</p>` : "";
+  return `<p class="lineup-call incomplete">Incomplete lineup &mdash; ${esc(said)}</p>`
+    + `<p class="lineup-totals">This week's best partial lineup: ${lineup || "nobody"}.</p>`
+    + (swaps ? `<ul class="swaps">${swaps}</ul>` : "")
+    + pickups + pool;
+}
+
+// The rebuilt call (#484) needs what the publisher added in #479: `swaps` on the artifact and a
+// `quantiles` field on the rows (null is a value; absent means an artifact from before). Either
+// missing and the page draws the pre-rebuild body, never an empty card.
+export function isRebuilt(ros) {
+  const rows = Array.isArray(ros?.rows) ? ros.rows : [];
+  return Array.isArray(ros?.swaps) && rows.some(r => r && typeof r === "object" && "quantiles" in r);
+}
+
+// Below this a swap's odds read as a coin flip, not a recommendation (#484). A wording line, not
+// a fitted constant: the odds are shown beside the call and never rank it (ADR-0016).
+const COIN_FLIP_BELOW = 0.6;
+
+// One card per entry in the artifact's `swaps`: out (struck through) -> in, each with position,
+// team and projection, then either why the swap is forced or the gain chip and the odds as a
+// sentence. Every number is read off the entry or its row; `p_in_beats_out` is rounded to tenths
+// of a week and nothing else is derived. Names and reasons go through `esc`.
+export function swapCards(ros, byName) {
+  const reasons = ros?.withheld_reasons && typeof ros.withheld_reasons === "object"
+    ? ros.withheld_reasons : {};
+  const projOf = n => {
+    const r = byName.get(n);
+    return r?.projected ? fmt(r.mu, 1) : "—";
+  };
+  const side = (n, cls, struck) => {
+    if (n == null) return `<span class="swap-side ${cls}">&mdash;</span>`;
+    const who = whoIs(n, byName);
+    return `<span class="swap-side ${cls}">${struck ? `<s>${who}</s>` : who}`
+      + `<span class="swap-proj">proj ${projOf(n)}</span></span>`;
+  };
+  const cards = ros.swaps.map(s => {
+    const o = s?.out ?? null, inn = s?.in ?? null;
+    let why;
+    if (o == null || inn == null) {
+      why = `<p class="swap-why legend">Nothing to swap against: ${o == null ? "no one to take out" : "no one to bring in"}.</p>`;
+    } else if (s.forced === true) {
+      const reason = typeof reasons[o] === "string" && reasons[o] ? reasons[o] : "unavailable";
+      why = `<p class="swap-why">${chipUnconfirmed("forced")} <b>${esc(o)}</b> is withheld: ${esc(reason)}. `
+        + `Not a choice, so no odds.</p>`;
+    } else if (typeof s.p_in_beats_out === "number" && Number.isFinite(s.p_in_beats_out)) {
+      const p = s.p_in_beats_out;
+      const sure = `<b>${esc(inn)}</b> outscores <b>${esc(o)}</b> in ${Math.round(p * 10)} of 10 weeks like this one`;
+      const said = p < COIN_FLIP_BELOW ? `${sure}: close to a coin flip, not a recommendation.` : `${sure}.`;
+      const g = typeof s.gain === "number" ? `${s.gain >= 0 ? "+" : ""}${fmt(s.gain, 1)} pts` : "gain n/a";
+      why = `<p class="swap-why">${chipFrozen(g)} ${said}</p>`;
+    } else {
+      why = `<p class="swap-why">${chipUnconfirmed("no odds")} ${esc(ros.odds_reason ?? "the artifact published no odds for this swap")}.</p>`;
+    }
+    return `<li class="swap-card"><div class="swap-pair">${side(o, "swap-out", true)}`
+      + `<span class="arrow">&rarr;</span>${side(inn, "swap-in", false)}</div>${why}</li>`;
+  }).join("");
+  return `<ul class="swap-cards">${cards}</ul>`;
+}
+
 // The lineup call, kept apart from the DOM so a test can import it: the gain at display
 // size, the two totals under it, who was withheld, then the swaps and the caveat. A gain under
 // the threshold and a null gain each say so in the same slot -- the headline never blanks.
@@ -103,7 +196,8 @@ export function lineupHeadline(ros, stale) {
   // Keyed on player name: two rostered players sharing a name would collide here.
   const byName = new Map(rows.map(r => [r.player, r]));
   const gain = ros?.gain;
-  const changed = lineupChanges(ros, stale, byName);
+  const rebuilt = isRebuilt(ros);
+  const changed = lineupChanges(ros, stale, byName, rebuilt);
   // Under consensus rank the call is the lineup, not the gain: `gain` stays in `mu` points and
   // says only what the model makes of the consensus lineup, so it may be negative.
   const byRank = ros?.lineup_rule?.source === "ecr";
@@ -129,6 +223,15 @@ export function lineupHeadline(ros, stale) {
     ? `<p class="legend lineup-locked">Locked, game started: ${lockedHtml}. Kept as set; no swap
          below names them.</p>`
     : "";
+  // A gap is the headline whenever the publisher sent one (#531): `gain` is null there too, and
+  // "No lineup could be filled" would hide the slot to fill and who could fill it.
+  if (ros?.incomplete && typeof ros.incomplete === "object") {
+    // What set the partial lineup, which is not `decide`'s fallback: the rule's week and switch
+    // from `lineup_rule`, the source and its reason from the gap's own `lineup_source`.
+    const src = ros.incomplete.lineup_source;
+    const gapNote = src && typeof src === "object" ? ruleNote({ ...ros.lineup_rule, ...src }) : note;
+    return gapHeadline(ros, byName) + changed + chip + locks + gapNote;
+  }
   if (gain == null) {
     return `<p class="lineup-call empty">No lineup could be filled from the available players.</p>` + changed + chip + locks + note;
   }
@@ -136,12 +239,15 @@ export function lineupHeadline(ros, stale) {
   const pairs = pairSwaps(ros.sit ?? [], ros.start ?? [], byName);
   const swaps = pairs
     .map(([out, inn]) => `<li>${side(out)}<span class="arrow">&rarr;</span>${side(inn)}</li>`).join("");
+  // The call's moves: cards from the artifact's own `swaps` when it has them, else the list this
+  // panel always drew from `sit` and `start`.
+  const moves = rebuilt ? swapCards(ros, byName) : `<ul class="swaps">${swaps}</ul>`;
   if (byRank) {
     if (!pairs.length) {
       return `<p class="lineup-call">The set lineup is already the consensus lineup.</p>` + changed + totals + chip + locks + note;
     }
     return `<p class="lineup-call">Consensus rank calls ${pairs.length} swap${pairs.length === 1 ? "" : "s"}.</p>`
-      + changed + totals + chip + locks + `<ul class="swaps">${swaps}</ul>`
+      + changed + totals + chip + locks + moves
       + `<p class="legend">Consensus ranks are captured before the week's first game and do not know
          who is hurt since, so settle it at lock.</p>` + note;
   }
@@ -149,7 +255,7 @@ export function lineupHeadline(ros, stale) {
     return `<p class="lineup-call">The set lineup is already the best available one.</p>` + changed + totals + chip + locks + note;
   }
   return `<div class="lineup-gain">+${fmt(gain, 1)}<span class="unit"> pts a week</span></div>`
-    + changed + totals + chip + locks + `<ul class="swaps">${swaps}</ul>`
+    + changed + totals + chip + locks + moves
     + `<p class="legend">These projections are season-long and do not know who is hurt this week,
          so settle it at lock.</p>` + note;
 }

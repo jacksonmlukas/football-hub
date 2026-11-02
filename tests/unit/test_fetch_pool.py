@@ -7,7 +7,7 @@ through `tests/golden/fixtures/pool_payload.synthetic.json`, a hand-built payloa
 shape `hub.fetch.pool` assumes. What the first live run has to confirm is listed in that
 module's docstring; nothing here can stand in for it.
 
-Two words carry their `CONTEXT.md` meanings throughout. A **Ledger** is the set of teams an
+Two words carry their `GLOSSARY.md` meanings throughout. A **Ledger** is the set of teams an
 entry has already spent, one per entry; the **Decision journal** is a different record and
 is not touched by this module.
 """
@@ -729,6 +729,27 @@ def test_an_unset_host_is_reported_before_any_cookie_is_read(store, session, tra
     assert pool.main(["--refresh", "--store", str(store)]) == 1
     assert calls == []
     assert pool.URL_ENV in capsys.readouterr().err
+
+
+def test_the_transport_never_follows_a_redirect_with_the_cookie(monkeypatch):
+    """The session cookie goes to the host the operator configured and nowhere else (#537).
+    `requests` follows a 302 on its own, to wherever it points; the transport asks not to and
+    says a redirect is an answer it did not expect (usually an expired session's login page)."""
+    import requests
+    seen = {}
+
+    class _Redirect:
+        status_code = 302
+        def raise_for_status(self): pass
+        def json(self): raise AssertionError("a redirect has no body to read")
+
+    def _get(url, **kw):
+        seen.update(kw)
+        return _Redirect()
+    monkeypatch.setattr(requests, "get", _get)
+    with pytest.raises(RuntimeError, match="redirect"):
+        pool._transport("https://pool.example.test/api/pools/1", COOKIE)
+    assert seen["allow_redirects"] is False
 
 
 def test_the_transport_refuses_a_live_call_from_the_default_suite(monkeypatch):

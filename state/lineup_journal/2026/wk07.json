@@ -1,0 +1,79 @@
+{
+ "disagree": false,
+ "published": {
+  "decided_at": "2026-10-24T17:19:50.014780+00:00",
+  "ecr_capture": {
+   "captured_at": "2026-10-24T12:26:39.439273+00:00",
+   "note": "consensus ranks as of Fri 2026-10-23, taken after Thursday's games, so in time only for players whose game had not started",
+   "purpose": "lineup",
+   "scrape_date": "2026-10-23"
+  },
+  "ecr_from_week": 7,
+  "ecr_week": 7,
+  "label": "provisional",
+  "lineup": [
+   "Denzel Boston",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "reason": null,
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 7
+ },
+ "realised": {
+  "consensus": {
+   "n_no_row": 0,
+   "points": 121.66,
+   "scores": "published.lineup"
+  },
+  "espn": null,
+  "mu": null,
+  "set": {
+   "n_no_row": 0,
+   "points": 121.66,
+   "scores": "published.lineup"
+  }
+ },
+ "recorded_at": "2026-10-21T15:49:28.958618+00:00",
+ "rule": {
+  "basis": "the model's weekly mean (mu): the board's blend of ESPN's season average and last season's xFP per game; best legal lineup by summed mu",
+  "caveat": null,
+  "ecr_from_week": 7,
+  "ecr_week": null,
+  "label": "model",
+  "lineup": null,
+  "reason": "no pre-kickoff consensus capture for week 7; no earlier capture to serve as last-good; the model's lineup (mu) is served instead",
+  "rule": "ecr",
+  "source": "mu",
+  "week": 7
+ },
+ "scored": true,
+ "season": 2026,
+ "set_scored_from": "published",
+ "sources": {
+  "ecr": {
+   "lineup": null,
+   "n_unranked": 10,
+   "reason": "no pre-kickoff consensus capture for week 7",
+   "superseded_by": "published",
+   "superseded_reason": "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the consensus lineup is the one published off the Friday lineup capture, scored at settle as `realised.consensus` (#530)"
+  },
+  "espn": {
+   "lineup": null,
+   "n_unranked": 0,
+   "reason": "ESPN's weekly projection ranks 10 of 10 candidates, too few to fill a legal lineup"
+  },
+  "mu": {
+   "lineup": null,
+   "n_unranked": 0,
+   "reason": "the current rule could not fill a legal lineup"
+  }
+ },
+ "week": 7
+}

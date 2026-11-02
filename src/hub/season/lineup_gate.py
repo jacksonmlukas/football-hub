@@ -5,7 +5,7 @@ against an assumed opponent. It is 97% covered by unit tests, which is a claim a
 internals and not about whether it is *right* -- the draft board was also well covered while
 recommending a fourth quarterback.
 
-So it gets a gate, in the sense `CONTEXT.md` now defines: a **model** is tested against the
+So it gets a gate, in the sense `GLOSSARY.md` now defines: a **model** is tested against the
 simplest thing that already works. Here that is **start your highest projections** -- fill each
 required slot with your best projected player, flex the best remaining. One sort, no search.
 

@@ -1,0 +1,35 @@
+{
+ "captured_at": "2026-11-02T01:05:56.062497",
+ "rows": [
+  {
+   "captured_at": "2026-11-02T01:05:56.062497",
+   "close_spread": 5.5,
+   "close_total": 40.5,
+   "game_id": "2026_08_PHI_WAS",
+   "ml_away_price": 210.0,
+   "ml_home_price": -258.0,
+   "ml_home_prob": 0.6923725242309313,
+   "polls_unmoved": 1,
+   "spread_price": -109.99999999999999,
+   "spread_price_away": -110.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-02T01:05:56.062497"
+  },
+  {
+   "captured_at": "2026-11-02T01:05:56.062497",
+   "close_spread": 3.0,
+   "close_total": 46.5,
+   "game_id": "2026_08_CHI_SEA",
+   "ml_away_price": 145.0,
+   "ml_home_price": -170.0,
+   "ml_home_prob": 0.6076721883173497,
+   "polls_unmoved": 4,
+   "spread_price": -115.00000000000001,
+   "spread_price_away": -105.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-10-30T16:58:58.195257"
+  }
+ ],
+ "season": 2026,
+ "week": 8
+}

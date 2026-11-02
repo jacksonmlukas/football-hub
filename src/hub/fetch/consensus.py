@@ -14,12 +14,12 @@ the next week's window, with the time this repo wrote them (`captured_at`), the 
 game day, the deadline that implies, and the archive's own digest. One scrape's rows, not the
 archive: `player`, `pos`, `team`, `ecr`, a few hundred rows.
 
-**The deadline is the first game day, at midnight Eastern, and it is strict.** A capture taken
-on the day Thursday's game is played contains that game; it is not a lookahead ranking for the
-week. `LateCapture` refuses it at the write -- nothing lands -- and `is_late` is the same test
-read the other way round, so a file that reaches the tree by another route is excluded at the
-read rather than trusted (method rule 18's control: a capture written after kickoff is refused or
-flagged).
+**The week capture's deadline is the first game day, at midnight Eastern.** A week capture
+(`--capture`) is the one in time for every player of its week, so it must precede the day
+Thursday's game is played. `LateCapture` refuses a later one at the write -- nothing lands --
+and `is_late` is the same test read the other way round, so a file that reaches the tree by
+another route is excluded at the read rather than trusted (method rule 18's control: a capture
+written after kickoff is refused or flagged).
 
 **And the page has to be this week's.** The newest scrape must lie inside the week's window --
 before the first game day and no more than `MAX_LEAD_DAYS` ahead of it. An archive that has not
@@ -30,20 +30,29 @@ that too, and the next scheduled run tries again.
 Append-only: a second write to the same path with the same document is a no-op; with a different
 one it raises, because a capture that changes is not one. Written through `hub.atomic`.
 
-**A second, later capture, for setting the lineup and nothing else.** The archive publishes the
+**A second, later capture: the one the archive's calendar allows.** The archive publishes the
 page on Fridays (every 2026 `weekly-op` scrape seen, 09-11 through 10-16, is Friday-dated), so
-the strict window above -- before Thursday's game day -- is usually empty, and #492's rule has
-no ECR to set Sunday's lineup with. The players in Thursday's game are already locked by Friday,
-so a ranking taken after Thursday is fine *for Sunday's lineup* -- and useless as a lookahead
-measurement, because it has seen Thursday's game. The lineup capture therefore takes the newest
-`weekly-op` scrape dated after the previous week's last game and before the week's first
-**Sunday** game day, captured before the start of that Sunday, Eastern (`lineup_deadline_for`),
-and writes it apart from the strict record: `state/consensus/<season>/lineup/wk<NN>/
-lineup-<ts>.json`, with a mandatory `purpose: "lineup"`. The strict reader globs
-`<season>/wk*/cap-*.json` and also drops any document whose `purpose` is not strict, so nothing
-that measures against consensus point-in-time (`hub.season.weekly_forward`,
-`hub.season.lineup_journal.ecr_ranks`) can read one as a strict capture. Only
-`hub.season.lineup_rule` reads them, after the week's strict capture and before last-good.
+the week capture's window above -- before Thursday's game day -- has never held a page (#515).
+The Friday capture (`--lineup`) takes the newest `weekly-op` scrape dated after the previous
+week's last game and before the week's first **Sunday** game day, captured before the start of
+that Sunday, Eastern (`lineup_deadline_for`), and writes it to `state/consensus/<season>/lineup/
+wk<NN>/lineup-<ts>.json` with a mandatory `purpose: "lineup"` -- the name it got when it was for
+setting the lineup only, kept because it is on disk and on the page.
+
+**In time per player (ADR-0027, 2026-10-20).** A capture is *in time* for a player when it was
+taken before that player's own kickoff (`in_time_rows`, against `kickoffs`: the schedule's
+Eastern date and time through `hub.schedule.kickoff_expr`, DST-aware). A Friday capture is in
+time for Sunday's and Monday's players and for no one who played Thursday; a week capture is in
+time for every player of its week. For anything that compares against consensus the two are one
+kind: `read_every_capture` reads both and the reader leaves out, per player, whoever's game had
+started (`hub.season.weekly_forward.admit`). This replaced the per-week test, under which no
+2026 capture ever qualified.
+
+`read_captures` still reads week captures only, and drops any document whose `purpose` is not a
+week capture's: the lineup path prefers a capture in time for every player
+(`hub.season.lineup_journal.ecr_ranks`) and labels it so, and a Friday page read there would carry
+that label falsely. `hub.season.lineup_rule` reads the Friday capture after the week capture and
+before last-good, labelled as taken after Thursday's games.
 
     uv run python -m hub.fetch.consensus --capture
     uv run python -m hub.fetch.consensus --lineup
@@ -82,15 +91,23 @@ MAX_LEAD_DAYS = not_an_input(
 # missing any column it requires, so these are a superset of its required set plus what is read
 # here (`game_type`, `gameday`); `tests/unit/test_fetch_consensus.py` holds the subset. The fetch
 # itself is network and uncovered, which is how a four-column ask went live and failed (#437).
-SCHEDULE_COLS = ("game_id", "season", "week", "game_type", "home_team", "away_team", "gameday")
+SCHEDULE_COLS = ("game_id", "season", "week", "game_type", "home_team", "away_team", "gameday",
+                 "gametime")
+
+# The archive's team codes that are not nflverse's, so a ranked player can be placed at his
+# game (`in_time_rows`). `hub.draft.playoff_sos.TEAM_ALIASES` is the same map; a fetcher does not
+# import a draft module, so `tests/unit/test_fetch_consensus.py` holds the two equal.
+TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA", "LV": "LV", "WSH": "WAS", "ARZ": "ARI"}
 
 EASTERN = ZoneInfo("America/New_York")
 CAPTURE_COLUMNS = ("player", "pos", "team", "ecr")
+# The rows' frame, as both readers build it: one schema so the week and lineup readers cannot drift.
+ROWS_SCHEMA = {"player": pl.Utf8, "pos": pl.Utf8, "team": pl.Utf8, "ecr": pl.Float64}
 _GLOB = "wk*/cap-*.json"
 
-# What a capture is for. A strict capture carries no `purpose` (every one written before the
-# lineup capture existed) or `"strict"`; a lineup capture must say `"lineup"`.
-STRICT, LINEUP = "strict", "lineup"
+# What a capture is. A week capture carries no `purpose` (`build` writes none) or `"week"`; a
+# Friday capture must say `"lineup"`, its name from before ADR-0027.
+WEEK, LINEUP = "week", "lineup"
 LINEUP_DIR = "lineup"
 _LINEUP_GLOB = f"{LINEUP_DIR}/wk*/lineup-*.json"
 
@@ -123,12 +140,12 @@ class Capture:
     digest: str | None
     rows: pl.DataFrame
     path: Path | None = None
-    purpose: str = STRICT
+    purpose: str = WEEK
 
 
 @dataclass(frozen=True)
 class LineupCapture:
-    """One committed lineup capture, as read back. Never a strict one (see the module doc)."""
+    """One committed Friday capture, as read back (filed as `lineup`; see the module doc)."""
     season: int
     week: int
     captured_at: datetime               # aware, UTC
@@ -143,7 +160,8 @@ class LineupCapture:
 
     def note(self) -> str:
         """The honest label for a lineup set on this capture."""
-        when = (f"taken after {self.first_game_day:%A}'s games"
+        when = (f"taken after {self.first_game_day:%A}'s games, so in time only for players "
+                "whose game had not started"
                 if self.scrape_date >= self.first_game_day else
                 f"captured {self.captured_at.astimezone(EASTERN):%a %Y-%m-%d} for the lineup, "
                 "not before the week's first game day")
@@ -263,6 +281,17 @@ def capture_path(season: int, week: int, when: datetime, base: Path | None = Non
             / f"cap-{when.astimezone(UTC):%Y%m%dT%H%M%S}.json")
 
 
+def _write_once(path: Path, doc: dict, other: str) -> Path:
+    """The append-only write both capture writers share: the same document again is a no-op,
+    a different one at the same path raises naming `other`."""
+    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
+    if path.exists():
+        if path.read_text(encoding="utf-8") == text:
+            return path
+        raise FileExistsError(f"{path} already holds {other}")
+    return atomic.write_text(path, text)
+
+
 @decision
 def write_capture(doc: dict, base: Path | None = None) -> Path:
     """Write one capture, or refuse. Refuses a late one (`LateCapture`) before touching disk.
@@ -279,41 +308,107 @@ def write_capture(doc: dict, base: Path | None = None) -> Path:
             f"{deadline_for(first).isoformat()} (the start of {first}, Eastern). A page "
             f"taken once games have started is not a lookahead ranking; nothing was written.")
     path = capture_path(doc["season"], doc["week"], when, base)
-    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    if path.exists():
-        if path.read_text(encoding="utf-8") == text:
-            return path
-        raise FileExistsError(
-            f"{path} already holds a different capture. Captures are append-only; a second "
-            f"look is a second file with its own timestamp.")
-    return atomic.write_text(path, text)
+    return _write_once(path, doc, "a different capture. Captures are append-only; a second "
+                                  "look is a second file with its own timestamp.")
 
 
 def read_capture(path: Path) -> Capture:
     doc = json.loads(path.read_text(encoding="utf-8"))
     return Capture(
-        purpose=str(doc.get("purpose") or STRICT),
+        purpose=str(doc.get("purpose") or WEEK),
         season=int(doc["season"]), week=int(doc["week"]),
         captured_at=datetime.fromisoformat(doc["captured_at"]),
         first_game_day=date.fromisoformat(doc["first_game_day"]),
         deadline=datetime.fromisoformat(doc["deadline"]),
         scrape_date=date.fromisoformat(doc["scrape_date"]), digest=doc.get("digest"),
-        rows=pl.DataFrame(doc["rows"], schema={"player": pl.Utf8, "pos": pl.Utf8,
-                                               "team": pl.Utf8, "ecr": pl.Float64}),
+        rows=pl.DataFrame(doc["rows"], schema=ROWS_SCHEMA),
         path=path)
 
 
 def read_captures(season: int, base: Path | None = None) -> list[Capture]:
-    """Every strict capture file for `season`, earliest first by `captured_at`.
+    """Every week capture file for `season`, earliest first by `captured_at`.
 
-    A document that says it is for anything but a strict capture is left out, wherever it is in
-    the tree: a lineup capture copied into `wk<NN>/` is still not a lookahead ranking."""
+    A document that says it is anything but a week capture is left out, wherever it is in the
+    tree: a Friday capture copied into `wk<NN>/` was not taken before the week's first game day,
+    and the lineup path labels what this returns as a capture in time for every player."""
     root = (ROOT if base is None else Path(base)) / str(season)
     caps = [read_capture(p) for p in root.glob(_GLOB)]
-    # GUARD strict-reader-skips-lineup [unit/test_fetch_consensus.py]: purpose must be strict
-    caps = [c for c in caps if c.purpose == STRICT]
+    # GUARD week-reader-skips-lineup [unit/test_fetch_consensus.py]: purpose must be a week's
+    caps = [c for c in caps if c.purpose == WEEK]
     # /GUARD
     return sorted(caps, key=lambda c: c.captured_at)
+
+
+def read_every_capture(season: int, base: Path | None = None) -> list[Capture]:
+    """Every capture of `season` that a comparison against consensus may read, earliest first:
+    the week captures (`read_captures`) and the Friday ones (`read_lineup_captures`, each as a
+    `Capture` with `purpose` `"lineup"` and its own Sunday deadline).
+
+    One list since ADR-0027: neither kind is in time for a whole week by being the kind it is,
+    so the reader decides per player (`in_time_rows`). Only Friday captures that pass
+    `lineup_problem` are here, as in `read_lineup_captures`."""
+    caps = read_captures(season, base)
+    caps += [Capture(season=c.season, week=c.week, captured_at=c.captured_at,
+                     first_game_day=c.first_game_day, deadline=c.deadline,
+                     scrape_date=c.scrape_date, digest=c.digest, rows=c.rows, path=c.path,
+                     purpose=LINEUP)
+             for c in read_lineup_captures(season, base)]
+    return sorted(caps, key=lambda c: c.captured_at)
+
+
+# --- in time, per player (ADR-0027) --------------------------------------------------------
+
+def kickoffs(schedule: pl.DataFrame) -> dict[tuple[int, str], datetime]:
+    """`{(week, team): kickoff}` for every regular-season game, aware UTC.
+
+    The kickoff is `hub.schedule.kickoff_expr`'s -- nflverse's Eastern `gameday` and `gametime`,
+    converted with the zone rather than a fixed offset, to naive UTC -- with UTC attached, so it
+    compares with `captured_at` on one clock. A game with no `gametime` is placed at the start
+    of its game day, Eastern (`deadline_for`): earlier than any real kickoff, so a capture is
+    never credited with a game it could have seen. A schedule without teams and dates gives
+    `{}`, and then only a capture taken before the week's first game day places anyone."""
+    from hub.schedule import kickoff_expr
+    if not {"week", "game_type", "home_team", "away_team", "gameday"} <= set(schedule.columns):
+        return {}
+    s = schedule.filter(pl.col("game_type") == "REG")
+    s = s.with_columns(kickoff_expr() if "gametime" in s.columns
+                       else pl.lit(None, dtype=pl.Datetime).alias("kickoff"))
+    out: dict[tuple[int, str], datetime] = {}
+    for r in s.iter_rows(named=True):
+        k = r["kickoff"]
+        at = (k.replace(tzinfo=UTC) if k is not None
+              else deadline_for(date.fromisoformat(str(r["gameday"])[:10])))
+        for team in (r["home_team"], r["away_team"]):
+            key = (int(r["week"]), str(team))
+            out[key] = min(out.get(key, at), at)
+    return out
+
+
+def in_time_rows(rows: pl.DataFrame, at: datetime, week: int, first_game_day: date,
+                 kicks: dict[tuple[int, str], datetime]) -> tuple[pl.DataFrame, int]:
+    """The rows of a capture taken at `at` that are in time for their player, and how many are
+    not. In time means taken before *that player's* kickoff (ADR-0027), placed by his `team`.
+
+    Taken before `first_game_day` (the schedule's, as it is now) it precedes every kickoff of
+    the week and every row stands. Otherwise a row stands when his team's kickoff that week is
+    after `at`, or his team has no game that week (a bye: there is no game to have seen). A
+    team the schedule does not know -- a free agent, a code nobody maps -- cannot be placed, and
+    a row that cannot be shown to be in time is left out rather than trusted."""
+    if at < deadline_for(first_game_day):
+        return rows, 0
+    teams = {t for _, t in kicks}
+    keep: list[bool] = []
+    for team in rows["team"].to_list():
+        code = TEAM_ALIASES.get(team, team) if team else None
+        k = kicks.get((week, code)) if code else None
+        ok = code in teams                           # no game that week: a bye
+        # GUARD in-time-per-player [unit/test_fetch_consensus.py]: his own kickoff, not the week's
+        if k is not None:
+            ok = at < k
+        # /GUARD
+        keep.append(ok)
+    kept = rows.filter(pl.Series(keep, dtype=pl.Boolean))
+    return kept, rows.height - kept.height
 
 
 # --- the lineup capture --------------------------------------------------------------------
@@ -376,12 +471,7 @@ def write_lineup_capture(doc: dict, base: Path | None = None) -> Path:
                           "written.")
     path = lineup_path(doc["season"], doc["week"], datetime.fromisoformat(doc["captured_at"]),
                        base)
-    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    if path.exists():
-        if path.read_text(encoding="utf-8") == text:
-            return path
-        raise FileExistsError(f"{path} already holds a different lineup capture.")
-    return atomic.write_text(path, text)
+    return _write_once(path, doc, "a different lineup capture.")
 
 
 def read_lineup_captures(season: int, base: Path | None = None) -> list[LineupCapture]:
@@ -400,8 +490,7 @@ def read_lineup_captures(season: int, base: Path | None = None) -> list[LineupCa
             deadline=datetime.fromisoformat(doc["deadline"]),
             scrape_floor=date.fromisoformat(doc["scrape_floor"]),
             scrape_date=date.fromisoformat(doc["scrape_date"]), digest=doc.get("digest"),
-            rows=pl.DataFrame(doc["rows"], schema={"player": pl.Utf8, "pos": pl.Utf8,
-                                                   "team": pl.Utf8, "ecr": pl.Float64}),
+            rows=pl.DataFrame(doc["rows"], schema=ROWS_SCHEMA),
             path=p))
     return sorted(out, key=lambda c: c.captured_at)
 

@@ -66,7 +66,7 @@ move is not.
 > **Amendment, 2026-10-07 (#430): the arm is re-pinned. Prior text above kept.** The move
 > happened: `hub/models/weekly.py` is now `hub/exhibits/weekly_projection.py`, and
 > `shipped_quantiles` is now `parametric_quantiles` (the word *shipped* names the page's
-> conformalised interval and nothing else, CONTEXT.md). **This is a pure move and rename.** What
+> conformalised interval and nothing else, GLOSSARY.md). **This is a pure move and rename.** What
 > the projection computes is unchanged, and the proof is
 > `tests/unit/test_weekly_projection_move.py::test_the_moved_projection_computes_exactly_what_the_pinned_arm_computed`:
 > it freezes `project` (bare, under each fitted `Shrink`, and under a fixed one), `fit_shrink`
@@ -184,6 +184,14 @@ Thursday's game is in it) **and** whose newest scrape is within 8 days of that k
 (`CONSENSUS_MAX_LEAD_DAYS`), so last week's page is never filed under this week. The weeks the
 harness admits are those, within weeks 1-14 (`GATE_WEEKS`); 15-17 are not read.
 
+*(Restated 2026-10-20 under rule 13, #515, [ADR-0027](adr/0027-a-consensus-capture-is-in-time-per-player.md):
+from week 7, a **player-week** counts when a capture of that week's page was taken -- on the
+later of its `captured_at` and its first commit -- before **that player's own kickoff**; a player
+whose game had started when every capture of him was taken (Thursday's, under the Friday capture)
+is left out of that week's comparison, and the reading counts how many. Weeks 1-6 are read by the
+paragraph above, unchanged. The paragraph above is the prior text, kept. See the 2026-10-20
+amendment at the end of this document.)*
+
 **The verdict is read once, at the horizon: when every regular-season game of week 14 has been
 played and is in nflverse.** Before that the harness prints NOT-YET and loads no outcome at all
 (it does not read a partial season "for monitoring": a reading taken to see how it is going is
@@ -246,6 +254,36 @@ REMOVEs 2000 of 2000.
 > than printed. Not re-run here. The MDE above moves by the same factor (≈2.2 → ≈2.3 at 10
 > weeks; stage 2 still passes against +10.80). The arm pin does not move:
 > `hub.models.experiment` is closure-exempt. See `gate-power.md`, *Restated 2026-10-20 (#520)*.
+
+> **Re-run 2026-11-01 (#529), on the corrected SE; the table above is kept as published.**
+> `scripts/weekly_forward_power.py --table --trials 10000 --workers 6` (weeks 6, 8, 9, 10) and
+> `--weeks 14`, no code change, same seeds `SeedSequence([432, cell])`. The null is lower, as
+> predicted: at δ = 0 and 10 weeks P(ADOPT) **0.0196**, P(REMOVE) **0.0209** (was 0.0247 /
+> 0.0236; SE 0.0014), still under 0.05. Power is lower at every cell with an effect, by up to
+> about 0.05 of probability at the larger effects. Old → new:
+>
+> | admitted weeks | δ = −1.5 | −0.825 | −0.3 | 0 | +0.3 | +0.5 | +1.0 | +1.5 | +2.0 |
+> |---|---|---|---|---|---|---|---|---|---|
+> | 6 P(ADOPT) | 0.0003 → 0.0002 | 0.0019 → 0.0015 | 0.0113 → 0.0088 | 0.0203 → 0.0157 | 0.0428 → 0.0343 | 0.0694 → 0.0559 | 0.1517 → 0.1249 | 0.3024 → 0.2567 | 0.4658 → **0.4105** |
+> | 6 P(REMOVE) | 0.2911 → 0.2483 | 0.1229 → 0.0990 | 0.0415 → 0.0335 | 0.0252 → 0.0199 | 0.0109 → 0.0083 | 0.0061 → 0.0045 | 0.0016 → 0.0011 | 0.0002 → 0.0001 | 0.0000 → 0.0000 |
+> | 8 P(ADOPT) | 0.0000 → 0.0000 | 0.0013 → 0.0009 | 0.0104 → 0.0088 | 0.0253 → 0.0206 | 0.0532 → 0.0445 | 0.0775 → 0.0651 | 0.2154 → 0.1865 | 0.4036 → 0.3596 | 0.6172 → **0.5723** |
+> | 8 P(REMOVE) | 0.4037 → 0.3591 | 0.1574 → 0.1371 | 0.0543 → 0.0457 | 0.0284 → 0.0245 | 0.0105 → 0.0091 | 0.0051 → 0.0039 | 0.0012 → 0.0010 | 0.0002 → 0.0002 | 0.0000 → 0.0000 |
+> | 9 P(ADOPT) | 0.0002 → 0.0002 | 0.0017 → 0.0016 | 0.0101 → 0.0081 | 0.0234 → 0.0197 | 0.0591 → 0.0514 | 0.0918 → 0.0787 | 0.2337 → 0.2073 | 0.4591 → 0.4195 | 0.6877 → **0.6476** |
+> | 9 P(REMOVE) | 0.4462 → 0.4075 | 0.1742 → 0.1505 | 0.0528 → 0.0459 | 0.0240 → 0.0189 | 0.0084 → 0.0063 | 0.0044 → 0.0038 | 0.0008 → 0.0006 | 0.0001 → 0.0001 | 0.0000 → 0.0000 |
+> | **10 P(ADOPT)** | 0.0000 → 0.0000 | 0.0014 → 0.0010 | 0.0094 → 0.0076 | **0.0247 → 0.0196** | **0.0586 → 0.0493** | **0.1006 → 0.0874** | **0.2633 → 0.2356** | 0.4958 → **0.4594** | 0.7374 → **0.7024** |
+> | **10 P(REMOVE)** | 0.4945 → 0.4605 | **0.1940 → 0.1722** | 0.0577 → 0.0489 | **0.0236 → 0.0209** | 0.0102 → 0.0087 | 0.0039 → 0.0036 | 0.0010 → 0.0008 | 0.0001 → 0.0001 | 0.0000 → 0.0000 |
+> | 14 P(ADOPT) | 0.0000 → 0.0000 | 0.0004 → 0.0004 | 0.0087 → 0.0077 | 0.0242 → 0.0215 | 0.0703 → 0.0625 | 0.1202 → 0.1096 | 0.3518 → 0.3263 | 0.6509 → 0.6265 | 0.8833 → **0.8657** |
+> | 14 P(REMOVE) | 0.6615 → 0.6334 | 0.2612 → 0.2419 | 0.0679 → 0.0599 | 0.0254 → 0.0224 | 0.0081 → 0.0066 | 0.0036 → 0.0031 | 0.0002 → 0.0002 | 0.0000 → 0.0000 | 0.0000 → 0.0000 |
+>
+> The ordering the design rests on is unchanged (more weeks, more power; null under 0.05 at every
+> count; the stage-2 comparison is untouched). Sensitivity to the week component at 10 weeks (week
+> variance 0 / **2.00** / 4.00), old → new: P(ADOPT) at δ = +0.5 **0.1042 / 0.1006 / 0.0865 →
+> 0.0936 / 0.0874 / 0.0738**; at +1.5 **0.6610 / 0.4958 / 0.3905 → 0.6331 / 0.4594 / 0.3556**;
+> P(REMOVE) at −0.825 **0.2307 / 0.1940 / 0.1587 → 0.2103 / 0.1722 / 0.1395**. The 8-week row —
+> the count the 2026-10-20 per-player amendment below says is the most the measurement can now
+> admit — reads P(ADOPT) **0.5723** at +2.0 points a team-week and **0.1865** at +1.0 (was 0.6172
+> and 0.2154). Positive controls reproduce: δ = ±100 ADOPTs / REMOVEs 1.0000, and the 10-week
+> null (2,000 trials) is 0.0165 / 0.0185.
 
 (The 14-week row is not on the table's horizon: it is what counting weeks 1-4 would have
 bought, and is there so the cost of the weeks-1-5 decision is read off numbers.) The week
@@ -1032,6 +1070,50 @@ constant reproduces both prior values). That is the model version's label and th
 rows are as in the latest table above. Closure digest **`69a09cab8e72c77d`** (was
 `a2a3e8720e86c13b`).
 
+## Amended 2026-10-20: a capture is in time per player, not per week (#515, ADR-0027; prior text kept)
+
+Before any 2026 outcome has been read: the harness has printed NOT-YET on every run and loaded
+nothing. This restates, under method rule 13, what *The horizon: which weeks count* above meant by
+a week "pre-registered against consensus". The text above is kept as it was written.
+
+**Why.** The per-week rule could not be met. The nflverse rankings archive publishes the weekly
+page on Fridays only (all six 2026 scrapes, 09-11 through 10-16), so no scrape ever fell before a
+Thursday game day; every Tuesday and Wednesday run of `consensus.yml` exited 3 and no week capture
+was ever written. Under the rule above the measurement could only ever have read NOT-RUNNABLE.
+
+**The rule, from week 7.** A capture is *in time* for a player when it was taken before that
+player's own kickoff, its time being the later of the file's `captured_at` and its first commit.
+Kickoffs are nflverse's Eastern `gameday` and `gametime` through `hub.schedule.kickoff_expr`
+(DST-aware, to UTC); a game with no time is placed at the start of its game day, Eastern. A player
+whose team the schedule cannot place is left out rather than trusted; a player on a bye stands.
+Each player is read from the newest capture in time for him, so a Wednesday page, if one ever
+exists, still serves Thursday's players. A player no capture is in time for is **left out of that
+week's comparison** and the reading prints how many: he is absent from the consensus frame, which
+puts him outside `weekly_gate.priced_by_both` (#206), so neither arm is scored on him that week.
+The harness is `weekly_forward.admit`; the test is `hub.fetch.consensus.in_time_rows`; the
+captures read are both kinds (`consensus.read_every_capture`), the Friday one filed under
+`state/consensus/<season>/lineup/` by the name it had when it set the lineup only.
+
+**Weeks 1-6 are not reached back into.** The rule was adopted on Tuesday 2026-10-20, after weeks
+5 and 6 were played; week 7's first game is Thursday 10-22. Weeks before
+`weekly_forward.PER_PLAYER_FROM_WEEK` (7) are read by the per-week rule above, unchanged, so their
+Friday captures stay refused exactly as before
+(`test_weeks_before_the_adoption_are_replayed_by_the_rule_they_were_registered_under`).
+
+**What it costs.** About two of fourteen games a week (Thursday's) leave the comparison, and the
+most weeks the measurement can now admit is **8** (weeks 7-14), against the 10 or 9 the power table
+above was computed for. `MIN_WEEKS` stays 6 and is not moved by this. The power at 8 clusters is
+the table's own row for that count (P(ADOPT) 0.6172 at +2.0 points a team-week as printed, which
+#520's amendment above marks stale and lower once re-run; **re-run 2026-11-01 (#529): 0.5723**, 0.1865 at +1.0), lower than at 9 or 10, and the
+decision rule's SHOW branch, already the likely one, is likelier. The table was
+simulated on whole weeks; leaving Thursday's players out moves each week's lineups a little and
+is not in it.
+
+**What did not change.** The arm (`PINNED_ARM_MODULES`, closure digest unchanged): every file
+edited here is `hub.fetch.consensus` (exempt as `hub.fetch.*`) or `hub.season.weekly_forward`,
+which is not in the arm's closure. Only which captures, and which of their rows, the evaluation
+reads has changed; the projection computes what it computed.
+
 ## Amended 2026-10-20: `hub.models.margin` and `hub.models.market` re-pinned for #523's provenance correction (prior text kept)
 
 Before any 2026 outcome has been read. Every table above stands as the record of what was pinned
@@ -1066,3 +1148,28 @@ changed; `tests/unit/test_config.py` holds them).
 **The rows now pinned.** `hub.models.margin` `3852336394ee`, `hub.models.market` `9059bc8092ed`;
 the other 27 rows are as in the latest table above. Closure digest **`d52b01c1b3ffa8fd`** (was
 `69a09cab8e72c77d`).
+
+### Amendment, 2026-11-01: the glossary rename re-pins four modules (comments only)
+
+The `chore/glossary-rename` merge (`e7ed907`, mattpocock-skills 1.3) renamed `CONTEXT.md` to
+`GLOSSARY.md` and changed one word in a docstring or comment in each of four pinned modules:
+`CONTEXT.md` became `GLOSSARY.md`. The pin hashes source bytes, so the four digests moved.
+Re-pinned at the maintainer's instruction (option (a), 2026-11-01). The closure's set is unchanged:
+29 modules, the same names.
+
+**Why the arm's figures are unchanged.** Each edit is a comment or docstring word. No statement,
+constant, name or import changed. #430's identity test (`tests/unit/test_weekly_projection_move.py`)
+passes on this tree.
+
+**What did not move:** `config_digest` and `fitted_digest` (no constant changed).
+
+| module | was | now |
+|---|---|---|
+| `hub.draft.optimize` | `314a78a8b5ef` | `8dc3527a8f01` |
+| `hub.models.panel` | `99d19fba99e0` | `a75721321098` |
+| `hub.models.scoring_rules` | `3c201f3a0d6f` | `051e826af4a9` |
+| `hub.names` | `93e503040186` | `45f5942ed9de` |
+
+**The rows now pinned.** `hub.draft.optimize` `8dc3527a8f01`, `hub.models.panel` `a75721321098`,
+`hub.models.scoring_rules` `051e826af4a9`, `hub.names` `45f5942ed9de`; the other 25 rows are as in the
+latest table above. Closure digest **`e7e586aa15ef2a02`** (was `d52b01c1b3ffa8fd`).

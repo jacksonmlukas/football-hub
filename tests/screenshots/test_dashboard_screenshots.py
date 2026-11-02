@@ -107,11 +107,12 @@ def browser() -> Iterator[Browser]:
             b.close()
 
 
-def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: str = NOW) -> Path:
-    """Render the dashboard and return the path of the PNG, under `test-results/`."""
+def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: str = NOW,
+            view: str = "week") -> Path:
+    """Render one view of the dashboard and return the path of the PNG, under `test-results/`."""
     w, h = VIEWPORTS[width]
     OUT.mkdir(parents=True, exist_ok=True)
-    out = OUT / f"{OS_KEY}-{width}-{scheme}-{now.replace(':', '')}.png"
+    out = OUT / f"{OS_KEY}-{width}-{scheme}-{view}-{now.replace(':', '')}.png"
     context = browser.new_context(viewport={"width": w, "height": h}, device_scale_factor=1)
     try:
         page = context.new_page()
@@ -128,11 +129,34 @@ def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: st
                 route.abort()
 
         page.route("**/*", gate)
-        page.goto(base_url + "/index.html")
+        page.goto(f"{base_url}/index.html#/{view}")
         # `render()` writes the subtitle once the manifest has loaded; the panels follow.
         page.wait_for_function(
             "document.getElementById('subtitle').textContent.includes('week')")
         page.wait_for_load_state("networkidle")
+        shown = page.evaluate(
+            "[...document.querySelectorAll('.view')].filter(v => !v.hidden).map(v => v.id)")
+        assert shown == [f"v-{view}"], f"#/{view} showed {shown}"
+        # No view scrolls sideways: the document is never wider than the window (#478).
+        overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"{view} at {width}px scrolls sideways by {overflow}px"
+        if view == "week" and width == "390":
+            # #484: on a phone the lineup call reaches the end of its swap cards within 390x844.
+            bottom = page.evaluate(
+                "Math.max(...[...document.querySelectorAll('.swap-card')]"
+                ".map(c => c.getBoundingClientRect().bottom))")
+            assert bottom <= h, f"the swap cards end at {bottom}px, below the {h}px fold"
+        if view == "ledger":
+            # #488: the verdict is above the name in every row, at every width. Compared on the
+            # laid-out boxes, so a stylesheet that put them side by side fails here.
+            beside = page.evaluate(
+                "[...document.querySelectorAll('.lg-row')].filter(r => {"
+                " const v = r.querySelector('.lg-verdict').getBoundingClientRect();"
+                " const n = r.querySelector('.lg-name').getBoundingClientRect();"
+                " return !(v.bottom <= n.top); }).length")
+            rows = page.evaluate("document.querySelectorAll('.lg-row').length")
+            assert rows > 0, "the ledger drew no rows, so nothing was checked"
+            assert beside == 0, f"{beside} of {rows} ledger rows at {width}px put the verdict beside the name"
         page.screenshot(path=str(out), full_page=True, animations="disabled", caret="initial")
         assert not foreign, f"the page reached off-host: {foreign}"
     finally:
@@ -159,11 +183,18 @@ def changed_fraction(a: Path, b: Path, diff_to: Path | None = None) -> float:
     return changed / (ia.size[0] * ia.size[1])
 
 
+# The views with content of their own today: all five. This week keeps the unsuffixed names it has
+# always had, so its history in git is one file per width and scheme.
+VIEW_NAMES = ("week", "games", "record", "study", "ledger")
+
+
+@pytest.mark.parametrize("view", VIEW_NAMES)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("width", VIEWPORTS)
-def test_dashboard_matches_baseline(browser, base_url, width, scheme):
-    actual = capture(browser, base_url, width, scheme)
-    baseline = BASELINES / f"{width}-{scheme}.png"
+def test_dashboard_matches_baseline(browser, base_url, width, scheme, view):
+    actual = capture(browser, base_url, width, scheme, view=view)
+    suffix = "" if view == "week" else f"-{view}"
+    baseline = BASELINES / f"{width}-{scheme}{suffix}.png"
     if os.environ.get("UPDATE_SCREENSHOTS") == "1":
         BASELINES.mkdir(parents=True, exist_ok=True)
         baseline.write_bytes(actual.read_bytes())
@@ -172,7 +203,7 @@ def test_dashboard_matches_baseline(browser, base_url, width, scheme):
         f"no baseline for {OS_KEY}/{baseline.name}. Baselines are per OS; create them "
         "deliberately with UPDATE_SCREENSHOTS=1 and commit them."
     )
-    diff = OUT / f"{OS_KEY}-{width}-{scheme}-diff.png"
+    diff = OUT / f"{OS_KEY}-{width}-{scheme}-{view}-diff.png"
     frac = changed_fraction(baseline, actual, diff)
     assert frac <= MAX_CHANGED_FRACTION, (
         f"{width}px {scheme}: {frac:.4%} of pixels changed (limit {MAX_CHANGED_FRACTION:.2%}). "
@@ -190,3 +221,23 @@ def test_the_pinned_clock_is_what_fixes_the_ages(browser, base_url):
     later = capture(browser, base_url, "390", "light", now="2026-10-20T18:00:00Z")
     assert a.read_bytes() == b.read_bytes()
     assert changed_fraction(a, later) > 0, "ages did not respond to the clock"
+
+
+def test_the_social_preview_is_1200_by_630_and_matches_the_committed_image(tmp_path):
+    """#489: `scripts/render_og_image.py` is run, not just kept. Its output is exactly 1200x630
+    on every OS; it is compared with the committed `site/og-image.png` only on darwin, because
+    that file was rendered there and Chromium's text differs by OS (a per-OS copy would add a
+    second PNG to keep in step for no extra protection)."""
+    import subprocess
+
+    out = tmp_path / "og.png"
+    done = subprocess.run([sys.executable, str(ROOT / "scripts" / "render_og_image.py"),
+                           "--out", str(out)], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert Image.open(out).size == (1200, 630)
+    if OS_KEY == "darwin":
+        committed = SITE / "og-image.png"
+        frac = changed_fraction(committed, out, tmp_path / "diff.png")
+        assert frac <= MAX_CHANGED_FRACTION, (
+            f"{frac:.4%} of pixels differ from {committed}; if the page changed on purpose, "
+            "re-run scripts/render_og_image.py and commit the PNG.")

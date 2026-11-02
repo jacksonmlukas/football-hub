@@ -2094,7 +2094,7 @@ floor, not a ceiling.
 - It cannot touch the weekly, lineup, draft, coverage, margin or quarterback-diagnostic gates:
   all six already read `run_gate` → `summarise(cluster=SEASON_CLUSTER)`, independent of
   `paired_gain`'s own `cluster` argument, so #311 does not move any of their published figures.
-- It cannot touch a screen: `weekly_screen` is a different test (`CONTEXT.md`) and #312 is its
+- It cannot touch a screen: `weekly_screen` is a different test (`GLOSSARY.md`) and #312 is its
   own restatement.
 
 ## What happens either way
@@ -3605,7 +3605,7 @@ now and the dollar figure named later. Indifferent to ruin: a bar for whether a 
 A **pick** is a side (favorite/underdog against the closing spread, or over/under against the
 closing total) the model names for a game, at a flat one-unit stake, priced at the close —
 `hub.fetch.odds`' last snapshot before kickoff, the `Snapshot`/`Live price` vocabulary
-`CONTEXT.md` already defines and this section reads rather than re-derives. A graded pick's
+`GLOSSARY.md` already defines and this section reads rather than re-derives. A graded pick's
 realised profit is **+100/110 unit** if the side covers, **−1 unit** if it does not, and is
 excluded from `n` on a push. **A season's EV is the mean realised profit per graded pick over
 that season's games** — the repeated measure is the game, per `docs/method.md` rule 3, never
@@ -3809,7 +3809,7 @@ good model.
   #375's question, not this bar's — the same `ADOPTED:` comment that created both tickets
   together keeps them apart.
 - No claim that a model's edge is causal, or that the closing line is inefficient in a way this
-  gate can itself demonstrate a mechanism for — `CONTEXT.md`'s own definition of the betting
+  gate can itself demonstrate a mechanism for — `GLOSSARY.md`'s own definition of the betting
   market ("treated as already-efficient... the repo backtests against it to audit itself,
   never to beat it") is read literally: this bar tests whether a model beats the close
   *empirically*, once, on held-out seasons, and a pass is evidence, not an explanation.
@@ -3866,6 +3866,8 @@ fractional bankroll, anything that sizes a bet on the model's own confidence —
 that form is a new ADR-0024 decision, not an amendment to this section.
 
 # Pre-registered 2026-09-21 — PROPOSED: the posterior gate (#375)
+
+**Superseded in part 2026-10-18** — the prior scale, the engine and the single-threshold decision rule; see `# Pre-registered 2026-10-18 — ADOPTED: the posterior gate's constants, decision rule and engine (#375)` at the end of this document. The text below is kept as written.
 
 **Status: PROPOSED.** Drafted under the operate-mode freeze (#326), which blocks a modelling
 change *landing* and not writing the rule before the number — #329, #305 and #364 (above) are
@@ -4709,6 +4711,56 @@ table, **0.0008** against 0.0007 and **0.0075** against 0.0076, by separately se
 Run 2026-10-06, `gate_horizon.py --rule16 --trials 40000 --workers 6`, 15 minutes, worst SE of
 any reported rate 0.0020; raw counts not committed (`$TMPDIR/418-run`).
 
+**Restated 2026-11-01 (#536, rule 13; the attribution above is kept).** `gate_horizon.py --rule16
+--trials 40000 --workers 6` re-run alone, no code change, on main carrying #520's corrected SE.
+The harness records two rules in one pass: `abstain` is (A), the rule the 2026-10-06 table was
+computed under, and `ship` is (C), what `gate` returns now (#381). **The like-for-like comparison
+is (A)**: the old table's "power" column is (A) (its "ship" was (A) on that date), so reading the
+new `ship` column against it would compare two rules. (A), old → new:
+
+| weekly, δ=0.3, k=4 | null (A) | power (A) | interval alone | null (C), new | power (C), new |
+|---|---|---|---|---|---|
+| 1. rule-16's process | 0.0162 → 0.0142 | 0.1937 → **0.1685** | 0.257 → 0.1970 | 0.0228 | 0.1970 |
+| 2. + bootstrap 4000 | 0.0198 → 0.0173 | 0.1895 → 0.1664 | 0.254 → 0.1954 | 0.0258 | 0.1953 |
+| 3. + m=20 | 0.0120 → 0.0111 | 0.1522 → 0.1376 | 0.254 → 0.1918 | 0.0243 | 0.1916 |
+| 4. + estimated τ | 0.0138 → 0.0129 | 0.1420 → 0.1271 | 0.228 → 0.1707 | 0.0261 | 0.1706 |
+| 5. + within-season spread (= #388's cell) | 0.0001 → 0.0001 | 0.0008 → **0.0008** | 0.135 → 0.1006 | 0.0094 | 0.0614 |
+
+| draft, δ=2.0, k=4 | null (A) | power (A) | interval alone | null (C), new | power (C), new |
+|---|---|---|---|---|---|
+| 1. rule-16's process | 0.0107 → 0.0097 | 0.0350 → **0.0321** | 0.080 → 0.0582 | 0.0240 | 0.0579 |
+| 2. + bootstrap 4000 | 0.0121 → 0.0113 | 0.0348 → 0.0316 | 0.079 → 0.0577 | 0.0247 | 0.0574 |
+| 4. + estimated τ | 0.0077 → 0.0074 | 0.0306 → 0.0286 | 0.097 → 0.0701 | 0.0243 | 0.0692 |
+| 5. + within-season spread (= #388's cell) | 0.0014 → 0.0014 | 0.0075 → **0.0075** | 0.093 → 0.0671 | 0.0204 | 0.0606 |
+
+(The "interval alone" column is the old table's against the new run's. The new run's
+"null (C)" and "power (C)" are `gate`'s own verdict, which the old table did not carry; they have
+no old figure to set beside.)
+
+**Attribution, (A), same step order** (weekly power falls 0.1677, 0.1685 → 0.0008): the
+**within-season spread is 0.1263 (75%)**, m=40 to 20 is 0.0288 (17%), the estimated τ 0.0106 (6%),
+the bootstrap 0.0020 (1%, about 1 SE of a difference: not distinguished, as before). Old → new:
+**73% → 75%, 19% → 17%, 5% → 6%, 2% → 1%**. Draft power falls 0.0246 (0.0321 → 0.0075): spread
+0.0211 (**84% → 86%**), τ 0.0030 (**15% → 12%**), bootstrap 0.0005 (2%; not distinguished). The
+ordering and the conclusion are unchanged; the shares moved by at most 3 points, and the 0.0008 /
+0.0075 endpoints reproduce to the digit. **Under (C), the shipped rule, weekly** power falls
+0.1356 (0.1970 → 0.0614): spread 0.1091 (**81%**), τ 0.0210 (16%), m 0.0037 (3%), bootstrap 0.0017
+(1%). **Under (C), draft, there is no loss to apportion:** (C)'s power is 0.0579 at step 1 and
+0.0606 at step 5 (it rises 0.0118 at the τ step and falls 0.0086 at the spread step), so a net
+rise, and per-step shares of a total near zero are not reported. This is the reading of #529:
+(C) recovers what the spread cost (A), because (C) does not let one tie veto. (C) at #388's cell
+here is 0.0204 null / 0.0606 power, against #529's 0.0204 / 0.0596 (a separately seeded run).
+Run 2026-11-01, worst SE of any reported rate 0.0020.
+
+**Decisions resting on the moved attribution figures (none changed).** ADR-0019's 2026-10-06
+paragraph quotes "73% is that within-season spread, 19% is m, 5% the estimated τ, 2% the shipped
+bootstrap" (its line "Of the 0.193 weekly power lost between the two processes"), which this
+restatement moves to 75 / 17 / 6 / 1 on (A); that sentence supports the decision that **#388's
+estimated process, not rule-16's stand-in, is the baseline #381 reads**, and the finding that the
+draft rule-16 exemption stands at 0.0075. Neither depends on the percentages' exact values (the
+ordering holds and the within-season spread is still three quarters or more of the gap); the
+ADR's quotation is not edited here.
+
 **Original paragraph, as first written (2026-10-06, #388), kept as the record of what was
 believed before #418:**
 
@@ -4737,6 +4789,66 @@ it.
   pre-registered; both are estimated from one weekly run and one draft frame whose SEs bracket but
   do not equal #376's.
 
+### Restated 2026-11-01 (#529): the table re-run on the corrected SE (rule 13; the text above is kept)
+
+`scripts/gate_horizon.py --table --trials 40000 --workers 6`, no code change (the harness drives
+the shipped `experiment.gate`, so #520's `sqrt(k/(k-1))` is in it), same seeds
+`SeedSequence([388, cell_index])`, 81 cells, 7,973 s on 6 workers. Each cell's interval half is now
+wider by the factor at its k (1.1547 at k=4 down to 1.0690 at k=8); the tie test is unchanged
+by decision (#520, 2026-10-21), so **every tie rate reproduces to the third decimal** (0.807 for
+weekly k=4, 260 rows, and so on), which is the control that nothing but the interval moved.
+
+**One thing a reader of the raw output must know.** `gate` ships (C) since #381 (2026-10-06, the
+same day as this table), so the harness's "shipped" column re-run today reads (C), not the (A)
+rule this section's table was computed under. A re-run read as-is shows null ADOPT 0.0098 and
+power 0.0613 at weekly k=4, 260 rows — *higher* than the 0.0000 / 0.0007 above — and that is the
+rule change, not the correction. Like-for-like is the (A) column the same run carries (`abstain`);
+the tables below are read from it, and (C) is restated under *Results (C)*.
+
+**(A), the rule this section published — old → new** (null ADOPT; power at δ=0.3 and 0.5 weekly,
+δ=2.0 draft; the interval half alone, the column the correction acts on, beside):
+
+| k | rows | weekly null | weekly power δ=0.3 | weekly power δ=0.5 | interval alone δ=0.3: old → new | interval alone δ=0.5: old → new |
+|---|---|---|---|---|---|---|
+| 4 | 220 | 0.0000 → 0.0000 | 0.0005 → 0.0005 | 0.0024 → 0.0024 | 0.1241 → **0.0916** | 0.2435 → **0.1848** |
+| 4 | 260 | 0.0000 → 0.0000 | 0.0007 → 0.0007 | 0.0043 → 0.0043 | 0.1379 → **0.1004** | 0.2601 → **0.1993** |
+| 4 | 280 | 0.0001 → 0.0001 | 0.0010 → 0.0010 | 0.0046 → 0.0046 | 0.1409 → **0.1046** | 0.2673 → **0.2046** |
+| 5 | 260 | 0.0000 → 0.0000 | 0.0002 → 0.0002 | 0.0014 → 0.0014 | 0.1636 → **0.1272** | 0.3352 → **0.2732** |
+| 6 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0004 → 0.0004 | 0.1916 → **0.1539** | 0.4000 → **0.3421** |
+| 7 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0001 → 0.0001 | 0.2175 → **0.1822** | 0.4724 → **0.4163** |
+| 8 | 260 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.0000 → 0.0000 | 0.2412 → **0.2085** | 0.5306 → **0.4812** |
+
+| k | rooms | draft null | draft power δ=2.0 | interval alone δ=2.0: old → new |
+|---|---|---|---|---|
+| 4 | 20 | 0.0014 → 0.0014 | 0.0076 → 0.0075 | 0.0922 → **0.0670** |
+| 4 | 40 | 0.0040 → 0.0040 | 0.0180 → 0.0175 | 0.0968 → **0.0708** |
+| 4 | 80 | 0.0094 → **0.0087** | 0.0379 → **0.0355** | 0.0993 → **0.0726** |
+| 5 | 20 | 0.0003 → 0.0003 | 0.0020 → 0.0020 | 0.1056 → **0.0811** |
+| 6 | 20 | 0.0001 → 0.0001 | 0.0008 → 0.0008 | 0.1145 → **0.0912** |
+| 7 | 20 | 0.0000 → 0.0000 | 0.0001 → 0.0001 | 0.1282 → **0.1040** |
+| 8 | 20 | 0.0000 → 0.0000 | 0.0002 → 0.0002 | 0.1415 → **0.1187** |
+
+The remaining 8 weekly and 8 draft rows reproduce the same way (every (A) cell inside 0.0001).
+The fifth-season rows (k=5 with 4 or 14 weeks of 2026) are
+0.0000 / 0.0001 / 0.0004 and 0.0000 / 0.0001 / 0.0012 for (A), as before.
+
+**What moved, and what did not.** The headline the correction was expected to move did: the
+interval half alone loses 0.03 to 0.06 of power (weekly δ=0.3, k=4, 260 rows: 0.138 → 0.100;
+δ=0.5: 0.260 → 0.199; draft k=4, 20 rooms: 0.092 → 0.067). The (A) column is, for the weekly path,
+**unchanged to the printed digit** and for the draft path within 0.0024: under (A) one Abstention
+vetoes both directions and 96–100% of frames have one, so the rule's ADOPT rate was ~0 and
+stays ~0 — the correction narrows a half of the rule that the other half already shut. The pre-#335
+column at k=4 now equals the interval alone (0.1004 at weekly 260 rows, against 0.1356 / 0.1379
+before): a frame whose corrected t interval excludes zero has all four seasons on one side.
+The tie mechanism's share of the gap to 0.80 at k=4, read off (A): weekly δ=0.3 **12%** (was 17%),
+weekly δ=0.5 **25%** (was 32%), draft **8%** (was 10–11%): still a minority, **k owns 88% / 75% /
+92%**, so "What it answers for #381" holds, with shares a few points lower.
+
+**(C), read off the same re-run** (the `ship` column; k=4 weekly 260 rows, draft 20 rooms): null
+**0.0098**, power δ=0.3 **0.0613**, δ=0.5 **0.1498**, draft null **0.0194**, power **0.0608**. The
+full (C) table and its comparison with the (C) figures first published are under *Results (C)*
+below.
+
 ---
 
 # Pre-registered 2026-10-06: (C), the verdict over resolved seasons, before it lands (#381)
@@ -4750,7 +4862,7 @@ the harness extension (`scripts/gate_horizon.py --rule-c`, tests in
 
 ## The rule being measured
 
-A season has one **Disposition**: a win, a loss, or an **Abstention** (CONTEXT.md; the code's
+A season has one **Disposition**: a win, a loss, or an **Abstention** (GLOSSARY.md; the code's
 field is still `ties`). A season with a win or a loss is **resolved**.
 
 - **ADOPT** — at least one resolved season, *every resolved season a win*, and the t interval
@@ -4907,6 +5019,54 @@ read off the same frames. null is ADOPT at δ=0.
   implements it, because `gate` was not to change before this section. The inclusion control and
   the `ship` column are what hold the harness's conjunction to the code that lands.
 
+### Restated 2026-11-01 (#529): (C)'s table re-run on the corrected SE (rule 13; the text above is kept)
+
+`scripts/gate_horizon.py --rule-c --trials 40000 --workers 6`, no code change, the same 38 cells and
+seeds as the run above, 2,973 s. The tie test is unchanged by decision, so **P(0 resolved) and the
+resolved-seasons-of-k columns reproduce to the digit** (0.4225 and 0.77 at weekly k=4, 260 rows);
+the interval half is wider by the factor at each k, so every (C) rate that needs it to exclude zero
+is lower. Old (above) → new:
+
+| weekly, k | rows | null (C) | power δ=0.3 (C) | power δ=0.5 (C) | interval alone δ=0.3 |
+|---|---|---|---|---|---|
+| 4 | 220 | 0.0129 → **0.0091** | 0.0757 → **0.0554** | 0.1747 → **0.1307** | 0.1286 → **0.0959** |
+| 4 | 260 | 0.0140 → **0.0095** | 0.0829 → **0.0599** | 0.2003 → **0.1513** | 0.1313 → **0.0966** |
+| 4 | 280 | 0.0145 → **0.0095** | 0.0920 → **0.0664** | 0.2111 → **0.1598** | 0.1420 → **0.1054** |
+| 5 | 260 | 0.0167 → **0.0120** | 0.1167 → **0.0901** | 0.2822 → **0.2300** | 0.1622 → **0.1269** |
+| 6 | 260 | 0.0194 → **0.0148** | 0.1510 → **0.1231** | 0.3619 → **0.3066** | 0.1908 → **0.1563** |
+| 7 | 260 | 0.0219 → **0.0167** | 0.1795 → **0.1504** | 0.4311 → **0.3827** | 0.2149 → **0.1799** |
+| 8 | 260 | 0.0232 → **0.0186** | 0.2105 → **0.1820** | 0.4926 → **0.4475** | 0.2420 → **0.2079** |
+
+| draft, k | rooms | null (C) | power δ=2.0 (C) | interval alone |
+|---|---|---|---|---|
+| 4 | 20 | 0.0291 → **0.0204** | 0.0828 → **0.0596** | 0.0919 → **0.0662** |
+| 4 | 40 | 0.0317 → **0.0230** | 0.0958 → **0.0685** | 0.0982 → **0.0703** |
+| 4 | 80 | 0.0351 → **0.0239** | 0.0974 → **0.0719** | 0.0983 → **0.0726** |
+| 5 | 20 | 0.0316 → **0.0231** | 0.0983 → **0.0751** | 0.1027 → **0.0786** |
+| 6 | 20 | 0.0321 → **0.0243** | 0.1143 → **0.0916** | 0.1180 → **0.0941** |
+| 7 | 20 | 0.0307 → **0.0244** | 0.1232 → **0.1024** | 0.1303 → **0.1064** |
+| 8 | 20 | 0.0285 → **0.0243** | 0.1258 → **0.1078** | 0.1390 → **0.1163** |
+
+The (A) columns reproduce as before (weekly k=4, 260 rows: null 0.0001, power 0.0008 / 0.0039;
+draft k=4, 20 rooms: 0.0014 / 0.0076), and the three inclusions hold again on every frame (0 / 0 / 0
+violations). **Direction as expected from #520: every null and every power is lower; no null is
+higher, so the pre-registered stop condition (null ADOPT above 0.05) still did not fire, with
+more room.** The largest
+null anywhere in the grid is now **0.0244** (draft, k=7), down from 0.0351. The
+sentences that quote the old figures read as follows with the new:
+
+- (C)'s power at k=4 is **0.060** (weekly δ=0.3), **0.151** (weekly δ=0.5) and **0.060** (draft
+  δ=2.0), against (A)'s 0.0008 / 0.0039 / 0.0076 — still a factor of about 75 (weekly δ=0.3) and 8
+  (draft) on (A), where it was about 100 and 11.
+- (C) recovers **62%** (weekly δ=0.3: 0.0599 of 0.0966) and **90%** (draft: 0.0596 of 0.0662) of
+  what the interval half alone reaches, where it was 63% and 90%: the share of the interval's
+  power that (C) keeps does not move, because both fall together.
+- 42% of weekly frames at δ=0.3 still have no resolved season at all (P(0 resolved) is unchanged).
+- (C) is still not powerful: 0.06 at k=4, and it reaches 0.45 at weekly δ=0.5 only at k=8 (0.49
+  before).
+- The sentence "(C) raises the null by a factor of over 100 (weekly) and 20 (draft) on a base that
+  was effectively zero" reads **about 95 and 15** (0.0095 and 0.0204 against 0.0001 and 0.0014).
+
 ## Amended 2026-10-09 (#467): the draft gate's 2025 season priced absence at zero; restated (prior text kept)
 
 Every draft-gate figure above that includes the 2025 season (the #376 / #381 / #429 restatements,
@@ -4942,6 +5102,290 @@ today's. **The verdict word does not change (REMOVE), the ceiling does not chang
 per-season se (3.3); no mechanism for the direction was traced. Not acted on. The 0.5 and 1.5 rows of `docs/pick-noise.md` were not re-run and
 carry the same 2025 caveat. The ledger entry `state/gate-width.json` is not changed by this
 restatement; the run's `state/inputs` record was not kept (dirty tree, unpinned data).
+
+---
+
+# Pre-registered 2026-10-18 — ADOPTED: the posterior gate's constants, decision rule and engine (#375)
+
+**Written and committed before any code that reads it exists, and before the posterior has been
+fitted to any gate's real seasons.** The commit adding this section changes nothing under
+`src/` or `tests/`; the module, the tests and the checks below land in later commits, and the
+design here is not edited after them. **Status: ADOPTED 2026-10-18** by the maintainer in
+session, on the draft brought to them under the 2026-10-16 decision on #375 (the session drafts
+`prior_sd`, `tau_scale` and the switching cost, each with its reasoning, and brings them for
+approval *before* they are pre-registered or declared): "ADOPTED as drafted: prior_sd = tau_scale
+= s_ref frozen per gate from the latest ledger entry; two-tier decision (reversible E[gain]>0,
+costly P(δ>0)>0.9); sensitivity under s_ref/2 and s_ref/4; numpy quadrature engine", and, on
+the three points the draft named as needing an explicit yes, "your recs".
+
+> *Recorded by AI, 2026-10-18, at the maintainer's instruction in session. The disposition is the maintainer's.*
+
+## What this supersedes in the 2026-09-21 section, and what it keeps
+
+That section (above, `# Pre-registered 2026-09-21 — PROPOSED: the posterior gate (#375)`) is
+kept as written. **Superseded by name:**
+
+1. **The prior scale** — its candidate 1(a), `prior_sd = s/√k`, `tau_scale = s`, ADOPTED on
+   #375 on 2026-09-21. The 2026-10-16 prediction review's first note (the prior reuses the
+   data) is the reason; the replacement is below.
+2. **The engine** — its candidate 3, NumPyro via the `bayes` extra, ADOPTED the same day.
+   Replaced by numpy quadrature (below), because a gate built on an optional extra has no
+   posterior in the default environment every worktree and CI job runs in.
+3. **The single-threshold decision rule** `E[utility] > switching_cost` with
+   `switching_cost = chosen(0.0)` for every gate, and **the null-size check's scope.** At zero
+   cost the posterior mean's sign is the sample mean's sign under any prior centred at zero, so
+   the null ADOPT rate is 1/2 by construction and the `ALPHA` size check that section
+   pre-registered could not pass. The two-tier rule below puts the size check on the tier it
+   can bind and a regret check on the other.
+
+**Kept unchanged:** the hierarchical normal model's form; `NOT-RUNNABLE` (S6) and `VOID` ahead
+of everything; the transition (the posterior is printed *beside* the verdict word, never
+instead of it, until a dated decision retires the word after the record is re-run under #358
+and #311); the ceiling arm per gate; the exclusions; "what published number moves" (none,
+until the transition ends); the sequencing.
+
+## The model and its likelihood
+
+```
+gain_s  ~ Normal(delta_s, se_s)    # s = 1..k, the gate's own held-out seasons
+delta_s ~ Normal(delta, tau)
+delta   ~ Normal(0, prior_sd)
+tau     ~ HalfNormal(tau_scale)
+```
+
+`gain_s` and `se_s` are `per_season`'s own `gain` and `se` columns: the season's mean paired
+difference and its within-season bootstrap SE over the gate's declared `within` unit (#335).
+That is the 2026-10-16 review's second note — the within-season evidence is the likelihood,
+not a bootstrap over k season means. **A season with a non-finite or non-positive `se` makes
+the posterior not computed, named on the line**, never imputed: a gate whose `within` unit is
+a declared no-op (one cluster per season) has no within-season noise to put in a likelihood,
+and inventing one is a choice this section does not make.
+
+## The constants (all `chosen`, in `hub.models.posterior`)
+
+**`S_REF`: one frozen number per gate, `prior_sd = tau_scale = S_REF[gate]`.** `S_REF[gate]` is
+the sample standard deviation (ddof = 1) of the season gains stored in that gate's **latest
+entry in `state/gate-width.json` as of this commit** (base `d819fb9`). Frozen: no run
+recomputes it, so a run's prior does not move with the data that run fits. **It is named for
+what it is:** data-informed — it was measured on earlier runs over the same seasons the
+posterior will read, so it is not independent of them — but it takes neither its location
+(zero) nor its scale from the *effect estimate* it will judge, which is the 2026-09-21
+adoption's own line. Its scale is the gate's season-to-season scatter, which contains both
+the within-season noise and any real heterogeneity; at k = 4 it is twice the pooled SE.
+
+| gate | unit | k | `S_REF` | latest entry |
+|---|---|---|---|---|
+| draft | points per team game | 4 | 4.54 | 2026-10-07 |
+| weekly | points per team week | 4 | 0.648 | 2026-10-06 |
+| interval_shape | CRPS points per player-week | 5 | 0.00808 | 2026-10-07 |
+| player_spread | MAE points of predicted weekly sd | 5 | 0.0302 | 2026-10-06 |
+| injury_type | MAE points per designated player-week | 3 | 0.0454 | 2026-10-07 |
+| component_calibration | points per game of MAE | 3 | 0.0706 | 2026-10-06 |
+| injury_retention | MAE points per designated player-week | 3 | 0.125 | 2026-10-07 |
+| favourite_longshot | nats of log loss per game | 22 | 0.00302 | 2026-10-09 |
+| state_space_rating | nats of log-loss per game | 26 | 0.0146 | 2026-10-15 |
+| td_dispersion | nats of held-out log score per player-week | 6 | 0.00155 | 2026-10-16 |
+
+Three numbers on this table disagree with figures the reader may have seen, and each is named
+rather than reconciled:
+
+- **The table shown to the maintainer in session** backed `s` out of each entry's interval
+  width with a t-quantile. The ledger's `lo`/`hi` are `summarise`'s percentile bootstrap, not a
+  t-interval, so that derivation understated `s` by about 1.3–2× on every gate but
+  td_dispersion (where it overstated it). The adopted rule reads `s` "from the latest ledger
+  entry"; the ledger stores the season gains themselves, so the values above are the rule's and
+  the session table's are superseded. **Flagged to the maintainer with this commit.**
+- **Draft:** #357's published `s = 7.34` predates #335; the latest ledger entry is the pre-#315
+  run (−11.02), not the 2026-10-09 restatement (−13.49) above, which was never written to the
+  ledger. The rule reads the ledger.
+- **Weekly:** 0.648 against the 2026-10-16 review's domain-scale suggestion of 0.5. Recorded,
+  not adjusted.
+
+**Gates with no `S_REF`, so no posterior is computed and the line says so:** `lineup`,
+`quarterback_gate`, `margin_shape`, `margin_width` (no ledger entry) and `lookahead_margin_sd`
+(its latest entry stores one season record, so no spread). `favourite_longshot` has an `S_REF`
+but every stored season's `se` is NaN (its `within` unit is a no-op), so by the likelihood rule
+above it is not computed either. Adding a gate to `S_REF` is a dated amendment here, by the same
+rule (the gate's then-latest ledger entry), made before that gate's posterior is first read.
+
+**`REVERSIBLE`: the gates whose action is a constant or refit swap inside a shipped module** —
+`td_dispersion` and `injury_type`. Every other gate is **costly**: its ADOPT replaces a
+shipped model or adds a dependency, and its REMOVE retires a shipped module to `hub.exhibits`.
+Moving a gate between tiers is a dated amendment here.
+
+**The switching cost**, per tier, in the gate's own units:
+
+- **Reversible: `chosen(0.0)`.** ADOPT when `E[delta | data] > 0`, REMOVE when `< 0`, SHOW at
+  exactly zero. Under #364's linear utility this is the expected-utility action at zero
+  friction; a wrong reversible switch is undone at the next run.
+- **Costly: a probability bar, `P_COSTLY = chosen(0.9)`.** ADOPT when `P(delta > 0 | data) >
+  0.9`, REMOVE when `P(delta > 0 | data) < 0.1`, SHOW between. This is the expected-utility
+  action under an asymmetric loss whose cost of a wrong switch is nine times the gain of a right
+  one, stated as the probability rather than as a number in each gate's units because that is
+  what keeps one rule across ten units. **#364's game-level case** reads this tier until its
+  dollar figure exists; that figure, in EV units, is the named successor to the 0.9.
+
+`VOID` and `NOT-RUNNABLE`, when the verdict word reads either, are the action too: the
+posterior's numbers are printed and its action is not.
+
+**Sensitivity: `SENSITIVITY = chosen((0.5, 0.25))`** — every computed posterior is refitted with
+`prior_sd = S_REF × 0.5` and `S_REF × 0.25` (`tau_scale` unchanged) and printed beside the
+primary. They decide nothing. An action that differs between the primary and either is printed
+**prior-sensitive**, and during the transition a prior-sensitive action is not published as
+settled. `s/4` is a hard skeptic: below about four pooled SEs it almost never crosses 0.9, and
+that is what it is for.
+
+**`CREDIBLE = chosen(0.95)`**, an equal-tailed interval.
+
+## The engine: numpy quadrature, no new dependency
+
+Given `tau`, `delta` is conjugate: `delta | tau, data` is normal with precision
+`1/prior_sd² + Σ 1/(tau² + se_s²)`, and the marginal likelihood of the gains given `tau` is a
+k-variate normal whose determinant and quadratic form close in O(k) by the matrix determinant
+lemma. So the posterior is a finite mixture of normals over a `tau` grid — 2,001 points on
+`[0, 8 × tau_scale]`, beyond which a `HalfNormal` holds under 1e-15 of its mass — and every
+reported number is exact up to that grid: the mean, `P(delta > 0)`, and the interval by
+bisection on the mixture CDF. numpy only (scipy is not a declared dependency; the normal CDF is
+`math.erf`, as `hub.models.margin` already does it), deterministic (so `gate` stays pure: two
+calls on one frame return one `GateRun`), and present in every environment. NumPyro, Stan and
+MCMC diagnostics are not needed for a two-parameter model with a one-dimensional
+non-conjugate part. The grid size is a numerical setting, not a prior, and is declared
+`not_an_input`.
+
+## Rule 16 before the first real read: calibration and size (tests, `tests/unit/test_posterior.py`)
+
+1. **Simulation-based calibration.** Draw `(delta, tau)` from the prior, `delta_s`, and `gain_s`
+   around `delta_s` at a fixed `se_s` profile; fit; record the posterior CDF at the true `delta`
+   and at the true `tau` (the PIT, the continuous form of the SBC rank). 1,000 replicates per
+   cell; pass when a Kolmogorov–Smirnov distance from uniform stays under its 1% critical value
+   (1.63/√n). Cells: k = 3, 4, 5 at `se_s = S_REF` (the season noise equal to the scatter), and
+   k = 10 at `se_s = S_REF / 4` (#364's game-level shape: more seasons, tighter seasons).
+   **Positive control (rule 18):** data drawn with `prior_sd = 4 × S_REF` and fitted at
+   `S_REF` must fail the same KS bar at k = 4.
+2. **Null size of the costly tier.** At `delta = 0`, 4,000 trials per cell, the realised ADOPT
+   rate must be `≤ ALPHA + 2 × its Monte Carlo SE` (and REMOVE, by symmetry, the same). Cells:
+   k ∈ {3, 4, 5, 6} × `S_REF / se_s` ∈ {1, 1.5, 2} (the gates above span 0.5–1.8) × `tau` ∈ {0,
+   √(S_REF² − se_s²)} (no heterogeneity, and all the heterogeneity the frozen scale implies).
+   **A cell that fails is a finding, not a test to loosen**: it reopens the costly tier's bar
+   (the 2026-09-21 section's "what would reopen this"), and the test records which cell.
+3. **The reversible tier's check is regret, not size.** Its null ADOPT rate is 1/2 by
+   construction and the test pins that as a property, not a defect. What it must show: with
+   `delta` drawn from the prior, the posterior-mean rule's expected regret (`max(delta, 0)` minus
+   the realised gain of the action) is no larger than the t-interval rule's (`ADOPT` only when
+   the 95% t-interval over the k gains excludes zero), at k = 3, 4, 5.
+4. **Positive controls for the action itself (rule 18):** a planted `delta = 20 × S_REF`
+   ADOPTs on ≥ 99% of trials in both tiers, and `−20 × S_REF` REMOVEs on ≥ 99%
+   (`test_a_planted_enormous_effect_always_adopts`; `test_the_posterior_rule_s_null_size_is_controlled`
+   is check 2).
+5. **Sensitivity is exercised:** a fixture whose primary action and `s/4` action differ prints
+   *prior-sensitive*; one where they agree does not.
+
+## What lands, and what does not
+
+`gate()` gains an optional `prior`; `run_gate` and `Harness.decide` look it up by the gate's
+name. `GateRun` gains `posterior` (absent when not computed); the rendered report gains the
+posterior block after the per-season table. **The verdict word, its rule, the ledger entry and
+every published number are unchanged** — this is the transition's first landing, additive.
+`hub.models.posterior` is imported by `hub.models.experiment` alone, which is
+`CLOSURE_EXEMPT` and not descended into, so no gate's arm closure, ledger code digest or the
+weekly forward pin (#456) moves. Declaring the new constants moves `fitted_digest` once, as
+every new `chosen` constant does. **Not run by this ticket:** the posterior on any gate's real
+seasons; re-running the record is #358's and #311's work joined.
+
+## Amended 2026-10-18, before any real fit: two findings from the checks above, and one engine fix
+
+Written the same day, after the tests in *Rule 16 before the first real read* ran on synthetic
+data and before the posterior was fitted to any gate's real seasons. The design above is not
+edited; this records what the checks returned and the one change the engine needed.
+
+**1. The costly tier's null size fails under heterogeneity (check 2). This reopens `P_COSTLY`,
+which is the maintainer's.** At `tau = 0` every cell passes. At the heterogeneity `S_REF`
+implies (`tau = √(S_REF² − se²)`, the cells with `S_REF/se` = 1.5 and 2), the 0.9 bar's null
+ADOPT rate is **7.3–9.7%** and its REMOVE rate **7.2–10.0%** across k = 3–6, against a bar of
+`ALPHA + 2 MC SE` = 5.7% at 4,000 trials. Not loosened: the test is split into its passing
+half (`test_the_posterior_rule_s_null_size_is_controlled`, τ = 0) and the failing half, held as
+a **strict** `xfail` (`..._under_heterogeneity`) that names this finding, so a change of bar
+that fixes it fails the suite until the marker comes off. For the decision, from the same
+harness (8,000 trials a cell, worst cell k = 6, `S_REF/se` = 2): the null ADOPT rate is 10.1% at
+0.9, 7.2% at 0.925, **4.7% at 0.95**, 2.3% at 0.975; power at a 3-pooled-SE effect (τ = 0, k = 4)
+is 0.87, 0.80, **0.68**, 0.42.
+
+**2. A consistent effect's `P(delta > 0)` saturates below one.** Under `N(0, S_REF)` and
+`HalfNormal(S_REF)`, k gains of *any* size, all equal, read at most **0.9585 at k = 3, 0.9774 at
+k = 4, 0.9874 at k = 5, 0.9929 at k = 6**: the model puts the excess in `tau` (every season
+drawn high by chance) rather than in `delta`, whose normal prior has the lighter tail. Pinned
+by `test_a_consistent_effect_saturates_below_certainty`. It bounds finding 1's remedy: a costly
+bar at or above 0.9585 can never ADOPT a k = 3 gate (injury_type, component_calibration,
+injury_retention), so 0.975 is excluded for them by construction and 0.95 clears it by 0.0085.
+It also means the posterior *mean* of a large real effect sits near 2 `S_REF` however large the
+effect — td_dispersion's measured gain is about 8 `S_REF` — which is what this prior says and
+is printed, not adjusted.
+
+**3. Engine fix: the `tau` grid's upper end follows the data.** The pre-registered grid ended at
+`8 × tau_scale`. Finding 2's mechanism puts the posterior on `tau` far past that when the gains
+conflict with the prior: at gains of `100 × S_REF` (k = 4, `se = S_REF`) the truncated grid
+read a pooled mean of 5.8 where the integral is 2.02. Each fit's grid now ends at `8 ×
+max(tau_scale, max|gain| + max se)`, with nodes spaced as `u²` (dense near zero, where the prior's
+shape lives) and the Jacobian in the weights; `test_the_tau_grid_does_not_truncate_a_conflicting_posterior`
+holds the answer equal to one on a grid eight times as far at eight times the nodes, at 20, 100
+and 1000 `S_REF`. At every gain inside `20 × S_REF` the two grids agree to 1e-4, so no check
+above depended on it.
+
+**4. The digest moves, and no price does.** Declaring the five constants `chosen` moves
+`fitted_digest` `9f2d0b0c` → `58da3a91` and `config_digest` `839ceda9` → `f7aaf995` (re-pinned in
+`tests/unit/test_config.py` with the record). No prediction reads them. But `config_digest` is
+in every ledger key, so **each gate's next run starts a new width-history series**, and every
+prediction row carries a new version string. That is the cost of `chosen` over `not_an_input`
+(the declaration `ALPHA`, `POWER` and `FDR_Q` carry, for "nothing here predicts"); it is named
+here for the maintainer rather than chosen silently.
+
+## Amended 2026-10-21: `P_COSTLY` 0.9 → 0.95 (ADOPTED by the maintainer)
+
+**Decision, in the maintainer's words:** "ADOPTED: P_COSTLY 0.9 -> 0.95 (null size 4.7% at the
+worst cell, clears the k=3 ceiling of 0.9585). Amend the pre-registration, drop the xfail, rerun
+the gates." It closes the 2026-10-18 amendment's finding 1, on that amendment's own numbers.
+
+> *Recorded by AI, 2026-10-21, at the maintainer's instruction in session. The disposition is the maintainer's.*
+
+- **The costly tier is now:** ADOPT when `P(delta > 0 | data) > 0.95`, REMOVE when `< 0.05`,
+  SHOW between — the expected-utility action when a wrong switch costs nineteen times what a
+  right one gains. The bar is strict: exactly 0.95 is SHOW.
+- **Check 2 holds in every cell.** The strict `xfail` is removed; the null-size test
+  (`test_the_posterior_rule_s_null_size_is_controlled`) is again one assertion over every
+  pre-registered cell, both heterogeneity settings included, at the same 4,000 trials and the
+  same `ALPHA + 2 MC SE` bar, and passes.
+- **The ceiling it must stay under is held by a test.** `test_a_consistent_effect_saturates_below_certainty`
+  now also asserts `P_COSTLY` is below the k = 3 saturation (0.9585), so a later bar that the
+  three-season gates could never reach fails the suite rather than silently disabling ADOPT
+  for them. The margin is 0.0085.
+- **What it costs, from the 2026-10-18 table:** power at a 3-pooled-SE effect (k = 4, τ = 0)
+  falls from 0.87 to 0.68.
+- **Digest:** `fitted_digest` `58da3a91` → `f893f282`, `config_digest` `f7aaf995` → `e90a851d`;
+  no prediction reads it, and each gate's next ledger run starts a new series, as on 2026-10-18.
+- **Unchanged by #520 (2026-10-20), checked:** `S_REF` is the sd of the stored season *gains*,
+  which #520 does not move. **Named, not decided:** #520 rescales the pooled SE by `sqrt(k/(k-1))`
+  but deliberately leaves `per_season`'s `se` — the within-season bootstrap SD this section's
+  likelihood reads as `se_s` — raw, which is low by `sqrt((m-1)/m)` in `m` within-season
+  clusters (≤ 4.5% at `m ≥ TIE_MIN_CLUSTERS`, more below it). Whether the likelihood should read
+  the rescaled SE is a likelihood amendment for the maintainer, not part of this one.
+
+## Amended 2026-10-22: two review findings on the code against this section
+
+From the two-axis review (standards, spec) of the lane before it merged. Neither changes a
+number this section's checks produced.
+
+- **`SWITCHING_COST` is now declared.** "The constants" above pre-register the reversible
+  tier's switching cost as `chosen(0.0)`; the code had written that zero inline in
+  `action_codes`, so it was in no digest. It is now `posterior.SWITCHING_COST = chosen(0.0)`
+  and read there. `fitted_digest` `f893f282` → `0446c2c5`, `config_digest` `e90a851d` →
+  `7da635ca` (re-pinned in `tests/unit/test_config.py`); the value, and so every action, is
+  unchanged.
+- **The normal CDF is not `math.erf`.** "The engine" above says it is, "as `hub.models.margin`
+  already does it". The code uses Abramowitz & Stegun 7.1.26, vectorised in numpy, absolute
+  error under 1.5e-7: a per-element `math.erf` over the batched fits the checks run is the
+  slow path the quadrature exists to avoid. So the reported numbers are exact up to the grid
+  *and* that 1.5e-7 — far below every printed digit and both thresholds (0.95 and the sign at
+  zero). Recorded rather than changed.
 
 # Restated 2026-10-20 (#520): the SE under the t interval, the MDE and the power was biased low by sqrt((k-1)/k)
 
@@ -5022,6 +5466,57 @@ Each will show a lower null ADOPT/REMOVE rate and lower power than published: th
 now wider by the factor at that table's k. None was re-run here (each is a heavy simulation on a
 shared machine); the size direction is conservative, so no published null size is understated by
 the correction.
+
+**Re-run 2026-11-01 (#529), all four, one at a time, no code change** (the text above is kept).
+Where each restatement lives: 1. *Restated 2026-11-01 (#529)* after #388's *Results*; 2. the same
+heading after *Results (C)*; 3. `docs/weekly-forward.md`, *Re-run 2026-11-01 (#529)* below the
+2026-10-20 amendment; 4. ADR-0019, the paragraph after the 2026-10-06 (#418) restatement of the
+rule-16 table. Two things the list above did not foresee. (i) **"Lower null and lower power" holds
+for (C) and for the interval half, not for the raw output of items 1 and 4**: `gate` ships (C)
+since #381, so the harness's "shipped" column and `rule16_combined_power.py` read (C) today and
+come out *higher* than the (A)-era figures they were published against; like-for-like, the (A)
+read of the same frames is lower or equal everywhere (item 4: draft 0.0113 / 0.0324 → 0.0103 /
+0.0300; weekly blend 0.0186 / 0.1925 → 0.0168 / 0.1669). (ii) Under (A) the weekly path moved by
+nothing at four decimals (the rule was already shut by Abstentions); the correction shows in the
+interval-alone column (weekly δ=0.3, k=4, 260 rows: 0.138 → 0.100) and in (C).
+
+**Decisions that rested on a figure that moved — named, none changed.**
+
+- *`MIN_WEEKS = 6`* (`docs/weekly-forward.md`): chosen where "P(ADOPT) at +2.0 points a team-week
+  is under 0.47" at 6 weeks. Printed 0.4658; re-run **0.4105**. The justification holds, more
+  strongly.
+- *The #431 hold, flagged to the maintainer* ("14 weeks, all counted, gets P(ADOPT) = 0.35 at
+  +1.0"): re-run **0.3263**. The flag's direction is unchanged and stronger: the measurement
+  releases the held tickets on ADOPT even less often.
+- *The per-player amendment's cost of Thursday games* (`weekly-forward.md`, 2026-10-20, the most
+  weeks admissible falling to 8): P(ADOPT) at 8 weeks and +2.0 points was 0.6172, re-run
+  **0.5723** (0.2154 → **0.1865** at +1.0). #515's "stale" mark is now resolved; the direction the
+  amendment argued ("lower than at 9 or 10, SHOW likelier") holds.
+- *(C)'s adoption on #381* (ADR-0019, 2026-10-06): its stop condition was null ADOPT above 0.05
+  at k=4; 0.0140 / 0.0291 are now **0.0095 / 0.0204** (grid maximum 0.0351 → 0.0244). It passed
+  and passes with more room. The power cited for it (0.083 / 0.083, "about a hundredfold weekly,
+  tenfold draft") is now **0.060 / 0.060**, about seventy-five-fold and eightfold. The ADR's
+  conclusion (a Gate able to adopt, not a repaired one) stands.
+- *The draft ADOPT branch's rule-16 exemption* (ADR-0019 2026-09-21, restated #418 at 0.0075): the
+  corrected figure at the gate's own precision is 0.0075, and the stand-in figure it was first
+  stated at moved 0.0324 → 0.0300 (A). The exemption does not move.
+- *#388's "tie mechanism owns a minority of the k=4 gap"* (answer to #381): the share read off (A) is
+  12% / 25% weekly and 8% draft (was 17% / 32% and 10–11%): still a minority, k owns 75–92%. The
+  recommendation it fed (the pre-registered (C) options) is unchanged.
+- **Stale text left in `src/`, not edited here** (a docstring, no behaviour):
+  `src/hub/models/experiment.py` ~line 1244 quotes the (C) null and power "(0.014 weekly, 0.029
+  draft at k=4) and power (0.083 / 0.083)"; the corrected figures are 0.0095 / 0.0204 and 0.060 /
+  0.060. Not changed so that this ticket stays documentation-only (a `src/` edit calls for the full
+  combined gate run); a one-line follow-up.
+  *(Done 2026-11-01, #536: the docstring now carries the corrected figures, with the prior ones
+  kept in a dated note.)*
+- **Not re-run, and not on the list:** #418's `gate_horizon.py --rule16` table (the attribution
+  table with its 0.0001 / 0.0008 and 0.0014 / 0.0075) is a fifth heavy simulation through the same
+  `gate`; its (A)-rule headline cells are reproduced by this ticket's #388 re-run (weekly 0.0001 /
+  0.0007–0.0008, draft 0.0014 / 0.0075), but its factor-by-factor attribution percentages (73% / 19% /
+  5% / 2%) were not recomputed.
+  *(Done 2026-11-01, #536: see the restatement after #418's attribution paragraph; on (A) the
+  split is now 75% / 17% / 6% / 1%.)*
 
 **What is deliberately not changed: the per-season tie test.** `_disposition` calls a season a
 win at `gain >= 2 * se` over its within-season clusters, with `se` the same raw bootstrap SD —

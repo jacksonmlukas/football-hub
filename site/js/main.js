@@ -8,12 +8,16 @@ import { panel } from "./dom.js";
 import { ago, cap, pct } from "./format.js";
 import { boardBody } from "./panels/board.js";
 import { statusLine, statusRecords } from "./panels/footer.js";
-import { lineupHeadline } from "./panels/lineup.js";
+import { ledgerBody } from "./panels/ledger.js";
+import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
-import { chooseWeek, isArchived, renderSlate } from "./panels/slate.js";
-import { backtestStatement } from "./panels/statement.js";
+import { chooseSort, chooseWeek, isArchived, refreshLive, renderSlate } from "./panels/slate.js";
+import { backtestStatement, modelNote } from "./panels/statement.js";
+import { chooseCondition, studyBody } from "./panels/study.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
+import { bestLineupBody, healthBody, weekHeading } from "./panels/week.js";
+import { mount } from "./router.js";
 import { STATE, failureWarn, staleOf } from "./state.js";
 
 export async function render() {
@@ -45,6 +49,17 @@ export async function render() {
   } catch {
     slot.className = `statement ${STATE.unconfirmed}`;
     slot.innerHTML = `<p>The backtest statement could not be built from the track record.</p>`;
+  }
+
+  // The pointer on the other two views (#486): the same counts, one line, a link to the Record.
+  // Drawn beside the statement for the same reason, and guarded for the same one.
+  for (const id of ["mn-week", "mn-games"]) {
+    const note = document.getElementById(id);
+    try {
+      note.innerHTML = modelNote(tr);
+    } catch {
+      note.innerHTML = `Model numbers: unavailable. How they score: <a href="#/record">Record</a>.`;
+    }
   }
 
   // --- draft board (retires itself when a newer slate exists, #348)
@@ -88,6 +103,16 @@ export async function render() {
     document.getElementById("p-lineup").hidden = false;
     panel("p-lineup", { age: `synced ${ago(ros.generated_at)}`, stale: staleOf(rArt),
                         html: lineupHeadline(ros, staleOf(rArt)) });
+    // The rebuilt view (#484): the heading that states the decision, and the best lineup drawn
+    // 20 ways. An artifact without `swaps` or `quantiles` keeps the body above and shows neither.
+    const rebuilt = isRebuilt(ros);
+    const head = document.getElementById("week-head");
+    head.hidden = !rebuilt;
+    head.textContent = rebuilt ? weekHeading(ros, man) : "";
+    document.getElementById("p-best").hidden = !rebuilt;
+    if (rebuilt) {
+      panel("p-best", { age: "", stale: staleOf(rArt), html: bestLineupBody(ros) });
+    }
     panel("p-roster", {
       // Synced, not published. `generated_at` on this artifact is the roster parquet's own
       // date, because the CLI serves last-good without rewriting it -- so this is when ESPN
@@ -99,6 +124,8 @@ export async function render() {
     });
   } else {
     document.getElementById("p-lineup").hidden = true;
+    document.getElementById("week-head").hidden = true;
+    document.getElementById("p-best").hidden = true;
     panel("p-roster", {
       age: "",
       warn: failureWarn(rArt, "No roster yet. Run `python -m hub.season.roster --write`."),
@@ -113,9 +140,29 @@ export async function render() {
   // --- track record
   if (tr) {
     panel("p-record", { age: ago(tr.generated_at), stale: staleOf(trArt),
-                        html: trackRecordBody(tr) });
+                        html: trackRecordBody(tr, trArt) });
   } else {
     panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
+  }
+
+  // --- study: the leaderboard once #453 publishes one, the designed empty state until then.
+  // A missing or unreadable artifact is the empty state, never an error and never a blank.
+  const lb = await load("leaderboard");
+  if (lb && Array.isArray(lb.contestants) && lb.contestants.length) {
+    panel("p-study", { age: ago(lb.generated_at), stale: staleOf(findArt(man, "leaderboard")),
+                       html: studyBody(lb) });
+  } else {
+    panel("p-study", { age: "", html: studyBody(null) });
+  }
+
+  // --- the ledger: every verdict, drawn from the artifact and nothing else (#488)
+  const led = await load("ledger");
+  const ledArt = findArt(man, "ledger");
+  if (led && Array.isArray(led.rows)) {
+    panel("p-ledger", { age: `${led.rows.length} entries · ${ago(led.generated_at)}`,
+                        stale: staleOf(ledArt), html: ledgerBody(led) });
+  } else {
+    panel("p-ledger", { age: "", warn: failureWarn(ledArt, "No ledger published yet.") });
   }
 
   // --- survivor
@@ -159,6 +206,15 @@ export async function render() {
     });
   }
 
+  // --- pipeline health: every manifest artifact as a state chip with its age. On this view it
+  // replaces the footer's status line (the stylesheet hides the footer here). Guarded like the
+  // footer, so a record that cannot be read costs this panel and nothing else.
+  try {
+    panel("p-health", { age: "", html: healthBody(statusRecords(man)) });
+  } catch {
+    panel("p-health", { age: "", warn: "Pipeline health unavailable: an artifact record could not be read." });
+  }
+
 }
 
 // Poll only the slate. The other three panels read artifacts that change once a week, and
@@ -173,12 +229,22 @@ export async function tick() {
   // timer has nothing to add, and redrawing the panel under them would take their choice
   // away -- which is how a page teaches a reader not to click anything.
   if (!manifestCache || isArchived()) return;
-  await renderSlate(manifestCache);
+  await refreshLive(manifestCache);
 }
 
 // Switching weeks. Delegated from the document because the panel is rebuilt through
 // innerHTML on every render, so a listener bound to the link would not survive one.
 export function onClick(e) {
+  const cond = e.target.closest?.("[data-cond]");
+  if (cond) {
+    chooseCondition(cond);
+    return;
+  }
+  const sort = e.target.closest?.("[data-sort]");
+  if (sort) {
+    chooseSort(sort.getAttribute("data-sort"));
+    return;
+  }
   const link = e.target.closest?.("[data-preds]");
   if (!link) return;
   e.preventDefault();
@@ -191,6 +257,9 @@ export function onClick(e) {
 export function start() {
   document.getElementById("boot-status").hidden = true;
   document.addEventListener("click", onClick);
+  // The router needs a window (a hash, `hashchange`); the contract tests' stub document has no
+  // window, and they import this module without wanting a view shown.
+  if (typeof window !== "undefined") mount(window, document);
   render().then(async () => { manifestCache = await load("manifest"); });
   setInterval(tick, LIVE_POLL_MS);
 }

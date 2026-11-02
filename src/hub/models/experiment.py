@@ -12,7 +12,7 @@ season-setup loop was byte-identical in both; and each asked `nflverse` for its 
 
 What lives here is the protocol, not the experiment. The arms stay with the harness that owns
 the question -- a gate is only meaningful against a specific incumbent, and hiding that behind
-a generic interface would be the mistake `CONTEXT.md` warns about when it separates a screen
+a generic interface would be the mistake `GLOSSARY.md` warns about when it separates a screen
 from a gate.
 
 `hub.models.measure` was folded in on 2026-08-27. It held `realised_ppg` and `summarise`, and
@@ -63,6 +63,7 @@ from hub.ledger import (  # noqa: F401 -- re-exported; see below
     WidthEntry,
     code_digest,
 )
+from hub.models.posterior import GatePosterior, Prior, assess, posterior_report, prior_for
 from hub.names import player_key
 
 # One column list, so both harnesses hit one cache entry. `nflverse._cache_path` keys on the
@@ -769,7 +770,7 @@ class Field(Enum):
     """What a summary has to say about one of its fields. Three states, three answers.
 
     `NO_SLOT` names a dictionary key that is not there. That is this summary's own slot and
-    not `CONTEXT.md`'s draft **Slot**, which is a pick position.
+    not `GLOSSARY.md`'s draft **Slot**, which is a pick position.
     """
 
     VALUE = "value"        # a number, a measured zero included
@@ -1165,7 +1166,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     its own in `tests/contracts/test_every_check_has_a_positive_control.py` -- it is behind
     the seam, and `gate`'s registry entry names the frame-in controls that exercise it.
 
-    `CONTEXT.md` defines a **Gate** as exactly that question, and three modules answered it
+    `GLOSSARY.md` defines a **Gate** as exactly that question, and three modules answered it
     with three copies of these branches. They had diverged: the weekly gate required the sign
     to hold in every held-out season, the lineup gate and the draft backtest adopted on the
     pooled interval alone. Nobody chose that.
@@ -1228,7 +1229,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     #335's (A) a tie blocked **both** directions: ADOPT needed a win in every season and REMOVE
     a loss in every season, so one abstaining season forced SHOW and the rule's power was about
     0.0008 weekly and 0.0075 draft at k=4 (`docs/gate-power.md`, #388/#418). The every-season
-    half now reads the *resolved* seasons -- those with a win or a loss (CONTEXT.md,
+    half now reads the *resolved* seasons -- those with a win or a loss (GLOSSARY.md,
     **Disposition**) -- and an **Abstention** is never counted as a win: ADOPT needs at least
     one resolved season and every resolved season a win; REMOVE the mirror. **With no resolved
     season a Gate can neither adopt nor remove** (SHOW, "0 resolved of k, k abstained"; not
@@ -1240,8 +1241,13 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     whose pooled interval crosses zero is SHOW. **Every sentence carries the count** ("3
     resolved of 4, 1 abstained"), never a bare verdict, and `GateRun.resolved`/`.abstained` and
     the ledger entry carry it as numbers. `docs/gate-power.md` (*(C) before it lands*) has the
-    null (0.014 weekly, 0.029 draft at k=4) and power (0.083 / 0.083); ADR-0019's 2026-10-06
-    amendment has the decision. #375's posterior supersedes this rule when it lands.
+    null and power; ADR-0019's 2026-10-06 amendment has the decision. #375's posterior
+    supersedes this rule when it lands.
+
+    *Restated 2026-11-01 (#529, #536; prior figures kept).* On the corrected SE (#520) the null
+    is **0.0095 weekly, 0.0204 draft** and the power **0.060 / 0.060** at k=4 (weekly 260 rows,
+    delta 0.3; draft 20 rooms, delta 2.0). As first written, before the correction: null 0.014
+    weekly, 0.029 draft; power 0.083 / 0.083.
 
     **A gate that measured no ceiling is NOT-RUNNABLE in both directions, since #363 (S6),
     option 1.** Before this, the precondition fired only when *both* the MDE and the ceiling
@@ -1284,7 +1290,7 @@ def _verdict(summary: dict, seasons: pl.DataFrame, actions: Actions,
     t_hi = summary.get("t_hi", float("nan"))
     has_interval = reading(summary, "t_lo") is Field.VALUE
     # The tally keeps its `tied` word (the code's `ties` field and every recorded sentence
-    # say it); `count` is the sentence #381 requires beside every verdict, in CONTEXT.md's
+    # say it); `count` is the sentence #381 requires beside every verdict, in GLOSSARY.md's
     # words: a Gate never prints a bare ADOPT or REMOVE, and never a bare SHOW either.
     tally = f"won {won}, tied {tied}, lost {lost} of {total} seasons"
     count = f"{resolved} resolved of {total}, {tied} abstained"
@@ -1357,10 +1363,13 @@ class GateRun(NamedTuple):
     lines: list[str]
     stamped: pl.DataFrame
     # #381: how many of the seasons were *resolved* (a win or a loss) and how many abstained
-    # (CONTEXT.md, **Abstention**). `None` on a `GateRun` a caller hand-builds without a
+    # (GLOSSARY.md, **Abstention**). `None` on a `GateRun` a caller hand-builds without a
     # seasons frame to count (`starter_change`'s degraded return); `gate` always sets both.
     resolved: int | None = None
     abstained: int | None = None
+    # #375: the posterior on the pooled effect, printed beside `verdict` and deciding nothing
+    # during the transition (`hub.models.posterior`). `None` when `gate` was given no prior.
+    posterior: GatePosterior | None = None
 
 
 def _resolved_and_abstained(seasons: pl.DataFrame) -> tuple[int, int]:
@@ -1372,7 +1381,7 @@ def _resolved_and_abstained(seasons: pl.DataFrame) -> tuple[int, int]:
 
 def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequence[str],
         ceiling: Ceiling | None, actions: Actions, void: str | None = None,
-        seed: int = 0, bootstrap: int = BOOTSTRAP) -> GateRun:
+        seed: int = 0, bootstrap: int = BOOTSTRAP, prior: Prior | None = None) -> GateRun:
     """Did this beat the simplest thing that already works? A paired frame in, a verdict out.
 
     **#386: the one seam.** Consolidation moves where the rule lives; it does not move what
@@ -1402,13 +1411,20 @@ def gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Sequenc
     **The rule itself, and every branch VOID/NOT-RUNNABLE/ADOPT/REMOVE/SHOW decides, is
     `_verdict`'s docstring**, unchanged by this move: read it there rather than restated here,
     which is the whole point of a rule that has one home.
+
+    **`prior` (#375)** is the gate's pre-registered prior (`hub.models.posterior.prior_for`).
+    Given one, the returned `GateRun.posterior` holds the posterior on the pooled effect, read
+    off the same `seasons` frame's `gain` and `se`, and its expected-utility action -- beside
+    the verdict word, which it does not change. `None`, the default, assesses nothing.
     """
     top = None if ceiling is None else float(np.asarray(ceiling.diff, dtype=float).mean())
     summary = summarise(paired, cluster=cluster, bootstrap=bootstrap, seed=seed, ceiling=top)
     seasons = per_season(paired, within=within, bootstrap=bootstrap, seed=seed)
     verdict = _verdict(summary, seasons, actions, void=void)
     resolved, abstained = _resolved_and_abstained(seasons)
-    return GateRun(summary, seasons, verdict, [], paired, resolved, abstained)
+    posterior = None if prior is None else assess(
+        seasons["gain"].to_list(), seasons["se"].to_list(), prior, verdict[0])
+    return GateRun(summary, seasons, verdict, [], paired, resolved, abstained, posterior)
 
 
 def ceiling_check(summary: Mapping[str, float], *, places: int = 2) -> list[str]:
@@ -1568,14 +1584,17 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
     means one wiring, and it is the lineup gate's. No published weekly verdict was reached
     with a ceiling in hand, so none moves.
 
-    The report is the block, the per-season table (#382), the small-sample lines, the width
-    review, the ceiling check and the stamp -- in that order for every gate, so a reader of one
-    gate's output can read another's. The stamp is said on every run and not only when a frame
-    is written, for the reason `stamped_for_publication` gives: the reader deciding whether two
-    runs compare is at the terminal.
+    The report is the block, the per-season table (#382), the posterior block (#375), the
+    small-sample lines, the width review, the ceiling check and the stamp -- in that order for
+    every gate, so a reader of one gate's output can read another's. The stamp is said on every
+    run and not only when a frame is written, for the reason `stamped_for_publication` gives:
+    the reader deciding whether two runs compare is at the terminal.
     """
+    prior = prior_for(name)
     core = gate(paired, cluster=cluster, within=within, ceiling=ceiling, actions=actions,
-               void=void, seed=seed, bootstrap=bootstrap)
+               void=void, seed=seed, bootstrap=bootstrap, prior=prior)
+    if core.posterior is None:   # no S_REF for `name`: say so rather than print nothing
+        core = core._replace(posterior=assess([], [], None, core.verdict[0]))
     summary, seasons, verdict = core.summary, core.seasons, core.verdict
     stamped, stamp = stamped_for_publication(paired, boards)
     # The ledger's own digests come off the same stamp every other row in `stamped` carries,
@@ -1606,13 +1625,15 @@ def run_gate(paired: pl.DataFrame, *, cluster: Sequence[str] | None, within: Seq
         *paired_report(summary, arm_a=arm_a, arm_b=arm_b, unit=unit, places=places,
                        show_n=show_n, ceiling_arm=None if ceiling is None else ceiling.arm),
         *per_season_report(seasons, places=places),
+        *posterior_report(core.posterior, verdict[0], unit=unit, places=places),
         *small_sample_report(summary, seasons, unit=unit, places=places),
         *comparison.lines,
         *ceiling_check(summary, places=places),
         "",
         *stamp.split("\n"),
     ]
-    return GateRun(summary, seasons, verdict, lines, stamped, core.resolved, core.abstained)
+    return GateRun(summary, seasons, verdict, lines, stamped, core.resolved, core.abstained,
+                   core.posterior)
 
 
 # --- one declaration per gate (#387) -----------------------------------------------------
@@ -1736,4 +1757,5 @@ class Harness(NamedTuple):
         return gate(paired, cluster=SEASON_CLUSTER, within=self.within,
                    ceiling=self.ceiling(paired if ceiling_frame is None else ceiling_frame),
                    actions=self.actions, void=void, seed=seed,
-                   bootstrap=self.bootstrap if bootstrap is None else bootstrap)
+                   bootstrap=self.bootstrap if bootstrap is None else bootstrap,
+                   prior=prior_for(self.name))

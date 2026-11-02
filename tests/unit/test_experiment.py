@@ -927,7 +927,7 @@ def test_a_planted_tie_and_a_planted_loss_are_recorded_in_the_ledger(tmp_path):
 
 # --- the Gate, which was a rule three modules each remembered --------------------
 #
-# `CONTEXT.md` defines a Gate exactly -- does this beat the simplest thing that already
+# `GLOSSARY.md` defines a Gate exactly -- does this beat the simplest thing that already
 # works? -- and three modules answered it with the same three branches on a confidence
 # interval. They had already diverged: the weekly gate required the sign to hold in every
 # held-out season before adopting, the lineup gate and the draft backtest adopted on the

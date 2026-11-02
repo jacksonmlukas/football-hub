@@ -2,6 +2,18 @@
 <meta charset="utf-8">
 <title>football hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<!-- Link-preview card (#489). One page, one image: site/og-image.png, rendered from the This week
+     view by scripts/render_og_image.py. `og:image` must be absolute, so it names the Pages root. -->
+<meta property="og:title" content="football hub">
+<meta property="og:description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<meta property="og:image" content="https://jacksonmlukas.github.io/football-hub/og-image.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jacksonmlukas.github.io/football-hub/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="football hub">
+<meta name="twitter:description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<meta name="twitter:image" content="https://jacksonmlukas.github.io/football-hub/og-image.png">
 <!-- Inline so the page makes exactly zero requests it cannot satisfy from this repo. -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🏈</text></svg>">
 <!--
@@ -17,8 +29,9 @@
 <style>
   /* Self-hosted type (ADR-0026, #477). Same-origin WOFF2 under site/fonts/, Latin subset, SIL OFL
      licences beside them. `swap` plus the system fallbacks mean a failed load never blanks text.
-     Only declared here: nothing below uses these faces yet, the visual system that does is #478,
-     and a face nothing references is never fetched. */
+     Applied by #478 through the three `--font-*` variables below: display (Big Shoulders) for
+     the wordmark, view titles and the lineup gain; text (Geist) for everything else; mono
+     (Geist Mono) for hashes and digests only. A face nothing references is never fetched. */
   @font-face { font-family: "Big Shoulders Display"; font-weight: 700; font-style: normal;
                font-display: swap; src: url("fonts/BigShouldersDisplay-Bold.woff2") format("woff2"); }
   @font-face { font-family: "Geist"; font-weight: 400; font-style: normal;
@@ -34,35 +47,78 @@
     --font-text: "Geist", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
+  /* Every colour on the page is a token defined here and redefined in the dark block below; no
+     rule outside these two blocks names a colour (tests/contracts/test_dashboard_escapes.py greps
+     for it). The palette is a football field:
+       chalk  --bg / --card   the page and its cards, the painted lines of --line
+       ink    --fg / --muted  text
+       turf   --turf*         structure: the bar, view titles, zone rules
+       pylon  --pylon, --accent  the one accent, for the call and for live
+       state inks --st-*      the four-state grammar (#347), see "Confidence grammar". */
   :root {
-    --bg: #fbfbfa; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
-    --card: #fff; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
-    --good: #15803d; --bad: #b91c1c; --accent: #1d4ed8;
+    --bg: #f6f5ef; --fg: #1b1f1c; --muted: #596058; --line: #dcdace;
+    --card: #fffffd; --warn-bg: #fff7ed; --warn-fg: #9a3412; --warn-line: #fdba74;
+    --good: #15803d; --bad: #b91c1c;
+    --turf: #1f5136; --turf-deep: #173d2a; --on-turf: #f6f5ef;
+    --pylon: #c2410c; --pylon-lit: #fdba74; --on-pylon: #fffffd;
+    --accent: var(--pylon);
     /* The confidence grammar (#347): one token set, four states. See "Confidence grammar". */
-    --st-frozen-rule: #374151;
+    --st-frozen-rule: #2c3a31;
     --st-live-tint: color-mix(in srgb, var(--accent) 9%, transparent);
     --st-stale-ink: #5b6170; --st-stale-rule: #9ca3af;
     --st-unc-ink: #6d28d9; --st-unc-hatch: rgba(109, 40, 217, 0.22);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0f1115; --fg: #e8e8e8; --muted: #9ca3af; --line: #262a33;
-      --card: #161920; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
-      --good: #4ade80; --bad: #f87171; --accent: #60a5fa;
-      --st-frozen-rule: #d1d5db;
+      --bg: #0f1310; --fg: #e8ebe6; --muted: #9aa49c; --line: #262d28;
+      --card: #161b17; --warn-bg: #2a1c0d; --warn-fg: #fbbf24; --warn-line: #78350f;
+      --good: #4ade80; --bad: #f87171;
+      --turf: #7cc79f; --turf-deep: #0b1f14; --on-turf: #e8ebe6;
+      --pylon: #fb923c; --pylon-lit: #fdba74; --on-pylon: #1b1305;
+      --st-frozen-rule: #d1d9d3;
       --st-live-tint: color-mix(in srgb, var(--accent) 14%, transparent);
       --st-stale-ink: #a3aab8; --st-stale-rule: #5b6270;
       --st-unc-ink: #c4b5fd; --st-unc-hatch: rgba(196, 181, 253, 0.28);
     }
   }
   * { box-sizing: border-box; }
+  /* Tabular figures everywhere: a column of numbers lines up whether or not its cell remembered
+     to say `num`. */
   body {
-    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
-    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 var(--font-text); font-variant-numeric: tabular-nums;
   }
-  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
-           margin-bottom: 1.25rem; }
-  h1 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+  /* The sticky bar (#478): wordmark, season and week, the five views. Turf, full width; its
+     content is capped to the page column below. It keeps its own transition name so a view
+     change crossfades the content and leaves the bar where it is. */
+  .bar { position: sticky; top: 0; z-index: 10; background: var(--turf-deep);
+         color: var(--on-turf); border-bottom: 3px solid var(--pylon);
+         view-transition-name: bar; }
+  .bar-in { max-width: 1080px; margin: 0 auto; padding: 0.55rem 1rem; display: flex;
+            align-items: baseline; flex-wrap: wrap; gap: 0.15rem 1.25rem; }
+  .wordmark { font: 700 1.55rem/1 var(--font-display); letter-spacing: 0.02em; margin: 0;
+              text-transform: uppercase; }
+  .bar .sub { color: var(--on-turf); opacity: 0.8; font-size: 0.82rem; }
+  .bar nav { display: flex; flex-wrap: wrap; gap: 0 0.25rem; margin-left: auto; }
+  .bar nav a { color: var(--on-turf); text-decoration: none; font-weight: 500;
+               font-size: 0.9rem; padding: 0.35rem 0.55rem; border-bottom: 2px solid transparent; }
+  .bar nav a:hover { border-bottom-color: var(--on-turf); }
+  .bar nav a[aria-current="page"] { border-bottom-color: var(--pylon-lit); font-weight: 600; }
+  .bar a:focus-visible { outline: 2px solid var(--pylon-lit); outline-offset: 1px; }
+  /* The page column: capped near 1080px on a wide screen, 1rem of gutter on a phone. */
+  .page { max-width: 1080px; margin: 0 auto; padding: 1.25rem 1rem 1.5rem; }
+  /* #484: on a phone the lineup call must reach the end of its swap cards within 390x844. The
+     page-level backtest statement used to sit above the views and was ordered below this one; it
+     lives in the Record view now (#486), so only the footer is ordered. */
+  @media (max-width: 480px) {
+    main.page:has(#v-week:not([hidden])) { display: flex; flex-direction: column; }
+    main.page:has(#v-week:not([hidden])) > footer { order: 2; }
+    main.page:has(#v-week:not([hidden])) { padding-top: 0.75rem; }
+    /* The zone title repeats what the week heading says ("Week 6: make two changes"). */
+    #z-week:has(#week-head:not([hidden])) > .zone-head { display: none; }
+  }
+  .view[hidden] { display: none; }
+  .page a { color: var(--turf); }
   .sub { color: var(--muted); font-size: 0.85rem; }
   /* Two zones (#350). The page is ordered by when its data changes: this week first, the record
      one scroll down. A zone is a full-width band of its own, never a column track shared with
@@ -70,9 +126,10 @@
      ranking of the page. */
   .zone { margin-top: 1.75rem; }
   .zone-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
-               border-bottom: 2px solid var(--st-frozen-rule); margin: 0 0 0.9rem;
+               border-bottom: 2px solid var(--turf); margin: 0 0 0.9rem;
                padding-bottom: 0.35rem; }
-  .zone-title { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; }
+  .zone-title { font: 700 1.6rem/1.1 var(--font-display); margin: 0; letter-spacing: 0.02em;
+                text-transform: uppercase; color: var(--turf); }
   .zone-when { color: var(--muted); font-size: 0.8rem; }
   .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); }
   .grid > .wide { grid-column: 1 / -1; }
@@ -80,8 +137,8 @@
   #boot-status[hidden] { display: none; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
             padding: 1rem 1.1rem; min-width: 0; }
-  h3 { font-size: 0.95rem; margin: 0 0 0.15rem; display: flex; align-items: center;
-       gap: 0.5rem; }
+  h3 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.15rem; display: flex;
+       align-items: center; gap: 0.5rem; }
   .age { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: auto; }
   .warn { background: var(--warn-bg); color: var(--warn-fg);
           border: 1px solid var(--warn-line); border-radius: 6px;
@@ -100,8 +157,11 @@
            border-top: 1px solid var(--line); padding-top: 0.8rem; }
   footer .status { margin: 0; line-height: 1.6; }
   footer .down { color: var(--st-stale-ink); font-weight: 600; }
+  /* Mono is for hashes and digests only (#478): `.digest`. A command in prose is still `code`,
+     in the text face, so the one monospace use on the page means one thing. */
   code { font-size: 0.85em; background: var(--line); padding: 0.05rem 0.3rem;
          border-radius: 3px; }
+  code.digest { font-family: var(--font-mono); font-size: 0.8em; }
 
   /* Confidence grammar (#347). Every number is frozen, live, stale or unconfirmed, and the
      page says which by how it draws the number rather than by a footnote under it:
@@ -133,10 +193,11 @@
   .statement .thin { display: block; margin-top: 0.2rem; }
   /* The lineup call (#352): the gain at display size, one decisive jump above everything else
      on the page, in tabular numerals and the system stack. */
-  .lineup-gain { font-size: 3.2rem; font-weight: 700; line-height: 1.05; margin-top: 0.4rem;
-                 letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-  .lineup-gain .unit { font-size: 0.95rem; font-weight: 400; color: var(--muted);
-                       letter-spacing: 0; }
+  .lineup-gain { font-family: var(--font-display); font-size: 4rem; font-weight: 700;
+                 line-height: 1; margin-top: 0.4rem; letter-spacing: 0.01em;
+                 color: var(--pylon); font-variant-numeric: tabular-nums; }
+  .lineup-gain .unit { font-family: var(--font-text); font-size: 0.95rem; font-weight: 400;
+                       color: var(--muted); letter-spacing: 0; }
   .lineup-changes { margin: 0.25rem 0 0; font-size: 0.95rem; }
   .lineup-call { font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0; }
   .lineup-totals { color: var(--muted); font-size: 0.88rem; margin: 0.25rem 0 0;
@@ -146,36 +207,247 @@
   .swaps li:last-child { border-bottom: 0; }
   .swaps .arrow { color: var(--muted); padding: 0 0.35rem; }
   .legend { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0; line-height: 1.5; }
-  .tag { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
-         padding: 0.05rem 0.4rem; border-radius: 4px; text-transform: uppercase; }
-  .tag.frozen { background: var(--line); color: var(--fg); }
-  .tag.live { background: var(--accent); color: #fff; }
-  .tag.live::before { content: "● "; animation: pulse 2s ease-in-out infinite; }
-  .tag.stale { background: var(--st-stale-rule); color: var(--bg); }
-  .tag.unconfirmed { border: 1px dashed var(--st-unc-ink); color: var(--st-unc-ink); }
+  /* The four state chips (#478), built by `chipFrozen/Live/Stale/Unconfirmed` in js/state.js.
+     Each state differs in glyph, outline and fill, so none rests on colour alone:
+       frozen       lock,     solid outline, plain field
+       live         dot,      no outline, filled with the accent, the dot pulses
+       stale        clock,    dotted outline, the age rides inside the chip
+       unconfirmed  question, dashed outline, hatched field */
+  .chip { display: inline-flex; align-items: center; gap: 0.3rem; vertical-align: baseline;
+          font-size: 0.68rem; font-weight: 600; letter-spacing: 0.03em; line-height: 1.5;
+          padding: 0 0.45rem; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+  .chip .glyph { flex: none; }
+  .chip-age { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .chip-age::before { content: "· "; }
+  .chip-frozen { border: 1.5px solid var(--st-frozen-rule); color: var(--fg); }
+  .chip-live { background: var(--pylon); color: var(--on-pylon); border: 1.5px solid var(--pylon); }
+  .chip-live .glyph { animation: pulse 2s ease-in-out infinite; }
+  .chip-stale { border: 1.5px dotted var(--st-stale-rule); color: var(--st-stale-ink); }
+  .chip-unconfirmed { border: 1.5px dashed var(--st-unc-ink); color: var(--st-unc-ink);
+                      background: repeating-linear-gradient(135deg, var(--st-unc-hatch) 0 2px,
+                                                            transparent 2px 7px); }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
-  @media (prefers-reduced-motion: reduce) { .tag.live::before { animation: none } }
+  @media (prefers-reduced-motion: reduce) { .chip-live .glyph { animation: none } }
+  /* This week (#484). The heading states the decision; swap cards carry the call's moves; the
+     best lineup is a list of rows, each with a 20-dot plot on a shared 0-40 axis. Colour comes
+     from the tokens only: the dots are turf, the projection line is the accent, an incoming
+     player's row is tinted turf. The footer's status line gives way to the pipeline-health
+     panel on this view. */
+  :root { --incoming-tint: color-mix(in srgb, var(--turf) 12%, transparent); }
+  .week-head { display: block; font: 700 1.9rem/1.1 var(--font-display); margin: 0 0 0.9rem;
+               letter-spacing: 0.01em; color: var(--fg); }
+  .week-head[hidden] { display: none; }
+  main:has(#v-week:not([hidden])) > footer { display: none; }
+  .swap-cards { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+  .swap-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.75rem;
+               min-width: 0; }
+  .swap-pair { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem; }
+  .swap-side { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem;
+               min-width: 0; }
+  .swap-out s { color: var(--muted); }
+  .swap-proj { color: var(--muted); font-size: 0.8rem; }
+  .swap-why { margin: 0.4rem 0 0; font-size: 0.9rem; }
+  .bl-list { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+  .bl-row { display: grid; grid-template-columns: 2.4rem 1fr auto; gap: 0 0.5rem;
+            align-items: baseline; padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--line); }
+  .bl-row:last-child { border-bottom: 0; }
+  .bl-incoming { background: var(--incoming-tint); border-radius: 6px; }
+  .bl-pos { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+  .bl-name { min-width: 0; overflow-wrap: anywhere; }
+  .bl-new { font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.03em; color: var(--turf); border: 1px solid var(--turf);
+            border-radius: 4px; padding: 0 0.3rem; }
+  .bl-proj { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bl-dots { grid-column: 1 / -1; }
+  .bl-plot { display: block; width: 100%; height: 18px; overflow: visible; }
+  .bl-axis, .bl-tick { stroke: var(--line); stroke-width: 1; }
+  .bl-dot { fill: var(--turf); fill-opacity: 0.75; }
+  .bl-mu { stroke: var(--pylon); stroke-width: 2; }
+  .bl-axis-head { display: flex; justify-content: space-between; color: var(--muted);
+                  font-size: 0.7rem; margin: 0.6rem 0 0 3rem; }
+  .bl-none { margin: 0; font-size: 0.8rem; }
+  .bl-bench { margin-top: 0.6rem; }
+  .bl-bench summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+  .bl-unproj { list-style: none; margin: 0.2rem 0 0; padding: 0; font-size: 0.85rem; }
+  .health { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap;
+            gap: 0.4rem 1.25rem; font-size: 0.85rem; }
+  .health li { min-width: 0; }
+  /* Games (#485). One tile per game; the grid goes from one column on a phone to two and then
+     three. Colour is tokens only: the field is turf, the end zones a deeper turf, the 80% band the
+     turf at partial opacity with soft edges, the expected margin the pylon accent. Nothing here
+     animates, so reduced motion has nothing to switch off. */
+  :root { --field-tint: color-mix(in srgb, var(--turf) 10%, transparent);
+          --ez-tint: color-mix(in srgb, var(--turf) 26%, transparent); }
+  .gt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.7rem 0 0;
+                 font-size: 0.82rem; }
+  .gt-controls button, .gt-info { font: inherit; font-size: 0.78rem; color: var(--fg);
+        background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+        padding: 0.25rem 0.6rem; cursor: pointer; }
+  .gt-controls button[aria-pressed="true"] { border-color: var(--turf); color: var(--turf);
+        font-weight: 600; }
+  .gt-controls button:focus-visible, .gt-info:focus-visible { outline: 2px solid var(--pylon);
+        outline-offset: 1px; }
+  .game-grid { display: grid; gap: 0.8rem; grid-template-columns: minmax(0, 1fr); margin-top: 0.8rem; }
+  @media (min-width: 640px) { .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 960px) { .game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .game-tile { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.8rem;
+               min-width: 0; background: var(--card); }
+  .gt-title { font: 700 1.35rem/1.1 var(--font-display); margin: 0; letter-spacing: 0.02em;
+              text-transform: uppercase; }
+  .gt-at { font: 400 0.8rem var(--font-text); color: var(--muted); text-transform: none; }
+  .gt-prob { margin: 0.2rem 0 0; font-size: 0.95rem; }
+  .gt-prob b { font-size: 1.15rem; }
+  .gt-wins { color: var(--muted); }
+  .gt-strip { display: block; width: 100%; height: auto; margin-top: 0.35rem; overflow: visible; }
+  .gt-field { fill: var(--field-tint); }
+  .gt-ez { fill: var(--ez-tint); }
+  .gt-grid { stroke: var(--line); stroke-width: 1; }
+  .gt-tie { stroke: var(--muted); stroke-width: 1.5; }
+  .gt-stop { stop-color: var(--turf); }
+  .gt-pylon { stroke: var(--pylon); stroke-width: 2.5; }
+  .gt-pylon-cap { fill: var(--pylon); }
+  .gt-strip text { font: 500 9px var(--font-text); fill: var(--muted); }
+  .gt-strip .gt-ez-name { fill: var(--fg); font-weight: 600; }
+  .gt-strip .gt-pylon-label { fill: var(--fg); font-weight: 600; font-size: 10px; }
+  .gt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; margin-top: 0.5rem;
+             font-size: 0.8rem; min-width: 0; }
+  .gt-foot .digest { margin-left: auto; color: var(--muted); }
+  .gt-live { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.4rem;
+             min-width: 0; margin-right: auto; }
+  .gt-nostart { color: var(--muted); white-space: nowrap; }
+  .gt-score { font-weight: 600; white-space: nowrap; }
+  .gt-livebox { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.4rem;
+                padding: 0.1rem 0.35rem; border-radius: 4px; }
+  .gt-pop { width: min(24rem, calc(100vw - 2rem)); background: var(--card); color: var(--fg);
+            border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 1rem; }
+  .gt-pop h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+  .gt-pop dl { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; margin: 0;
+               font-size: 0.85rem; }
+  .gt-pop dt { color: var(--muted); }
+  .gt-pop dd { margin: 0; overflow-wrap: anywhere; }
+  .gt-vs { margin-top: 0.15rem; }
+  /* The Ledger (#488): one row per verdict. The verdict is a block above the name at every
+     width (a phone is the width a reader meets first), set in the display face. Colours are the
+     #478 tokens only: loss for a removal, turf for what stayed, muted for no effect, the
+     unconfirmed ink for a claim that is not established. */
+  .lg-intro { margin: 0.6rem 0 0; font-size: 0.9rem; line-height: 1.5; }
+  .lg-list { list-style: none; margin: 0.8rem 0 0; padding: 0; }
+  .lg-row { display: grid; gap: 0.1rem; padding: 0.6rem 0; border-top: 1px solid var(--line);
+            min-width: 0; }
+  .lg-verdict { display: block; font: 700 1.25rem/1.1 var(--font-display); letter-spacing: 0.03em;
+                text-transform: uppercase; }
+  .lg-loss { color: var(--bad); }
+  .lg-kept { color: var(--turf); }
+  .lg-null { color: var(--muted); }
+  .lg-unconfirmed { color: var(--st-unc-ink); }
+  .lg-name { font-weight: 600; overflow-wrap: anywhere; }
+  .lg-figure { color: var(--muted); font-size: 0.82rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .lg-links { font-size: 0.8rem; display: flex; gap: 0.75rem; }
+  .lg-sub { font: 700 1.1rem/1.2 var(--font-display); margin: 1.2rem 0 0.2rem; letter-spacing: 0.02em; }
+  .lg-steps { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.5; }
+  .lg-method { margin: 0.3rem 0 0; font-size: 0.88rem; line-height: 1.5; }
+
+  /* Record (#486). The counts as chips, then one sentence at reading size, then the curve. The
+     bullet rows draw the claim as a tick, its tolerance as a band and the measured coverage as the
+     bar; colour is tokens only (turf for the measure, the accent for the claim). Nothing animates,
+     so reduced motion has nothing to switch off. */
+  .model-note { margin: 0.9rem 0 0; font-size: 0.82rem; color: var(--muted); }
+  .rec-chips { margin: 0.2rem 0 0; display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; }
+  .rec-sentence { font: 700 1.5rem/1.2 var(--font-display); letter-spacing: 0.01em; margin: 0.9rem 0 0;
+                  color: var(--fg); }
+  .rec-ll { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
+  .rec-older { margin-top: 0.6rem; }
+  .rec-older summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+  .rb-head { margin: 1.1rem 0 0; font-size: 0.95rem; }
+  .rb-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+  .rb-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.6rem;
+            align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
+  .rb-row:last-child { border-bottom: 0; }
+  .rb-name { font-weight: 600; grid-column: 1; }
+  .rb-text { grid-column: 1; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rb-text b { color: var(--fg); }
+  .rb-chip { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  .rb-bar { grid-column: 1 / -1; }
+  .rb-plot { display: block; width: 100%; height: 14px; }
+  .rb-band { fill: var(--field-tint); stroke: var(--line); stroke-width: 1; }
+  .rb-measure { fill: var(--turf); fill-opacity: 0.8; }
+  .rb-claim { stroke: var(--accent); stroke-width: 2; }
+  /* Study (#487). The leaderboard's whiskers use tokens only: turf for the dot, the accent for the
+     zero line (the betting market). Baselines are greyed with the muted ink; nothing animates. */
+  .lb-chips { margin: 0.2rem 0 0; }
+  .lb-question { font: 700 1.4rem/1.2 var(--font-display); letter-spacing: 0.01em; margin: 0.8rem 0 0; }
+  .lb-h { margin: 1.1rem 0 0.2rem; font-size: 0.95rem; }
+  .lb-list, .lb-steps { margin: 0.2rem 0 0; padding-left: 1.2rem; }
+  .lb-list li, .lb-steps li { padding: 0.15rem 0; }
+  .lb-list { list-style: none; padding-left: 0; }
+  .lb-n { font-variant-numeric: tabular-nums; color: var(--muted); margin: 0 0.4rem; }
+  .lb-note { color: var(--muted); font-size: 0.85rem; }
+  .lb-market { border-top: 1px solid var(--line); margin-top: 0.3rem; padding-top: 0.4rem; }
+  .lb-market b { margin-right: 0.5rem; }
+  .lb-issue { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lb-interim { margin: 0.2rem 0 0; font-size: 0.95rem; color: var(--fg); }
+  .lb-toggle { display: inline-flex; margin: 0.7rem 0 0.4rem; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .lb-toggle button { font: inherit; font-size: 0.85rem; background: transparent; color: var(--muted);
+                      border: 0; padding: 0.3rem 0.8rem; cursor: pointer; }
+  .lb-toggle button[aria-pressed="true"] { background: var(--field-tint); color: var(--fg); font-weight: 600; }
+  .lb-table td, .lb-table th { vertical-align: middle; }
+  .lb-dir { font-weight: 400; }
+  .lb-base td { color: var(--muted); }
+  .lb-prelim td { color: var(--muted); }
+  .lb-market-row td { border-bottom: 1px solid var(--line); font-weight: 600; }
+  .lb-plot { display: block; width: 160px; height: 16px; }
+  .lb-zero { stroke: var(--accent); stroke-width: 1.5; }
+  .lb-whisker { stroke: var(--fg); stroke-width: 1.5; }
+  .lb-dot { fill: var(--turf); }
+  .lb-base .lb-dot { fill: var(--muted); }
+  .lb-base .lb-whisker { stroke: var(--muted); }
+  .lb-foot { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--muted); }
+  /* The view change is a same-document view transition (js/router.js), which the script skips
+     under reduced motion; this stops the browser's own default fade for any path that starts one
+     anyway. */
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
+      animation: none;
+    }
+  }
 </style>
 
-<header>
-  <h1>football hub</h1>
-  <span class="sub" id="subtitle">loading…</span>
+<!-- The sticky bar (#478): wordmark, season and week, the five views. The links are static so the
+     bar works before any script runs; js/router.js (VIEWS) owns which one is current, and a
+     contract test holds these five to it. -->
+<header class="bar">
+  <div class="bar-in">
+    <h1 class="wordmark">football hub</h1>
+    <span class="sub" id="subtitle">loading…</span>
+    <nav aria-label="Views">
+      <a id="nav-week" href="#/week">This week</a>
+      <a id="nav-games" href="#/games">Games</a>
+      <a id="nav-record" href="#/record">Record</a>
+      <a id="nav-study" href="#/study">Study</a>
+      <a id="nav-ledger" href="#/ledger">Ledger</a>
+    </nav>
+  </div>
 </header>
 
+<main class="page">
 <!-- Shown until js/main.js has started. A module that fails to load stops the whole graph, and
      without this the reader would see empty panels and no reason; `start()` hides it. -->
 <p id="boot-status" class="warn" role="alert">The page's script did not start, so the panels below
   are empty. The published data is still in <code>data/</code>. If you opened this file directly,
   serve the folder instead (<code>make serve</code>): browsers refuse modules from a file URL.</p>
 
-<!-- The page-level backtest statement (#354): what the page's model numbers have and have not been
-     tested against, said once. Filled by render() from the track record artifact alone. -->
-<div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
+<!-- Five views (#478), one shown at a time by js/router.js (a hash picks it; unknown or empty is
+     This week). Each view is one zone, and the zones keep the order of the bar. With no script
+     they simply stack, which is why none of them ships hidden. -->
 
-<!-- Zone one: this week. Regenerated Wed & Sat, live Sun. Lineup, survivor, slate, in that order. -->
+<!-- View one, This week: the lineup, the roster and the survivor plan. Regenerated Wed & Sat. -->
+<div class="view" id="v-week">
 <div class="zone" id="z-week" role="region" aria-labelledby="zh-week">
   <div class="zone-head"><h2 class="zone-title" id="zh-week">This week</h2>
     <span class="zone-when">regenerated Wed &amp; Sat, live Sun</span></div>
+  <!-- The decision, in words (#484): "Week 6: make two changes". Hidden until render() has a
+       roster with swaps and quantiles to state it from. -->
+  <h3 class="week-head" id="week-head" hidden></h3>
   <div class="grid">
     <!-- The draft board (#348) shows only while no newer slate exists: the decision of the week
          in July, gone once a slate is published. Hidden until render() says boardShows. -->
@@ -183,22 +455,67 @@
          for. Hidden until render() has a roster to make a call from. -->
     <section id="p-lineup" class="wide" hidden><h3>The lineup call <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-board" class="wide" hidden><h3>Draft board <span class="age"></span></h3><div class="body"></div></section>
+    <section id="p-best" class="wide" hidden><h3>Best lineup, 20 ways <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-roster"><h3>Who to start <span class="age"></span></h3><div class="body"></div></section>
     <section id="p-survivor"><h3>Who to pick in survivor <span class="age"></span></h3><div class="body"></div></section>
-    <section id="p-slate" class="wide"><h3>Who wins this week <span class="age"></span></h3><div class="body"></div></section>
+    <section id="p-health" class="wide"><h3>Pipeline health <span class="age"></span></h3><div class="body"></div></section>
   </div>
+  <p class="model-note" id="mn-week"></p>
+</div>
 </div>
 
-<!-- Zone two: the record. Weekly, after scoring. -->
+<!-- View two, Games: the slate, frozen model numbers beside live scores. -->
+<div class="view" id="v-games">
+<div class="zone" id="z-games" role="region" aria-labelledby="zh-games">
+  <div class="zone-head"><h2 class="zone-title" id="zh-games">Games</h2>
+    <span class="zone-when">frozen at lock, live Sun</span></div>
+  <div class="grid">
+    <section id="p-slate" class="wide"><h3>Who wins this week <span class="age"></span></h3><div class="body"></div></section>
+  </div>
+  <p class="model-note" id="mn-games"></p>
+</div>
+</div>
+
+<!-- View three, Record: weekly, after scoring. -->
+<div class="view" id="v-record">
 <div class="zone" id="z-record" role="region" aria-labelledby="zh-record">
   <div class="zone-head"><h2 class="zone-title" id="zh-record">The record</h2>
     <span class="zone-when">weekly, after scoring</span></div>
   <div class="grid">
-    <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3><div class="body"></div></section>
+    <!-- The page-level backtest statement (#354), moved under this heading (#486): what the page's
+         model numbers have and have not been tested against, said once. Filled by render() from the
+         track record artifact alone; panel() touches only .age and .body, so it survives a redraw. -->
+    <section id="p-record" class="wide"><h3>Whether to trust the numbers <span class="age"></span></h3>
+    <div id="st-backtest" class="statement state-unconfirmed" role="note"></div>
+    <div class="body"></div></section>
   </div>
+</div>
+</div>
+
+<!-- View four, Study (#487): the LLM-vs-market leaderboard, or its empty state. Filled by render(). -->
+<div class="view" id="v-study">
+<div class="zone" id="z-study" role="region" aria-labelledby="zh-study">
+  <div class="zone-head"><h2 class="zone-title" id="zh-study">Study</h2>
+    <span class="zone-when">LLM leaderboard</span></div>
+  <div class="grid">
+    <section id="p-study" class="wide"><h3>Language models against the betting market <span class="age"></span></h3>
+    <div class="body"></div></section>
+  </div>
+</div>
+</div>
+
+<div class="view" id="v-ledger">
+<div class="zone" id="z-ledger" role="region" aria-labelledby="zh-ledger">
+  <div class="zone-head"><h2 class="zone-title" id="zh-ledger">Ledger</h2>
+    <span class="zone-when">what was measured and cut</span></div>
+  <div class="grid">
+    <section id="p-ledger" class="wide"><h3>What got measured, and what got cut <span class="age"></span></h3><div class="body"></div></section>
+  </div>
+</div>
 </div>
 
 <footer id="footer"></footer>
+</main>
 
 <!-- The script is native ES modules under site/js/, loaded same-origin with no bundler and no CDN.
      Each module is a file a test imports directly. -->

@@ -93,14 +93,15 @@ def implied(spread: float, total: float) -> tuple[float, float]:
 
 
 def _game_lines(game: Mapping[str, Any], seen: Mapping[Any, Mapping[str, Any]],
-                at: datetime) -> dict[str, Any]:
+                at: datetime, store_why: str | None = None) -> dict[str, Any]:
     """One game's market inputs, or the single reason it has none to rank on."""
     from hub.market_row import market_fields
     kickoff = game.get("kickoff")
     done = game.get("result") is not None
     if done or (kickoff is not None and kickoff <= at):
         return {"missing": "the game has already kicked off"}
-    got = market_fields(game, kickoff, "the schedule carries no kickoff for this game", seen)
+    got = market_fields(game, kickoff, "the schedule carries no kickoff for this game", seen,
+                        store_why)
     spread, total = got["market_spread"], got["market_total"]
     if spread is None:
         return {"missing": got["market_missing"] or "no pre-kickoff price"}
@@ -114,7 +115,8 @@ def _game_lines(game: Mapping[str, Any], seen: Mapping[Any, Mapping[str, Any]],
 
 def team_lines(games: pl.DataFrame, week: int, bye: frozenset[str],
                seen: Mapping[Any, Mapping[str, Any]],
-               at: datetime | None = None) -> dict[str, dict[str, Any]]:
+               at: datetime | None = None,
+               store_why: str | None = None) -> dict[str, dict[str, Any]]:
     """Per canonical team: its opponent, side, and the betting-market inputs for `week`.
 
     A team on `bye` has a row with a reason and no opponent; a team in a game that cannot be
@@ -128,7 +130,7 @@ def team_lines(games: pl.DataFrame, week: int, bye: frozenset[str],
         home, away = _team(g["home_team"]), _team(g["away_team"])
         if home is None or away is None:
             continue
-        ln = _game_lines(g, seen, moment)
+        ln = _game_lines(g, seen, moment, store_why)
         for team, opp, is_home in ((home, away, True), (away, home, False)):
             row: dict[str, Any] = {"team": team, "opp": opp, "home": is_home,
                                    "game_id": g.get("game_id"),
@@ -211,13 +213,14 @@ def pool_teams(free_agents: pl.DataFrame | None) -> dict[str, frozenset[str]] | 
 def build(games: pl.DataFrame, roster: pl.DataFrame | None, week: int, bye: frozenset[str],
           seen: Mapping[Any, Mapping[str, Any]], at: datetime | None = None,
           free_agents: pl.DataFrame | None = None,
-          pool_meta: Mapping[str, Any] | None = None) -> dict[str, Any]:
+          pool_meta: Mapping[str, Any] | None = None,
+          store_why: str | None = None) -> dict[str, Any]:
     """The published `stream` object: both rankings, the basis and what is not known.
 
     `free_agents` is the league's pool (#493); with it each row says whether the unit is
     available, and `available_known` is true.
     """
-    lines = team_lines(games, week, bye, seen, at)
+    lines = team_lines(games, week, bye, seen, at, store_why)
     pool = pool_teams(free_agents)
     capped = bool((pool_meta or {}).get("capped"))
     held: dict[str, dict[str, list[str]]] = {"D/ST": {}, "K": {}}
@@ -274,7 +277,7 @@ def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | 
                pool_meta: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The ranking for the open week, degrading to `unavailable` on any failure."""
     from hub import schedule
-    from hub.market_row import captures
+    from hub.market_row import captures_why
     from hub.season.roster import week_games
     try:
         moment = _moment(at)
@@ -282,8 +285,9 @@ def for_roster(roster: pl.DataFrame, season: int = SEASON_AHEAD, at: datetime | 
         wk = week_games(games, moment)
         if wk is None:
             return unavailable("no week is open in the schedule")
-        return build(games, roster, wk.week, wk.bye, captures(season, base), moment,
-                     free_agents, pool_meta)
+        seen, store_why = captures_why(season, base)
+        return build(games, roster, wk.week, wk.bye, seen, moment,
+                     free_agents, pool_meta, store_why)
     except Exception as e:  # unattended network call: say which failure, never raise
         return unavailable(f"the schedule or the odds store was unavailable ({type(e).__name__})")
 

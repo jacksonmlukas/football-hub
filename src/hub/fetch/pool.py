@@ -1,7 +1,7 @@
 """The survivor pool's state, read off the pool host instead of retyped each week (#85).
 
 `hub.season.pool` prices a pick against the field: how many entries are live, what the pot
-is, and which teams each entry has already spent -- its **Ledger**, in `CONTEXT.md`'s sense,
+is, and which teams each entry has already spent -- its **Ledger**, in `GLOSSARY.md`'s sense,
 one per entry. Until this module those three were typed on the command line from a browser
 tab. This reads them from the host's JSON resource, replaces every member's identity with an
 index, and keeps the last state it read under `data/processed/` so a host that is down on a
@@ -252,7 +252,12 @@ def _http_get(url: str, cookie: str) -> tuple[int, Any]:
 def _transport(url: str, cookie: str) -> tuple[int, Any]:     # pragma: no cover - network
     import requests
     r = requests.get(url, timeout=30, cookies={_cookie_name(): cookie},
-                     headers={"Accept": "application/json"})
+                     headers={"Accept": "application/json"}, allow_redirects=False)
+    # Not followed: the cookie would go wherever the redirect points (#537). Usually this is
+    # an expired session's login page, which is an answer to name, not to chase.
+    if 300 <= r.status_code < 400:
+        raise RuntimeError(f"the pool host answered with a redirect ({r.status_code}); "
+                           "not followed, the session may have expired")
     if r.status_code in (401, 403):
         return r.status_code, None
     r.raise_for_status()

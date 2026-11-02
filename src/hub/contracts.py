@@ -732,7 +732,7 @@ BIGTEN_CAPTURES = Contract(
 # last-known state is read back through, so a cached file that has drifted is refused on the
 # way out rather than served as the field.
 #
-# `used` is the entry's Ledger -- the teams it has spent, in the CONTEXT.md sense -- and is
+# `used` is the entry's Ledger -- the teams it has spent, in the GLOSSARY.md sense -- and is
 # a list column rather than a joined string so an empty Ledger is `[]` and not `""`. The
 # writer declares the dtype, because a field where nobody has spent anything yet infers as
 # `List(Null)`, and the family check refuses that by design. No identity column exists to
@@ -851,11 +851,21 @@ NFELOQB = Contract(
 # Partitions written before #210 have neither column and stay readable for the reason the
 # pre-#211 ones do: the store unions by name and the reader derives the two on the way out.
 # Nothing rewrites a dated partition to add them.
+#
+# **The other side of each price, since #512.** `spread_price_away`, `ml_home_price` and
+# `ml_away_price` are the medians that, beside `spread_price`, give both sides of the spread
+# and of the moneyline, so the overround the de-vigged `ml_home_prob` removed is recoverable
+# and `hub.market_row` can publish it. Partitions before #512 lack them and read as nulls, the
+# way the pre-#211 ones do; a vig is never derived for a capture that did not carry both
+# sides. A moneyline price is not main-market juice: a 30-point favourite is honestly -10000
+# and its dog +3000, so those two bounds are wide, and still refuse a decimal price.
 ODDS_SNAPSHOT = Contract(
     name="odds_snapshot",
     required={"game_id": pl.Utf8, "close_spread": pl.Float64,
               "spread_price": pl.Float64, "close_total": pl.Float64,
               "total_price": pl.Float64, "ml_home_prob": pl.Float64,
+              "spread_price_away": pl.Float64, "ml_home_price": pl.Float64,
+              "ml_away_price": pl.Float64,
               "captured_at": pl.Datetime,
               "polls_unmoved": pl.Int64, "unmoved_since": pl.Datetime},
     non_null=("game_id", "close_spread", "captured_at", "polls_unmoved", "unmoved_since"),
@@ -863,6 +873,8 @@ ODDS_SNAPSHOT = Contract(
     # and it is what makes AS_OF_LINES more than a normal join.
     ranges={"close_spread": (-40, 40), "close_total": (20, 100),
             "spread_price": (-2000, 2000), "total_price": (-2000, 2000),
+            "spread_price_away": (-2000, 2000), "ml_home_price": (-20000, 20000),
+            "ml_away_price": (-20000, 20000),
             "ml_home_prob": (0, 1), "polls_unmoved": (1, 10000)},
     min_rows=1,
 )
@@ -1195,6 +1207,44 @@ def check_roster_artifact(payload: dict[str, Any]) -> None:
                 problems.append(f"waiver {r.get('player')}: recommended without a positive "
                                 f"value over a named replacement, or while blocked")
             # /GUARD
+    gap = payload.get("incomplete")
+    if gap is not None:
+        # A gap (#531): this week's partial lineup, the empty slots, and who could fill them.
+        g: dict[str, Any] = gap if isinstance(gap, dict) else {}
+        empty, lineup = g.get("empty_slots"), g.get("lineup")
+        shaped = (isinstance(empty, list) and bool(empty)
+                  and all(isinstance(s, str) for s in empty) and isinstance(lineup, list))
+        # GUARD gap-names-its-empty-slots [unit/test_roster_gap.py]: an incomplete call says
+        # which slots are empty and who fills the rest
+        if not shaped:
+            problems.append("incomplete carries no empty slots or no lineup")
+        # /GUARD
+        slots: list[str] = list(empty) if shaped and isinstance(empty, list) else []
+        filled: set[str] = set(lineup) if shaped and isinstance(lineup, list) else set()
+        barred = set(payload.get("withheld") or [])
+        # GUARD gap-lineup-starts-nobody-withheld [unit/test_roster_gap.py]: withholding is
+        # one-directional; a slot nobody can fill is named, never filled with a withheld player
+        # (a bye, injured reserve, short of a slate)
+        if barred & filled or not filled <= names:
+            problems.append("incomplete lineup names a withheld or unrostered player")
+        # /GUARD
+        said = g.get("headline")
+        # GUARD gap-headline-names-every-empty-slot [unit/test_roster_gap.py]: the headline is
+        # the panel's, and a gap it does not name is a gap the reader does not see
+        if not (isinstance(said, str) and all(f"{s}:" in said for s in slots)):
+            problems.append("incomplete headline does not name every empty slot")
+        # /GUARD
+        # GUARD gap-claims-no-gain [unit/test_roster_gap.py]: a partial lineup is not priced
+        # against the set one, so it never carries a full call's gain
+        if payload.get("gain") is not None:
+            problems.append("incomplete artifact claims a full lineup's gain")
+        # /GUARD
+        ticked = {r.get("player") for r in rows if r.get("best_start")}
+        # GUARD gap-ticks-are-the-partial-lineup [unit/test_roster_gap.py]: the table's best-XI
+        # ticks are this week's partial lineup, never last week's starters
+        if ticked != filled:
+            problems.append("incomplete lineup is not the rows' best-XI ticks")
+        # /GUARD
     # GUARD roster-problems-are-raised [unit/test_swaps.py]: collected problems are refused
     if problems:
         raise ContractViolation("; ".join(problems))

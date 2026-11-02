@@ -84,6 +84,12 @@ export async function frozen(key) {
   // The promise rather than its result: filling the map only after the await leaves a
   // window in which a second caller fetches the same artifact again, and "fetched once" is
   // the property this is for.
-  if (!frozenPreds.has(key)) frozenPreds.set(key, load(key));
-  return frozenPreds.get(key);
+  const held = frozenPreds.get(key);
+  if (held) return held;
+  // `load` resolves null on any failure; a failure is not a number that was frozen, so it
+  // leaves the map and the next ask fetches again (#537). The in-flight promise stays in it
+  // meanwhile, so concurrent callers still share one fetch.
+  const p = load(key).then(got => { if (got === null) frozenPreds.delete(key); return got; });
+  frozenPreds.set(key, p);
+  return p;
 }

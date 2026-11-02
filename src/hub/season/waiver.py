@@ -315,6 +315,47 @@ def unavailable(reason: str) -> dict[str, Any]:
             "rows": [], "recommended": [], "missing": reason}
 
 
+FILL_TOP = 3
+
+
+def fill_candidates(waiver: Mapping[str, Any], slots: Sequence[str],
+                    flex_from: Sequence[str], top: int = FILL_TOP
+                    ) -> tuple[dict[str, list[dict[str, Any]]], str | None]:
+    """For each empty lineup slot (#531), the best free agents who could fill it this week, and
+    a note on the pool they came from (or None when there is nothing to say).
+
+    Read off the published waiver block and nothing else, so the pool, its date and its failure
+    are the ones the waiver table shows: a failed fetch serves last-good, and the note says so.
+    A free agent on bye this week (`on_bye_now`) or listed as unable to play (`blocked`) cannot
+    fill a slot this week and is left out; the rest go best ESPN projection per game first,
+    which within one position is the waiver table's own order. `"FLEX"` draws on `flex_from`.
+    The block keeps `TOP_PER_POSITION` per position, so these are the best of that table.
+    """
+    rows = [r for r in waiver.get("rows") or []
+            if not r.get("on_bye_now") and not r.get("blocked")
+            and isinstance(r.get("proj_per_game"), (int, float))]
+    out: dict[str, list[dict[str, Any]]] = {}
+    for slot in dict.fromkeys(slots):
+        want = set(flex_from) if slot == "FLEX" else {slot}
+        fits = sorted((r for r in rows if r.get("pos") in want),
+                      key=lambda r: (-float(r["proj_per_game"]), str(r.get("player"))))
+        out[slot] = [{k: r.get(k) for k in ("player", "pos", "nfl_team", "proj_per_game",
+                                            "percent_owned", "injury_status")}
+                     for r in fits[:top]]
+    notes: list[str] = []
+    if waiver.get("missing"):
+        notes.append(f"no free agents to suggest: {waiver['missing']}")
+    if waiver.get("last_error"):
+        when = waiver.get("as_of") or "at an unknown time"
+        notes.append(f"the latest free-agent fetch failed ({waiver['last_error']}); these are "
+                     f"from the last good pool, fetched {when}")
+    if waiver.get("stale"):
+        notes.append(str(waiver["stale"]))
+    if waiver.get("calendar_reason"):
+        notes.append(f"byes are not checked: {waiver['calendar_reason']}")
+    return out, "; ".join(notes) or None
+
+
 def _load_snaps(season: int) -> pl.DataFrame:  # pragma: no cover - network
     from hub.fetch import nflverse
     return nflverse.load("snap_counts", [season])

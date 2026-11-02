@@ -22,11 +22,26 @@ Any change to prompts, settings, or models after the burn-in either reruns the b
 - [ ] The H1 estimability threshold: the minimum standard deviation of a model's log-odds deviations from the market
 - [ ] The Parity version or commit that runs H2
 - [ ] A spending cap with each provider that offers one, and the season cap the code enforces
+- [ ] The retrieval arm (added 2026-10-22, #511): which LLM it pairs with, and Tavily's per-credit price and the promo's expiry
 
 **Before v1 (after the burn-in):**
 
 - [ ] The burn-in report: power for H2 at δ, and each model's deviation standard deviation against the threshold
 - [ ] Every change since v0 entered in the deviations log
+
+> **Restated 2026-10-22 (#448, method decisions adopted 2026-10-22, items 1–9; before `prereg-llm-v0`, so not deviations). Under method rule 13 every passage below that these replace stands as first written; the prior values are quoted here.**
+>
+> 1. **H2's implementation.** Prior: "Parity runs this test at the version pinned at v0" and the checklist's "The Parity version or commit that runs H2". Now H2 runs on this repository's `hub.forecasters.score` (#452), pinned at a commit as `[analysis].h2_implementation = "hub.forecasters.score@<commit>"` in `conf/forecasters.toml`; scoring refuses any other form, a Parity version included. The repo test that checks H2 against a hand computation on a fixed dataset is `tests/unit/test_forecasters_score.py`. The value is still TBD: this restatement's lane changes `score.py`, so the pin is the merge commit of that lane on `main`, filled in once it has landed and before v0.
+> 2. **The clip.** Prior: "Clip every probability to \[0.01, 0.99\], for all contestants, before scoring." Now the clip applies to the contestants only. The betting market's de-vigged probability is the benchmark, not a contestant, and is scored as de-vigged, never clipped.
+> 3. **The H1 family.** Prior: a model below the threshold "leaves H1", with no word on which games measure it. Now estimability (the SD of each line-aware model's log-odds deviations from the market, against the threshold) is measured once, on the burn-in week, from forecasts only. The Holm family is fixed then, before any scored game, and is never re-measured on scored games. The burn-in report (#451) writes the measurement to `docs/prereg/llm-forecasters.burn-in.json` (the season, the burn-in week, the threshold and each model's SD), committed with `prereg-llm-v1`. Scoring refuses while that record is missing, was measured against a threshold other than the pinned one, or leaves out a line-aware model. A family member whose fit fails on the scored games stays in the family with p = 1, so Holm's m is the burn-in's.
+> 4. **H2's level.** One-sided non-inferiority at α = 0.05, as written. The matching 90% two-sided t interval on the weekly values (the one whose lower end is the test's bound) is reported beside the 95% interval for every Δ.
+> 5. **δ = 0.02 nats of log loss per game.** It is the round-number fallback the checklist allows, because no historical forecast-time snapshots were bought. The justification: δ = 0.02 nats a game is roughly a quarter (24%) of the 0.0846 nats by which the betting market's log loss on NFL games (0.6085: de-vigged closing moneylines, 2,628 regular-season games 2016–2025 from nflverse schedules, ties excluded, measured 2026-10-22) beats a coin flip's (ln 2 ≈ 0.6931), so an LLM that beat the market by more than δ would have closed a substantial share of the gap between knowing nothing and knowing the line. *Context, not the reason:* #452's simulation put H2's power at about 125 scored games at 0.69–1.00 for near-market models at this δ. The rule above forbids setting δ from power, and it was not set from power.
+> 6. **The H1 estimability threshold = 0.25**, the SD of a model's log-odds deviations from the market.
+> 7. **The injury report's timestamp** (#447). No source gives a report publication time, so the report's time is the newest item `date` strictly before the run start. An item dated at or after the run start is dropped, never shown. This replaces "The injury report's own publication time precedes the run start" as the content check.
+> 8. **The run refuses while δ or the H1 threshold is TBD.** `runner.require_pinned` will not call a model under such a config, so no forecast can be made before the analysis that judges it is fixed.
+> 9. **Retrieval pairing** (#511). The retrieval arm pairs with the cheapest of the four pinned models, by per-token price as pinned in `conf/forecasters.toml`. The pairing value itself is set with the models.
+>
+> Item 10 of the same decision (forecast records carry the forecast-time market probability, and scoring joins results from nflverse's schedule) is implementation, not a rule change. Each record now carries `market_home_win_prob` from its run's snapshot. Where a crash-and-retry leaves one game on two snapshots, the earliest run's is the benchmark, and the count is reported.
 
 ## Questions and predictions
 
@@ -57,6 +72,46 @@ Eleven forecasters are scored against one benchmark: four LLMs in two conditions
 Models with later training cutoffs know more about the 2026 season before the packet adds anything. Cutoffs are recorded and reported next to every blind result, so differences between models aren't read as pure skill.
 
 No model gets web search, tools, or retrieval. A model deprecated mid-season stops; no substitute counts toward the confirmatory tests.
+
+> **Restated 2026-10-22 (#511; adopted 2026-10-20 as its option 1, before `prereg-llm-v0`). Under method rule 13 the text above stands as first written: "eleven forecasters" and "no model gets ... retrieval" are the prior values.** There are **twelve** forecasters. The twelfth is **LLM + retrieval**, a contestant *paired* with one bare arm, so the paired difference isolates retrieval:
+>
+> | Contestant | What it is | Fixed at v0 |
+> | --- | --- | --- |
+> | LLM + retrieval (paired, exploratory) | One of the four LLMs, same version string and settings, shown its own line-aware packet unchanged plus news search results retrieved for the game before the run started | Which LLM it pairs with, the queries, the search cap, the lookback, the snippet budget, the prompt hash, the credit cap |
+>
+> - **Pairing.** It pairs with `<model>:line_aware` and is recorded as `<model>+retrieval:line_aware`. Each record carries `paired_with` (the twin's contestant name) and `base_packet_hash` (the twin's packet hash, which must equal the twin's own `packet_hash`). The quantity reported is retrieval minus bare, game by game, on games both have, averaged within week and then across weeks as for H2, with a 95% t-interval on the weekly values. It is exploratory: no test, and H1 and H2 stay four models.
+> - **Searches.** Four a game, fixed: `"<team> injury report"` and `"<team> inactives"` for the home team, then the away team, through Tavily's news search (basic depth, one credit each, last 7 days, 5 results each). A longer query list is refused before any search.
+> - **As-of rule for retrieved items.** Each item is judged by its own published date. It is kept only if that date is strictly before the run start and no more than 7 days earlier. An item with no usable date is dropped; fetch time never stands in. Every dropped item is logged with its URL, title, raw date and reason, and counted. The rule is written into the packet's retrieval block.
+> - **Budget and hash.** At most 10 items, newest first, each snippet cut to 600 characters. The packet hash covers the bare packet and the whole retrieval block (queries, items, drops, counts). The block, snippets included, is committed in the record.
+> - **Spend.** Tavily credits are counted separately from dollars, in the study's own state file, against a season cap of 1,500 credits checked before each game's searches. They are also priced into the cost log at a per-credit price pinned at v0 (0 while the promo's credits are free), so the season dollar cap and the spending guard include retrieval.
+> - **Failures.** A failed search means that game has no retrieval forecast, logged with the reason and the credits spent (the "contestant has no forecast" row under Exclusions). When the credit cap is reached the arm stops and the other eleven continue. Resuming it is a logged deviation.
+
+> **Models pinned 2026-10-22 (#448; the maintainer's 2026-10-21 rule: the newest flagship from Anthropic, OpenAI and Google plus one cheaper fourth). Recorded under method rule 13; nothing above is changed.** Every value is read from the provider's own docs on 2026-10-22 and is what `conf/forecasters.toml` carries.
+>
+> | Name | Provider | API model id | Stated cutoff | Temperature | Reasoning effort | Max output | USD / MTok in / out | Source (accessed 2026-10-22) |
+> | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+> | llm1 | Anthropic | `claude-opus-5-5` | Jun 2026 (reliable knowledge and training data) | none (sampling parameters return 400) | `low` (`output_config.effort`; thinking always on) | 1,000 | 4.00 / 20.00 | platform.claude.com/docs/en/about-claude/models/overview; …/models/opus-5-5/overview; …/models/opus-5-5/migration-guide; …/about-claude/pricing |
+> | llm2 | OpenAI | `gpt-6.1-sol` | Apr 30, 2026 | none (removed unless effort is `none`, which this model rejects) | `low` (`reasoning.effort`) | 1,000 | 2.00 / 10.00 | developers.openai.com/api/docs/models/gpt-6.1-sol; …/guides/latest-model; …/guides/reasoning; …/changelog |
+> | llm3 | Google | `gemini-4-argon` | not published | none (ignored on Gemini 4; Google says remove it) | `low` (`thinkingConfig.thinkingLevel`; thinking can't be disabled) | 1,000 | 4.00 / 20.00 (2.00 / 10.00 through 2026-11-30) | ai.google.dev/gemini-api/docs/models/gemini-4-argon; …/generate-content/latest-model; …/generate-content/thinking; …/pricing |
+> | llm4 (cheaper) | OpenAI | `gpt-6-luna` | May 18, 2026 | none (as llm2) | `low` (`reasoning.effort`) | 1,000 | 0.10 / 0.50 | developers.openai.com/api/docs/models/gpt-6-luna; …/guides/reasoning; …/changelog |
+>
+> - **Which model is the flagship.** Each provider also sells a premium tier above these: Anthropic's Claude Fable 5.1 and OpenAI's GPT-6 Astra, both $10 / $50. They are excluded. Anthropic's docs label Opus 5.5 "Latest" (released 2026-09-22) and name it the model to start with. GPT-6.1 Sol (released 2026-09-29) is the newest model in OpenAI's "Flagship models" list. Google calls Gemini 4 Argon its "flagship reasoning model". Two premium models at their own ceiling would cost about $196 over the season, more than the $150 cap on their own.
+> - **Ids.** Anthropic says every Claude id from the 4.6 generation on, dateless ones included, is a pinned snapshot. OpenAI lists one snapshot for each model, the dateless id, and publishes no dated one. Google lists `gemini-4-argon` as Stable ("Stable models usually don't change") and publishes no dated version. None of these is a moving alias.
+> - **Settings.** All four reason. Opus 5.5 and Gemini 4 Argon can't turn thinking off, GPT-6.1 Sol rejects `none`, and Luna is held to the same rule. So effort is `low`, the lowest level all four accept, and temperature is none on all four. The config spells "none" as "send no parameter", so it cannot ask Luna for effort `none`.
+> - **Why 1,000 output tokens, not 400.** In all three APIs thinking counts toward the cap. A cap hit while the model is still thinking returns no answer but is billed (OpenAI: status `incomplete`; Google: `MAX_TOKENS`). The answer itself is about 150 tokens (JSON plus a rationale of at most 60 words). A cap of 400 leaves about 250 tokens for thinking; 1,000 leaves about 850. The live dry run measures real output tokens. A change to the cap after v0 goes in the deviations log.
+> - **Gemini's price.** Google's pricing page shows $2 / $10 through 2026-11-30 and $4 / $20 from 2026-12-01. The study window (weeks 9–18) covers both. The pin uses the higher price, so the cost log and the spending guard overstate November and never understate December.
+> - **The fourth model and the retrieval pairing.** It is the cheapest model by cost per call at 2,000 input + 400 output tokens:
+>
+>   | Model | 2,000 × in + 400 × out | Per call |
+>   | --- | --- | --- |
+>   | llm1 `claude-opus-5-5` | 2,000 × $4 + 400 × $20 = $0.0080 + $0.0080 | $0.0160 |
+>   | llm2 `gpt-6.1-sol` | 2,000 × $2 + 400 × $10 = $0.0040 + $0.0040 | $0.0080 |
+>   | llm3 `gemini-4-argon` | 2,000 × $4 + 400 × $20 = $0.0080 + $0.0080 | $0.0160 |
+>   | llm4 `gpt-6-luna` | 2,000 × $0.10 + 400 × $0.50 = $0.0002 + $0.0002 | **$0.0004** |
+>
+>   The order is the same at 1,000 output tokens. `[retrieval].paired_with = "llm4"`. Claude Haiku 5.5 has the same list price as Luna ($0.10 / $0.50 for prompts up to 100k tokens). Luna gets the tie: Anthropic's docs say its current tokenizer fits about 555k words in 1M tokens against about 750k before, so the same packet is likely billed as more Claude tokens. Either choice leaves three providers.
+> - **Tavily.** `[retrieval].usd_per_credit = 0.008`, the pay-as-you-go price on tavily.com/pricing (read 2026-10-22). It counts the arm's searches against the dollar cap even while they fall inside the 1,000 free monthly credits.
+> - **Season cost.** 14 games a week × weeks 9–18 (10 weeks) = 140 games. Each game has twelve records, and nine of them call a model: four models × two conditions × 5 samples, plus the paired arm's 5 samples on a prompt up to 2,500 tokens longer, plus 4 Tavily credits. The hub, home and coin records cost nothing. With every call at the 1,000-token ceiling and no retries, a game costs $0.28 (llm1) + $0.14 (llm2) + $0.28 (llm3) + $0.007 (llm4) + $0.004 (the arm's calls) + $0.032 (searches) = $0.744. The season is **$104**, under the $150 cap. At 400 output tokens a call it is $61.50. Parse retries add up to twice a sample's calls. The spending guard covers them: before each run it refuses when the remaining budget is below that run's worst case, which is about $44 for a 13-game Sunday at these settings.
 
 ## Information packet
 
@@ -187,4 +242,4 @@ Weekly numbers are descriptive only; the confirmatory (H1) and secondary (H2) an
 
 | Date | Change | Reason | Affects confirmatory tests? |
 | --- | --- | --- | --- |
-|  |  |  |  |
+| 2026-11-02 | The forecast workflow's cron minutes moved off the round quarter-hours (13:52, then 7, 22, 37, 52 past from 14:07 to 16:22 UTC), and a second trigger was added: a local scheduled task on the maintainer's Mac that runs `gh workflow run forecast.yml` on Thursday, Sunday and Monday mornings ET. | 0 of 13 scheduled runs fired on 2026-11-02; on 2026-10-31 and 2026-11-01, 3 of 13 fired each day, hours late (#544). Forecasting itself is unchanged: the same `should-run` gate, the same 09:30-11:30 ET window, and a done day is never re-run. | No |

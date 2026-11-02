@@ -161,13 +161,14 @@ def optimize(players: pl.DataFrame, opp_mu: float, opp_sd: float = 25.0,
 
 def best_by_points(players: pl.DataFrame, slots: Mapping[str, int] | None = None,
                    flex_from: Sequence[str] | None = None,
-                   max_lineups: int = MAX_LINEUPS) -> dict:
+                   max_lineups: int = MAX_LINEUPS, flex_slots: int = FLEX_SLOTS) -> dict:
     """The naive lineup: highest projected total, matchup ignored.
 
     Kept as a first-class function rather than a test fixture because it is the baseline
-    the optimizer has to beat, and because it is the opponent model.
+    the optimizer has to beat, and because it is the opponent model. `flex_slots` below the
+    league's is how `hub.season.roster.partial` searches a lineup with a flex nobody can fill.
     """
-    return _evaluate(players, slots, flex_from, max_lineups, lambda m, _s: m)
+    return _evaluate(players, slots, flex_from, max_lineups, lambda m, _s: m, flex_slots)
 
 
 def opponent_moments(players: pl.DataFrame, slots: Mapping[str, int] | None = None,

@@ -29,6 +29,19 @@ uv run python -m hub.models.eval --compare market_only,market_plus_residual --sp
 Report the log-loss delta with a bootstrap interval. If the interval crosses zero, you have no
 evidence of edge. Say so plainly rather than reaching for a subgroup where it looks better.
 
+## The LLM-forecaster study is scored by its prereg, not by this page
+
+`docs/prereg/llm-forecasters.md` fixes its own benchmark (the forecast-time de-vigged moneyline,
+not the close) and its own tests; `hub.forecasters.score` implements them and nothing else:
+
+- **H1**, confirmatory: encompassing regression `y ~ logit(m) + c * (logit(p) - logit(m))`,
+  leave-one-week-out jackknife SE, t on W - 1, one-sided `c > 0`, Holm across the four models.
+  Report `c` and its unadjusted one-sided 95% upper bound; a null is "at most X of full weight".
+- **H2**, secondary: weekly-mean log-loss difference, t interval on W - 1, non-inferiority at δ,
+  claimed only if all four reject; TOST beside it; week-block bootstrap as robustness only.
+- δ, the H1 threshold and the Parity version come from `conf/forecasters.toml [analysis]`. While
+  any is `TBD` the scorer refuses (exit 3). Never pick one from the data or from burn-in power.
+
 ## Calibration
 
 Reliability diagram in ten bins, plus empirical coverage of the conformal intervals against

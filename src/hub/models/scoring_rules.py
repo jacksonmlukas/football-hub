@@ -13,7 +13,7 @@ The depth was real (two callers, three test files); it was in the wrong file.
 
 Named `scoring_rules` rather than `scoring` on purpose: `hub.models.components.SCORING` is
 already the league's fantasy point weights, and this repo does not reuse a word for two
-things (see `CONTEXT.md`).
+things (see `GLOSSARY.md`).
 
 `hub.models.margin` carried a second `log_loss` with `eps=1e-12` against this one's `1e-15`
 -- two clipping constants, two test files, one concept. It now imports this.

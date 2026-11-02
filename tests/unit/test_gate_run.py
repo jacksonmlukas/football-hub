@@ -76,7 +76,7 @@ def test_the_run_returns_the_five_things_the_entry_points_used_to_assemble():
     how many seasons resolved and how many abstained (they sum to the seasons run)."""
     got = _run(_paired())
     assert set(got._fields) == {"summary", "seasons", "verdict", "lines", "stamped",
-                                "resolved", "abstained"}
+                                "resolved", "abstained", "posterior"}
     assert got.resolved is not None and got.abstained is not None
     assert got.resolved + got.abstained == got.seasons.height
     assert isinstance(got.summary, dict) and isinstance(got.seasons, pl.DataFrame)
@@ -411,3 +411,23 @@ def test_every_gate_stamps_the_data_it_scored_against(paired, site, boards):
     # terminal.
     joined = "\n".join(got.lines)
     assert "  data: " in joined and "  board: " in joined and "  commit: " in joined
+
+
+def test_the_run_prints_the_posterior_beside_the_verdict_for_a_gate_with_a_prior():
+    """#375: a gate named in `posterior.S_REF` prints the block after its per-season table,
+    reading its own frozen prior and naming the verdict word that still decides."""
+    got = _run(_paired(shift=3.0), name="weekly")
+    text = "\n".join(got.lines)
+    assert got.posterior is not None and got.posterior.primary is not None
+    assert "posterior on the pooled effect" in text
+    assert "prior N(0, 0.648), season scatter tau ~ HalfNormal(0.648); costly" in text
+    assert f"(verdict word: {got.verdict[0]})" in text
+    seasons_at = next(i for i, ln in enumerate(got.lines) if "posterior on the pooled" in ln)
+    assert any("2022" in ln for ln in got.lines[:seasons_at]), "after the per-season table"
+
+
+def test_the_run_says_why_a_gate_without_a_prior_has_no_posterior():
+    """A gate absent from `S_REF` prints one line naming the absence, never nothing."""
+    got = _run(_paired())
+    assert got.posterior is not None and got.posterior.primary is None
+    assert any("not computed -- this gate has no pre-registered S_REF" in ln for ln in got.lines)

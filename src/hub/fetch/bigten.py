@@ -207,6 +207,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+MAX_REDIRECTS = 5
+
+
+class OffHostRedirect(Exception):
+    """A redirect led off the conference's domain, or too far; nothing was fetched past it."""
+
+
 class DocumentTooLarge(Exception):
     """A linked document ran past `DOCUMENT_CAP` mid-stream; the bytes were not kept."""
 
@@ -224,18 +231,35 @@ def _get(url: str, cap: int | None = None) -> bytes:
                      tests="tests/unit/test_fetch_bigten.py")
     # /GUARD
     import requests
-    with requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT},
-                      stream=True) as r:
-        r.raise_for_status()
-        held = bytearray()
-        for chunk in r.iter_content(chunk_size=1 << 16):
-            # Checked before the chunk is appended, so nothing past the cap is ever held
-            # here. One chunk can still be larger than asked for -- `requests` decodes a
-            # gzipped body as it streams -- and that chunk is the residual this cannot see.
-            if cap is not None and len(held) + len(chunk) > cap:
-                raise DocumentTooLarge(f"{url} ran past {cap} bytes; not kept")
-            held.extend(chunk)
-    return bytes(held)
+    # Redirects are followed here, one vetted hop at a time (#537): `admit` clears the link the
+    # page carries, and `requests` following a 302 on its own would fetch wherever it pointed.
+    for _hop in range(MAX_REDIRECTS + 1):
+        with requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT},
+                          stream=True, allow_redirects=False) as r:
+            if r.is_redirect:
+                url = urljoin(url, r.headers.get("Location", ""))
+                if _off_host(url):
+                    raise OffHostRedirect(f"redirected to {_off_host(url)}; not followed")
+                continue
+            r.raise_for_status()
+            held = bytearray()
+            for chunk in r.iter_content(chunk_size=1 << 16):
+                # Checked before the chunk is appended, so nothing past the cap is ever held
+                # here. One chunk can still be larger than asked for -- `requests` decodes a
+                # gzipped body as it streams -- and that chunk is the residual this cannot see.
+                if cap is not None and len(held) + len(chunk) > cap:
+                    raise DocumentTooLarge(f"{url} ran past {cap} bytes; not kept")
+                held.extend(chunk)
+            return bytes(held)
+    raise OffHostRedirect(f"too many redirects (more than {MAX_REDIRECTS}); not followed")
+
+
+def _off_host(url: str) -> str | None:
+    """`off-host: <host>` when `url` is not the conference's, else None."""
+    host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
+    if host != ALLOWED_HOST and not host.endswith("." + ALLOWED_HOST):
+        return f"off-host: {host}"
+    return None
 
 
 def admit(url: str) -> str | None:
@@ -245,9 +269,9 @@ def admit(url: str) -> str | None:
     `off-host: <host>`, `not a document: <ext>`. `too large` is the third and is decided by
     the stream rather than here.
     """
-    host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
-    if host != ALLOWED_HOST and not host.endswith("." + ALLOWED_HOST):
-        return f"off-host: {host}"
+    off = _off_host(url)
+    if off:
+        return off
     ext = _ext(url, "")
     if ext not in DOCUMENT_EXTENSIONS:
         return f"not a document: {ext or 'no extension'}"

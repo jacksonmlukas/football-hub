@@ -1,60 +1,57 @@
 name: consensus
 
-# The weekly consensus page, captured before each week's first game and committed (#432).
+# The weekly consensus page, captured before kickoff and committed (#432, #515).
 #
 # **Why a workflow and not a person.** The 2026 forward measurement of the Weekly projection
 # against consensus (`docs/weekly-forward.md`) scores the incumbent on the ranking that could
 # have been read before kickoff, and nothing in this repo kept one. A capture that depends on
-# someone remembering on a Wednesday is the system CLAUDE.md says dies in October; every week
-# this does not run is a week the measurement may not count.
+# someone remembering is the system CLAUDE.md says dies in October; every week this does not run
+# is a week the measurement may not count.
 #
-# **Four runs a week, because a capture needs this week's page and the archive's page lands when
-# it lands.** Tuesday 21:00 UTC, then Wednesday 11:00, 17:00 and 23:00 UTC -- all before the
-# Thursday game day's midnight Eastern (04:00 UTC in daylight time, 05:00 in standard), which
-# is the deadline `hub.fetch.consensus` enforces. A run that finds no page yet for the next
-# week exits 3 and says so (a notice, not a failure); the next run tries again. Each run that
-# finds a newer page writes a new file, and the harness reads the latest one that stands.
+# **Four runs a week, Friday and Saturday (`--lineup`).** The archive publishes the page on
+# Fridays -- every 2026 `weekly-op` scrape is Friday-dated. Each run takes the newest page dated
+# after the previous week's last game and before the week's first Sunday and writes it to
+# `state/consensus/<season>/lineup/`. Since ADR-0027 (2026-10-20) that capture is *in time* for
+# every player whose kickoff it precedes -- Sunday's and Monday's -- so it is the week's capture
+# both for the forward measurement, which leaves Thursday's players out of that week, and for
+# setting the lineup (see `hub.fetch.consensus`). The runs are ordered against the publish that
+# uses them: `slate.yml`'s Saturday 14:00 UTC full run writes `site/data/roster.json`, and the last
+# run is Saturday 08:00 UTC, six hours ahead of it -- more than the 4-8.5h GitHub has been starting
+# scheduled runs late (#468) only if both slip alike, so the Friday runs are the margin: a Friday
+# capture is in the tree a day before the publish. The deadline the CLI enforces is the start of
+# the first Sunday game day, Eastern (04:00 UTC in daylight time, 05:00 in standard).
 #
-# **A late capture is refused, not stored.** After the deadline the CLI writes nothing, and this
-# workflow has nothing to commit; the harness separately excludes any file in the tree that was
-# first committed after its deadline, whatever the file says about itself.
+# **The Tuesday and Wednesday runs are retired (2026-10-20, #515).** They took the week capture
+# (`--capture`), which must precede Thursday's game day. In six weeks of 2026 they never once
+# captured (every run exited 3), because no page is published before Friday; and under ADR-0027
+# the most a pre-Thursday page could add is Thursday's players, about 2 of 14 games a week, which
+# the archive has never offered. `--capture` stays reachable by dispatch (`purpose: week`) for a
+# week when a page is published early.
 #
-# **Four more, Friday and Saturday, for the lineup capture only (`--lineup`).** The archive
-# publishes the page on Fridays -- every 2026 `weekly-op` scrape is Friday-dated -- so the four
-# runs above usually find nothing, and #492's rule had no ECR to set Sunday's lineup with. These
-# take the newest page dated after the previous week's last game and before the week's first
-# Sunday, and write it to `state/consensus/<season>/lineup/`, which no point-in-time reader reads
-# (see `hub.fetch.consensus`). They are ordered against the publish that uses them: `slate.yml`'s
-# Saturday 14:00 UTC full run writes `site/data/roster.json`, and the last lineup run is Saturday
-# 08:00 UTC, six hours ahead of it -- more than the 4-8.5h GitHub has been starting scheduled runs
-# late (#468) only if both slip alike, so the Friday runs are the margin: a Friday capture is in
-# the tree a day before the publish. The Sunday deadline the CLI enforces is the start of the
-# first Sunday game day, Eastern (04:00 UTC in daylight time, 05:00 in standard).
+# **A late capture is refused, not stored.** After its deadline the CLI writes nothing, and this
+# workflow has nothing to commit; the harness separately reads every file in the tree on the
+# later of its own time and its first commit, whatever the file says about itself.
 #
 # **An empty run near its deadline is red, not a notice.** `--lineup` exits 3 ("nothing yet")
 # with a day or more left before Sunday's deadline, and 4 inside a day: by then no scheduled run
 # is left to recover it before the lineup is published, and a green notice is how this workflow
-# hid that the strict capture had never once been written. 4 fails the step.
+# hid that the Tuesday-Wednesday capture had never once been written. 4 fails the step.
 #
 # The slate's concurrency group, because both commit under `state/` and two runs rebasing onto
 # each other's commit is the race that group exists for.
 on:
   schedule:
-    - cron: "0 21 * * 2"    # Tuesday 21:00 UTC (17:00 ET): the first page FantasyPros posts
-    - cron: "0 11 * * 3"    # Wednesday 11:00 UTC
-    - cron: "0 17 * * 3"    # Wednesday 17:00 UTC
-    - cron: "0 23 * * 3"    # Wednesday 23:00 UTC (19:00 EDT): the last before a Thursday game day
-    - cron: "0 13 * * 5"    # Friday 13:00 UTC: lineup capture, the morning after Thursday's game
-    - cron: "0 21 * * 5"    # Friday 21:00 UTC: lineup capture
-    - cron: "0 3 * * 6"     # Saturday 03:00 UTC: lineup capture
-    - cron: "0 8 * * 6"     # Saturday 08:00 UTC: lineup capture, the last before slate's 14:00 publish
+    - cron: "0 13 * * 5"    # Friday 13:00 UTC: the morning after Thursday's game
+    - cron: "0 21 * * 5"    # Friday 21:00 UTC
+    - cron: "0 3 * * 6"     # Saturday 03:00 UTC
+    - cron: "0 8 * * 6"     # Saturday 08:00 UTC: the last before slate's 14:00 publish
   workflow_dispatch:
     inputs:
       purpose:
-        description: "strict (before Thursday, for the measurement) or lineup (after Thursday, for Sunday's lineup only)"
+        description: "lineup (the Friday capture, in time for Sunday's and Monday's players) or week (before Thursday's game day, in time for every player)"
         type: choice
-        options: [strict, lineup]
-        default: strict
+        options: [lineup, week]
+        default: lineup
 
 permissions:
   contents: write
@@ -76,8 +73,9 @@ jobs:
       # has passed) and is expected on most runs; any other non-zero is a failed fetch and
       # must turn the run red so a missed week is seen, not read about in January. Exit 4 is a
       # lineup run that found nothing inside a day of Sunday's deadline: red, with an error.
-      # Which capture a run takes is read off the cron that started it (the four Friday and
-      # Saturday entries above), or the dispatch's `purpose`; anything else is the strict one.
+      # Every scheduled run is a Friday capture; a dispatch takes its `purpose`, `week` being the
+      # only way left to the week capture. A cron this step does not know is a schedule edited
+      # without it, and goes red rather than guessing which capture it meant.
       - name: Capture the next week's consensus page
         env:
           SCHEDULE: ${{ github.event.schedule }}
@@ -85,8 +83,8 @@ jobs:
         run: |
           case "${SCHEDULE:-}" in
             "0 13 * * 5"|"0 21 * * 5"|"0 3 * * 6"|"0 8 * * 6") flag=--lineup ;;
-            "") if [ "${PURPOSE:-strict}" = lineup ]; then flag=--lineup; else flag=--capture; fi ;;
-            *) flag=--capture ;;
+            "") if [ "${PURPOSE:-lineup}" = week ]; then flag=--capture; else flag=--lineup; fi ;;
+            *) echo "::error::cron '${SCHEDULE}' is not one this step routes"; exit 1 ;;
           esac
           code=0
           uv run python -m hub.fetch.consensus "$flag" || code=$?
@@ -114,8 +112,9 @@ jobs:
           fi
           git commit -m "consensus: week capture ($(date -u +%Y-%m-%dT%H:%MZ))
 
-          A strict capture (wkNN/cap-*) is taken before the week's first game day -- see
-          docs/weekly-forward.md and docs/track-record.md rule 1. A lineup capture
-          (lineup/wkNN/lineup-*) is taken after Thursday's games, for Sunday's lineup only."
+          A Friday capture (lineup/wkNN/lineup-*) is taken after Thursday's games and is in
+          time for every player whose kickoff it precedes (ADR-0027); a week capture
+          (wkNN/cap-*) is taken before the week's first game day -- see
+          docs/weekly-forward.md and docs/track-record.md rule 1."
           git pull --rebase origin main
           git push

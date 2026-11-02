@@ -2,9 +2,9 @@
 # One cycle's close check for the game-window loop (#495): if a kickoff is imminent and no
 # capture is inside its window yet, ask `odds-close.yml` to take one. Spends no credits itself.
 #
-#   LIVE_LOOP_LEAGUE=nfl close-dispatch.sh <dispatch-command...>
+#   close-dispatch.sh <dispatch-command...>
 #
-# Run as `live-loop.sh`'s `CYCLE_HOOK`, which exports the league the loop is for.
+# Run as `live-loop.sh`'s `CYCLE_HOOK`, in either league's loop.
 #
 # The dispatch command is an argument for the reason `live-loop.sh` takes its deploy command:
 # it is the one thing a test cannot let happen for real.
@@ -14,11 +14,23 @@
 # capture, and a stale checkout would call the same window due again every cycle. It is
 # best-effort and read-only (no `contents: write` here), and a failure is an ordinary cycle.
 #
-# The professional league only: the odds market polled is the NFL's.
+# Every league's loop asks, not only the professional one's (#532): the check reads the NFL
+# schedule and the NFL odds market whichever board the loop is for, and a December Saturday NFL
+# game is played inside the college window's loop. Asking twice cannot capture twice: the
+# dispatched run records its attempt before the request (`hub.closing.record_attempt`), a window
+# with an attempt in it is not due, and `odds-close.yml` is serialised, so a second run finds
+# the window covered. The weekly cap is the backstop behind that.
 set -uo pipefail
 
-league=${LIVE_LOOP_LEAGUE:-}
-[ "$league" = "nfl" ] || exit 0
+# The LLM study's closing line (#450) rides the same cycle, first: its
+# check reads the NFL schedule whichever board the loop is for. `STUDY_CLOSE_HOOK` is a
+# command line (`study-close-dispatch.sh <dispatch...>`), word-split on purpose; unset, as in
+# every hub-only test, it changes nothing here, and its failure is never this script's.
+if [ -n "${STUDY_CLOSE_HOOK:-}" ]; then
+  # shellcheck disable=SC2086
+  $STUDY_CLOSE_HOOK || echo "  the study's closing-line hook failed; carrying on"
+fi
+
 [ "$#" -gt 0 ] || { echo "close-dispatch.sh: no dispatch command given" >&2; exit 2; }
 
 cd "$(dirname "$0")/../.." || exit 2

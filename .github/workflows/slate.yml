@@ -40,7 +40,7 @@ on:
   #
   # Six polls a week is eighteen odds credits (three markets -- spreads, totals, h2h, #495 --
   # x one region a poll), about 78 a month against 500; the near-kickoff close captures
-  # (`odds-close.yml`) add about 90 and the study about 89 -- `hub.fetch.odds` refuses below a floor of 75 before spending one, so
+  # (`odds-close.yml`) add about 90 and the study about 89 -- `hub.fetch.odds` refuses below a floor of 100 before spending one, so
   # an over-eager cadence cannot drain the month. The maintainer approved the spend.
   schedule:
     - cron: "0 11 * * 3"

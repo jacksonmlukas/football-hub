@@ -174,7 +174,11 @@ jobs:
             "20 23 * * 4")      LEAGUE=nfl ;;
             "40 23 * * 4")      LEAGUE=nfl ;;
             "")
-              if [ -n "$ASKED" ] && [ "$ASKED" != "auto" ]; then LEAGUE="$ASKED"
+              if [ -n "$ASKED" ] && [ "$ASKED" != "auto" ]; then
+                case "$ASKED" in
+                  nfl|cfb) LEAGUE="$ASKED" ;;
+                  *) echo "::error::league must be nfl, cfb or auto"; exit 1 ;;
+                esac
               elif [ "$(TZ=America/New_York date +%u)" = "6" ]; then LEAGUE=cfb
               else LEAGUE=nfl
               fi ;;
@@ -203,15 +207,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOSE_SYNC_REF: ${{ github.ref_name }}
+          # Dispatch inputs and the league derived from one go through env, not into the script
+          # text (#537): interpolated into `run:` a free-text value is code.
+          MINUTES: ${{ inputs.minutes || 115 }}
+          INTERVAL: ${{ inputs.interval || 300 }}
+          LEAGUE: ${{ steps.board.outputs.league }}
+          REPO: ${{ github.repository }}
           CYCLE_HOOK: .github/scripts/close-dispatch.sh gh workflow run odds-close.yml --repo ${{ github.repository }} --ref ${{ github.ref_name }}
+          # The LLM study's closing line (#450), off until the study is switched on: the hook
+          # exits at once unless LLM_FORECASTS_ENABLED is 'true', and dispatches
+          # `forecast-close.yml` only when an NFL kickoff is within 30 minutes with no study
+          # attempt in that window (read from the `forecasts` branch, which this job never writes).
+          LLM_FORECASTS_ENABLED: ${{ vars.LLM_FORECASTS_ENABLED }}
+          STUDY_SYNC_REF: forecasts
+          STUDY_CLOSE_HOOK: .github/scripts/study-close-dispatch.sh gh workflow run forecast-close.yml --repo ${{ github.repository }} --ref ${{ github.ref_name }}
         run: |
+          case "$MINUTES$INTERVAL" in
+            ""|*[!0-9]*) echo "::error::minutes and interval must be whole numbers"; exit 1 ;;
+          esac
           .github/scripts/live-loop.sh \
-            "$(( ${{ inputs.minutes || 115 }} * 60 ))" \
-            "${{ inputs.interval || 300 }}" \
-            "${{ steps.board.outputs.league }}" \
+            "$(( MINUTES * 60 ))" \
+            "$INTERVAL" \
+            "$LEAGUE" \
             site/data \
-            gh workflow run pages.yml --repo "${{ github.repository }}" \
-              -f league="${{ steps.board.outputs.league }}"
+            gh workflow run pages.yml --repo "$REPO" \
+              -f league="$LEAGUE"
 
       # **The watchdog's check, inside the refresher** (#457). Two game windows (2026-10-02
       # and 2026-10-06) ran with a refresher and no check, after #391, because `watchdog.yml`
@@ -266,12 +286,15 @@ jobs:
       - name: Continue while a game is in progress
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LEAGUE: ${{ steps.board.outputs.league }}
+          MINUTES: ${{ inputs.minutes || 115 }}
+          INTERVAL: ${{ inputs.interval || 300 }}
+          REPO: ${{ github.repository }}
         run: |
-          LEAGUE="${{ steps.board.outputs.league }}"
           if uv run python -m hub.live_chain --league "$LEAGUE"; then
-            gh workflow run live.yml --repo "${{ github.repository }}" \
+            gh workflow run live.yml --repo "$REPO" \
               -f league="$LEAGUE" \
-              -f minutes="${{ inputs.minutes || 115 }}" \
-              -f interval="${{ inputs.interval || 300 }}" \
+              -f minutes="$MINUTES" \
+              -f interval="$INTERVAL" \
               || echo "::warning::could not hand the window on; the crons are the fallback"
           fi

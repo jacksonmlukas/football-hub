@@ -457,7 +457,6 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
         _median_game_total,
         _median_home_moneyline_prob,
         _median_home_spread,
-        staleness,
     )
 
     events = load("odds_spreads.synthetic.json")
@@ -477,7 +476,7 @@ def test_odds_fixture_parses_to_the_lines_table_shape():
                                     "total_price": pl.Float64, "ml_home_prob": pl.Float64,
                                     "captured_at": pl.Datetime})
     # The two staleness columns are derived, never parsed: `staleness` is the one producer.
-    assert ODDS_SNAPSHOT.validate(staleness(df)).height == 1
+    assert ODDS_SNAPSHOT.validate(_stamped(df)).height == 1
     # books at -8.5 and -8.0; median -8.25, stored positive because home is favoured
     assert df["close_spread"][0] == pytest.approx(8.25)
     # books at 47.5 and 47.0. A total is a sum, so it is not negated the way a spread is.
@@ -528,12 +527,15 @@ ODDS_COLUMNS = {"game_id": pl.Utf8, "close_spread": pl.Float64,
                 "spread_price": pl.Float64, "close_total": pl.Float64,
                 "total_price": pl.Float64, "ml_home_prob": pl.Float64,
                 "captured_at": pl.Datetime}
+BOTH_SIDES = {"spread_price_away": pl.Float64, "ml_home_price": pl.Float64,
+              "ml_away_price": pl.Float64}
 
 
 def _stamped(df: pl.DataFrame) -> pl.DataFrame:
     """The frame as `hub.fetch.odds._record` writes it: staleness derived, never typed in."""
     from hub.fetch.odds import staleness
-    return staleness(df)
+    return staleness(df).with_columns(
+        pl.lit(None, dtype=t).alias(c) for c, t in BOTH_SIDES.items() if c not in df.columns)
 
 
 def test_odds_allows_repeated_games_by_design():

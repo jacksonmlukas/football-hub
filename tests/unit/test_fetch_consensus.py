@@ -214,7 +214,7 @@ def test_the_first_sunday_and_the_lineup_week_follow_the_sunday_deadline():
     sched = _schedule()
     assert consensus.first_sundays(sched)[5] == SUNDAY and 19 not in consensus.first_sundays(sched)
     assert consensus.lineup_deadline_for(SUNDAY) == SUNDAY_DEADLINE
-    # Friday, after week 5's Thursday deadline: the strict capture has moved on, the lineup has not
+    # Friday, after week 5's Thursday deadline: the week capture has moved on, the Friday one has not
     assert consensus.next_week(consensus.first_game_days(sched), FRIDAY_RUN) == (
         6, date(2026, 10, 15))
     assert consensus.lineup_week(sched, FRIDAY_RUN) == (5, FIRST, SUNDAY)
@@ -234,7 +234,7 @@ def test_the_lineup_window_takes_fridays_page_and_refuses_either_side_of_it(tmp_
         consensus.capture_lineup(sched, _archive(("weekly-op", "2026-10-11", "Sun", 1.0)),
                                  2026, FRIDAY_RUN, "d", tmp_path)
     assert list(tmp_path.rglob("*.json")) == []
-    # Friday's page, after Thursday's game: accepted, and filed apart from the strict record
+    # Friday's page, after Thursday's game: accepted, and filed apart from the week captures
     arch = _archive(("weekly-op", "2026-10-06", "Tue", 5.0), ("weekly-op", "2026-10-09", "Fri", 1.0))
     path, week = consensus.capture_lineup(sched, arch, 2026, FRIDAY_RUN, "d", tmp_path)
     assert week == 5 and path.parent == tmp_path / "2026" / "lineup" / "wk05"
@@ -242,7 +242,7 @@ def test_the_lineup_window_takes_fridays_page_and_refuses_either_side_of_it(tmp_
     [cap] = consensus.read_lineup_captures(2026, tmp_path)
     assert cap.scrape_date == date(2026, 10, 9) and cap.rows["player"].to_list() == ["Fri"]
     assert cap.first_sunday == SUNDAY and cap.deadline == SUNDAY_DEADLINE
-    assert consensus.read_captures(2026, tmp_path) == [], "no strict reader sees it"
+    assert consensus.read_captures(2026, tmp_path) == [], "the week reader does not see it"
     with pytest.raises(ValueError, match="no regular-season week"):
         consensus.capture_lineup(sched, arch, 2026, datetime(2027, 3, 1, tzinfo=UTC), "d",
                                  tmp_path)
@@ -256,7 +256,7 @@ def test_a_lineup_capture_written_after_sunday_starts_is_refused_and_nothing_lan
     with pytest.raises(consensus.LateCapture, match="outside the week's window"):
         consensus.write_lineup_capture(_lineup_doc(FRIDAY_RUN, scrape=SUNDAY), tmp_path)
     with pytest.raises(consensus.LateCapture, match="purpose"):
-        consensus.write_lineup_capture(_doc(FRIDAY_RUN), tmp_path)   # a strict doc, mislabelled
+        consensus.write_lineup_capture(_doc(FRIDAY_RUN), tmp_path)   # a week doc, mislabelled
     assert list(tmp_path.rglob("*")) == []
     path = consensus.write_lineup_capture(_lineup_doc(SUNDAY_DEADLINE - timedelta(seconds=1)),
                                           tmp_path)
@@ -270,9 +270,9 @@ def test_a_lineup_capture_written_after_sunday_starts_is_refused_and_nothing_lan
     assert [c.path for c in consensus.read_lineup_captures(2026, tmp_path)] == [path]
 
 
-def test_the_strict_reader_drops_a_lineup_capture_even_filed_as_a_strict_one(tmp_path):
-    """The plant: a lineup document copied to `wk05/cap-*.json` matches the strict glob. The
-    `purpose` check is what keeps it out of every point-in-time reader."""
+def test_the_week_reader_drops_a_lineup_capture_even_filed_as_a_week_one(tmp_path):
+    """The plant: a lineup document copied to `wk05/cap-*.json` matches the week glob. The
+    `purpose` check is what keeps it out of the reader whose captures are labelled in time for every player."""
     ok = consensus.write_capture(_doc(DEADLINE - timedelta(hours=20)), tmp_path)
     smuggled = consensus.capture_path(2026, 5, DEADLINE - timedelta(hours=2), tmp_path)
     smuggled.write_text(json.dumps(_lineup_doc(DEADLINE - timedelta(hours=2))))
@@ -307,7 +307,7 @@ def test_main_lineup_exits_by_deadline_proximity_and_writes_when_the_page_is_the
     assert consensus.main(["--lineup"]) == 0
     assert len(consensus.read_lineup_captures(2026, tmp_path)) == 1
     assert consensus.read_captures(2026, tmp_path) == []
-    # the strict capture's empty run stays a notice whatever the clock says
+    # the week capture's empty run stays a notice whatever the clock says
     monkeypatch.setattr(consensus, "_now", lambda: DEADLINE - timedelta(hours=2))
     monkeypatch.setattr(consensus, "_fetch", lambda _s: (_schedule(), _archive(), "d"))
     assert consensus.main(["--capture"]) == 3
@@ -352,7 +352,7 @@ def test_the_columns_each_call_site_asks_for_satisfy_the_contracts(spy, monkeypa
     assert weekly_forward.week14_loaded() is True
     assert _missing(spy["player_stats"], PLAYER_STATS) == []
     spy.clear()
-    monkeypatch.setattr(weekly_forward.consensus, "read_captures", lambda _s: [])
+    monkeypatch.setattr(weekly_forward.consensus, "read_every_capture", lambda _s: [])
     assert weekly_forward.main(["--as-of", "2026-10-07"]) == 0         # NOT-YET: nothing read
     assert _missing(spy["schedules"], SCHEDULES) == []
     assert "player_stats" not in spy            # the data is not asked about before the date
@@ -375,3 +375,79 @@ def test_a_four_column_ask_at_the_call_site_is_seen_to_fail(spy):
     exec(bad, ns)
     ns["_fetch"](2026)
     assert _missing(spy["schedules"], SCHEDULES) == ["away_team", "game_id", "home_team"]
+
+
+# --- in time per player (ADR-0027, #515) ---------------------------------------------------------
+#
+# Week 7 of 2026 as the schedule has it: Thursday 10-22 DAL@PHI 20:15 ET, Sunday 10-25 KC@BUF
+# 13:00 ET, Monday 10-26 NYJ@MIA 20:15 ET, all in daylight time. JAX plays Sunday too, so the
+# archive's `JAC` has a game to be placed at, and SF is on a bye.
+
+def _week7(gametime: bool = True) -> pl.DataFrame:
+    rows = [("2026-10-22", "20:15", "DAL", "PHI"), ("2026-10-25", "13:00", "KC", "BUF"),
+            ("2026-10-25", "13:00", "JAX", "TEN"), ("2026-10-26", "20:15", "NYJ", "MIA"),
+            ("2026-11-01", "13:00", "SF", "SEA")]
+    df = pl.DataFrame([{"season": 2026, "week": 8 if d == "2026-11-01" else 7,
+                        "game_type": "REG", "gameday": d, "gametime": t, "away_team": a,
+                        "home_team": h} for d, t, a, h in rows])
+    return df if gametime else df.drop("gametime")
+
+
+THURSDAY7 = date(2026, 10, 22)
+FRIDAY7 = datetime(2026, 10, 23, 15, tzinfo=UTC)
+W7 = pl.DataFrame({"player": ["Thu Guy", "Sun Guy", "Jag Guy", "Mon Guy", "Bye Guy", "Nobody"],
+                   "pos": ["WR"] * 6, "team": ["PHI", "KC", "JAC", "MIA", "SF", "FA"],
+                   "ecr": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+
+
+def test_kickoffs_are_the_schedules_eastern_times_on_one_utc_clock():
+    """`hub.schedule.kickoff_expr`'s conversion, with UTC attached: 13:00 EDT on 10-25 is 17:00
+    UTC and 13:00 EST on 11-08 is 18:00 UTC -- a fixed offset would be right for one of them
+    only. A game with no time is placed at the start of its day, Eastern (`deadline_for`)."""
+    k = consensus.kickoffs(_week7())
+    assert k[(7, "KC")] == k[(7, "BUF")] == datetime(2026, 10, 25, 17, 0, tzinfo=UTC)
+    assert k[(7, "PHI")] == datetime(2026, 10, 23, 0, 15, tzinfo=UTC)
+    after_dst = pl.DataFrame([{"week": 10, "game_type": "REG", "gameday": "2026-11-08",
+                               "gametime": "13:00", "away_team": "KC", "home_team": "BUF"}])
+    assert consensus.kickoffs(after_dst)[(10, "KC")] == datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
+    untimed = consensus.kickoffs(_week7(gametime=False))
+    assert untimed[(7, "KC")] == consensus.deadline_for(date(2026, 10, 25))
+    assert consensus.kickoffs(_schedule()) == {}              # no teams: nobody to place
+
+
+def test_a_friday_capture_is_in_time_for_sunday_players_and_not_for_a_thursday_player():
+    """ADR-0027's test, at the rows: Friday is after Thursday's kickoff and before Sunday's and
+    Monday's. `JAC` is the archive's spelling of JAX, placed by `TEAM_ALIASES`; a bye has no game
+    to have seen; a team the schedule does not know cannot be shown in time and is left out."""
+    kicks = consensus.kickoffs(_week7())
+    kept, out = consensus.in_time_rows(W7, FRIDAY7, 7, THURSDAY7, kicks)
+    assert kept["player"].to_list() == ["Sun Guy", "Jag Guy", "Mon Guy", "Bye Guy"]
+    assert out == 2
+    # a capture taken before the week's first game day precedes every kickoff: all stand
+    wed = datetime(2026, 10, 21, 20, tzinfo=UTC)
+    kept_wed, out_wed = consensus.in_time_rows(W7, wed, 7, THURSDAY7, kicks)
+    assert kept_wed.equals(W7) and out_wed == 0
+    # Thursday 20:14 ET is in time for Thursday's game too; 20:15 ET is not
+    before = datetime(2026, 10, 23, 0, 14, tzinfo=UTC)
+    assert "Thu Guy" in consensus.in_time_rows(W7, before, 7, THURSDAY7, kicks)[0]["player"]
+    at = datetime(2026, 10, 23, 0, 15, tzinfo=UTC)
+    assert "Thu Guy" not in consensus.in_time_rows(W7, at, 7, THURSDAY7, kicks)[0]["player"]
+    # Sunday 14:00 ET: in time only for Monday's player and the bye
+    sunday = datetime(2026, 10, 25, 18, tzinfo=UTC)
+    assert consensus.in_time_rows(W7, sunday, 7, THURSDAY7, kicks)[0]["player"].to_list() == [
+        "Mon Guy", "Bye Guy"]
+
+
+def test_the_team_aliases_are_the_draft_modules_own():
+    from hub.draft import playoff_sos
+    assert consensus.TEAM_ALIASES == playoff_sos.TEAM_ALIASES
+
+
+def test_every_capture_reads_both_kinds_and_the_week_reader_only_week_captures(tmp_path):
+    week = consensus.write_capture(_doc(DEADLINE - timedelta(hours=20)), tmp_path)
+    fri = consensus.write_lineup_capture(_lineup_doc(FRIDAY_RUN), tmp_path)
+    every = consensus.read_every_capture(2026, tmp_path)
+    assert [(c.path, c.purpose) for c in every] == [(week, consensus.WEEK),
+                                                    (fri, consensus.LINEUP)]
+    assert every[1].deadline == SUNDAY_DEADLINE and every[1].scrape_date == date(2026, 10, 9)
+    assert [c.path for c in consensus.read_captures(2026, tmp_path)] == [week]

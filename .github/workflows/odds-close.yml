@@ -15,7 +15,7 @@ name: odds-close
 # every cycle) is a no-op after the first. One call returns the whole season, so it is one call
 # per distinct kickoff time: three credits a call (spreads, totals, h2h; one region), about
 # six or seven calls in a normal week, never more than ten (`hub.closing.CLOSE_CALLS_PER_WEEK`)
-# -- 18-21 credits a week, at most 30. `hub.fetch.odds.CREDIT_FLOOR` still refuses below 75.
+# -- 18-21 credits a week, at most 30. `hub.fetch.odds.CREDIT_FLOOR` still refuses below 100.
 #
 # Best-effort by design: a window missed leaves the game's close at its last earlier capture,
 # published with its true lead time and not called the close (`hub.closing.closes`). A failed
