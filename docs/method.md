@@ -9,6 +9,9 @@ Almost every rule below exists because a specific mistake was made here first. T
 point of the page: the method is not recited from a textbook, it is what is left after the
 errors were caught. Each rule names the incident that produced it.
 
+The live version of the page is the [Ledger view](https://jacksonmlukas.github.io/football-hub/#/ledger),
+which shows one row per verdict, each linked to the ADR behind it.
+
 ---
 
 ## Two questions, and they are not interchangeable
