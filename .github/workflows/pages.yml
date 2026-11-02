@@ -119,8 +119,9 @@ jobs:
       # ESPN -- including when its cache could have answered, which is what keeps
       # `generated_at` from advancing over frozen scores.
       - name: Refresh the live scores
+        env:
+          LEAGUE: ${{ inputs.league }}
         run: |
-          LEAGUE="${{ inputs.league }}"
           if [ -z "$LEAGUE" ] && [ -f site/data/live.json ]; then
             LEAGUE=$(sed -n 's/.*"league": "\([a-z]*\)".*/\1/p' site/data/live.json | head -1)
           fi

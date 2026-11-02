@@ -99,3 +99,25 @@ def test_the_module_entry_point_is_the_cli_the_ticket_names(tmp_path, monkeypatc
     with pytest.raises(SystemExit) as e:
         runpy.run_module("hub.audit_ready", run_name="__main__")
     assert e.value.code == audit_ready.UNSCORED
+
+
+def test_a_tied_game_is_settled_not_unscored(tmp_path, capsys):
+    """A tie leaves the record by convention (`margin.DROP_TIES`; `publish` reports it in
+    `tied_game_ids`), so it is in no `scored_game_ids`. A week whose only unscored game
+    finished level has nothing left to wait for (#537)."""
+    site = _site(tmp_path, EARLIER + WEEK4[1:])
+    record = json.loads((site / "track_record.json").read_text())
+    record["tied_game_ids"] = [WEEK4[0]]
+    (site / "track_record.json").write_text(json.dumps(record))
+    code, said = _run(site, capsys)
+    assert code == 0 and "READY" in said
+
+
+def test_a_game_not_reported_tied_is_still_unscored(tmp_path, capsys):
+    """Control: the same record with the tie list naming a different game still fails."""
+    site = _site(tmp_path, EARLIER + WEEK4[1:])
+    record = json.loads((site / "track_record.json").read_text())
+    record["tied_game_ids"] = ["2026_01_G00"]
+    (site / "track_record.json").write_text(json.dumps(record))
+    code, said = _run(site, capsys)
+    assert code == audit_ready.UNSCORED and f"unscored: {WEEK4[0]}" in said

@@ -557,6 +557,9 @@ def track_record(base: Path | None = None, out: Path | None = None,
         # being none among the published predictions, and that stays true only as long as
         # something re-derives it (#52).
         n_tied=_n_tied(finished),
+        # Which games, for `hub.audit_ready` (#537): a tie is in no season's `scored_game_ids`,
+        # so without the ids a week holding one could never read as scored.
+        tied_game_ids=sorted(set(finished.filter(pl.col("result") == 0)["game_id"].to_list())),
         # Counted from the commit history (#422), not asserted: see `hub.prereg`. None is
         # "could not tell", which the page words differently from 0 -- a literal 0 here for
         # four weeks called 64 predictions committed before kickoff a backtest.
@@ -1018,6 +1021,10 @@ def roster(out: Path | None = None,
         # ranks that set it, and `lineup_rule.ecr_capture.note` says when they are from.
         ecr_by_key, _ = lineup_rule.lineup_ecr(SEASON_AHEAD, wk)
         ecr_reason = None
+    elif rule.source == lineup_rule.ECR and wk is not None and rule.ecr_week != wk:
+        # Set on last-good (an earlier week's capture): the column shows those ranks, not this
+        # week's, which were too thin to set anything (#537). `rule.reason` says which capture.
+        ecr_by_key, _ = lineup_rule.last_good_ecr(SEASON_AHEAD, wk)
     # The lock's own lineup, read rather than rebuilt. This used to reconstruct it from the
     # two deltas -- the set starters, less those to sit, plus those to start -- which agrees
     # with the lock wherever it priced a comparison and says nothing at all where it did not.
@@ -1046,8 +1053,10 @@ def roster(out: Path | None = None,
         was = {r["player"] for r in df.iter_rows(named=True)
                if r["projected"] and r["starting"]}
         start, sit = sorted(best - was - shut), sorted(was - best - shut)
-        if call.ecr_capture is not None:
-            # As under `decide`: the `ecr` column shows the ranks that set the lineup.
+        if call.ecr_capture is not None or (call.source == lineup_rule.ECR
+                                            and call.ecr_week != wk):
+            # As under `decide`: the `ecr` column shows the ranks that set the lineup, the
+            # lineup capture's or last-good's (#537).
             ecr_by_key, ecr_reason = call.ranks, None
 
     # The other two sources beside `mu` (#492): weekly consensus rank and ESPN's projection for

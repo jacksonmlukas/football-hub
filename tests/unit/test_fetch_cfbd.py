@@ -997,3 +997,29 @@ def test_a_capture_json_written_before_the_move_still_reads(tmp_path):
     _sidecar(entry).write_text('{"captured_at": "2026-09-07T00:00:00"}')
     assert cfbd.captured_at("games", 2026, cache=tmp_path) == datetime(2026, 9, 7, tzinfo=UTC), (
         "a naive time is read as UTC, as it always was")
+
+
+# --- an empty answer is not permanent (#537) -------------------------------------------------
+
+def test_an_empty_entry_is_asked_again_once_a_day_has_passed(transport, paths):
+    """CFBD answers `[]` for a week whose lines are not posted yet. Held for good, that week
+    never prices again; held for a day, it costs one call per day, not one per read."""
+    calls = _seed(transport, paths, payload=[])
+    _age(paths, hours=cfbd.EMPTY_RETRY_AFTER.total_seconds() / 3600 + 1)
+    transport([_GAME])
+    got = cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert got.height == 1 and len(calls) == 2, "the stale empty entry was served, not retried"
+
+
+def test_a_fresh_empty_entry_is_still_served_from_the_cache(transport, paths):
+    """Control: inside the day an empty entry costs nothing, so a loop cannot burn quota."""
+    calls = _seed(transport, paths, payload=[])
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert len(calls) == 1
+
+
+def test_a_populated_entry_stays_permanent_however_old(transport, paths):
+    calls = _seed(transport, paths)
+    _age(paths, hours=24 * 30)
+    cfbd.bulk("games", year=2026, week=1, cache=paths["cache"], quota_path=paths["quota"])
+    assert len(calls) == 1

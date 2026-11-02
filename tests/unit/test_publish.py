@@ -2309,3 +2309,12 @@ def test_an_unreadable_archive_drops_the_clv_block_not_the_record(site, base, mo
     got = publish.track_record(base=base, out=site)
     assert isinstance(got, dict)
     assert got["closing_line_value"] is None and got["n_scored"] == 1
+
+
+def test_the_record_names_the_ties_it_dropped(site, base, monkeypatch):
+    """`n_tied` says how many; `audit_ready` (#537) needs which, since a dropped tie is in no
+    season's `scored_game_ids` and so a week with one could never read as scored."""
+    _tied_and_won(base, monkeypatch, site)
+    got = publish.track_record(base=base, out=site)
+    assert isinstance(got, dict)
+    assert got["tied_game_ids"] == ["g1"]
