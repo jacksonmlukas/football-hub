@@ -146,6 +146,17 @@ def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: st
                 "Math.max(...[...document.querySelectorAll('.swap-card')]"
                 ".map(c => c.getBoundingClientRect().bottom))")
             assert bottom <= h, f"the swap cards end at {bottom}px, below the {h}px fold"
+        if view == "ledger":
+            # #488: the verdict is above the name in every row, at every width. Compared on the
+            # laid-out boxes, so a stylesheet that put them side by side fails here.
+            beside = page.evaluate(
+                "[...document.querySelectorAll('.lg-row')].filter(r => {"
+                " const v = r.querySelector('.lg-verdict').getBoundingClientRect();"
+                " const n = r.querySelector('.lg-name').getBoundingClientRect();"
+                " return !(v.bottom <= n.top); }).length")
+            rows = page.evaluate("document.querySelectorAll('.lg-row').length")
+            assert rows > 0, "the ledger drew no rows, so nothing was checked"
+            assert beside == 0, f"{beside} of {rows} ledger rows at {width}px put the verdict beside the name"
         page.screenshot(path=str(out), full_page=True, animations="disabled", caret="initial")
         assert not foreign, f"the page reached off-host: {foreign}"
     finally:

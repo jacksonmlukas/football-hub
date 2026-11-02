@@ -8,6 +8,7 @@ import { panel } from "./dom.js";
 import { ago, cap, pct } from "./format.js";
 import { boardBody } from "./panels/board.js";
 import { statusLine, statusRecords } from "./panels/footer.js";
+import { ledgerBody } from "./panels/ledger.js";
 import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
