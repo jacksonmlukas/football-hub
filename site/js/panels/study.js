@@ -5,7 +5,7 @@
 // artifact (`contestants[].log_loss_diff`, `.brier_diff`, `.scorable`, `.missing`); what this file
 // adds is layout: a shared horizontal scale for the whiskers, an order (sorted by the artifact's
 // own estimate) and a rank (that order's position). The Delta is the contestant minus the betting
-// market on the same games, so zero is the market and positive is worse than it.
+// market on the same games, so zero is the betting market and positive is worse than it.
 
 import { esc } from "../format.js";
 import { chipUnconfirmed } from "../state.js";
@@ -21,7 +21,7 @@ export const INTERIM_LABEL = "Interim: descriptive, not a test";
 // verdict -- only who is entered -- so nothing here can disagree with the artifact once it lands.
 export const CONTESTANTS = [
   { group: "Four LLMs, blind", n: 4, note: "see the info packet without the betting line" },
-  { group: "Four LLMs, line-aware", n: 4, note: "the same packet plus the market's probability and spread" },
+  { group: "Four LLMs, line-aware", n: 4, note: "the same packet plus the betting market's probability and spread" },
   { group: "LLM + retrieval", n: 1, note: "paired with one line-aware LLM, plus news search (exploratory)" },
   { group: "Hub model", n: 1, note: "football-hub's own pick'em model (exploratory)" },
   { group: "Home constant", n: 1, note: "a fixed historical home win rate, every game" },
@@ -31,7 +31,7 @@ export const CONTESTANTS = [
 // The three steps to the first score, each with the issue that builds it.
 export const STEPS = [
   { n: 448, text: "Fill the v0 checklist and tag prereg-llm-v0, so the forecasts can start." },
-  { n: 451, text: "Report the burn-in: whether the study can tell a model apart from the market." },
+  { n: 451, text: "Report the burn-in: whether the study can tell a model apart from the betting market." },
   { n: 453, text: "Score each finished week and publish this leaderboard." },
 ];
 
@@ -111,9 +111,9 @@ const DIR = "lower is better";
 function head() {
   return `<thead><tr><th>#</th><th>Contestant</th><th class="num">Resolved</th>`
     + `<th class="num">Missing ↓ <span class="lb-dir">(${DIR})</span></th>`
-    + `<th class="num" title="the contestant's log loss minus the market's, same games">Δ log loss ↓ <span class="lb-dir">(${DIR})</span></th>`
+    + `<th class="num" title="the contestant's log loss minus the betting market's, same games">Δ log loss ↓ <span class="lb-dir">(${DIR})</span></th>`
     + `<th>vs market, 95% interval</th>`
-    + `<th class="num" title="the contestant's Brier score minus the market's, same games">Δ Brier ↓ <span class="lb-dir">(${DIR})</span></th></tr></thead>`;
+    + `<th class="num" title="the contestant's Brier score minus the betting market's, same games">Δ Brier ↓ <span class="lb-dir">(${DIR})</span></th></tr></thead>`;
 }
 // /GUARD
 
@@ -132,10 +132,10 @@ function row(r, rank, m, prelim) {
 function marketRow(m) {
   return `<tr class="lb-row lb-market-row"><td class="num">—</td><td>Market (benchmark)</td>`
     + `<td class="num">—</td><td class="num">—</td><td class="num">zero</td>`
-    + `<td>${plot(zeroAt(m), "the market, zero by definition")}</td><td class="num">zero</td></tr>`;
+    + `<td>${plot(zeroAt(m), "the betting market, zero by definition")}</td><td class="num">zero</td></tr>`;
 }
 
-// One condition's table: the market, then the ranked rows by the artifact's own estimate, then
+// One condition's table: the betting market, then the ranked rows by the artifact's own estimate, then
 // the rows under the minimum game count (listed, unranked, marked preliminary). The baselines
 // (home constant, coin flip) are drawn greyed. Rows with no condition (hub, baselines) appear in
 // both tables.
@@ -167,7 +167,7 @@ export function studyBody(lb) {
     + `<div class="lb-cond" data-cond-body="blind">${conditionTable(rows, min, "blind", m)}</div>`
     + `<div class="lb-cond" data-cond-body="line_aware" hidden>${conditionTable(rows, min, "line_aware", m)}</div>`
     + `<p class="lb-foot">Each Δ is the contestant minus the betting market on the same games; `
-    + `the whisker is its 95% interval about zero, which is the market.</p>`;
+    + `the whisker is its 95% interval about zero, which is the betting market.</p>`;
 }
 
 // The toggle's one effect, on the panel the button sits in.

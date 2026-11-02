@@ -167,7 +167,7 @@ def test_the_page_computes_no_score():
     assert not re.search(r"fetch\(|https?://", code)
 
 
-def test_the_market_is_its_own_row_at_zero_and_baselines_are_greyed(node):
+def test_the_betting_market_is_its_own_row_at_zero_and_baselines_are_greyed(node):
     html = _body(node, _lb())
     for cond in ("blind", "line_aware"):
         t = _table(html, cond)
