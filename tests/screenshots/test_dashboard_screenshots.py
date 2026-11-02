@@ -146,6 +146,17 @@ def capture(browser: Browser, base_url: str, width: str, scheme: Scheme, now: st
                 "Math.max(...[...document.querySelectorAll('.swap-card')]"
                 ".map(c => c.getBoundingClientRect().bottom))")
             assert bottom <= h, f"the swap cards end at {bottom}px, below the {h}px fold"
+        if view == "ledger":
+            # #488: the verdict is above the name in every row, at every width. Compared on the
+            # laid-out boxes, so a stylesheet that put them side by side fails here.
+            beside = page.evaluate(
+                "[...document.querySelectorAll('.lg-row')].filter(r => {"
+                " const v = r.querySelector('.lg-verdict').getBoundingClientRect();"
+                " const n = r.querySelector('.lg-name').getBoundingClientRect();"
+                " return !(v.bottom <= n.top); }).length")
+            rows = page.evaluate("document.querySelectorAll('.lg-row').length")
+            assert rows > 0, "the ledger drew no rows, so nothing was checked"
+            assert beside == 0, f"{beside} of {rows} ledger rows at {width}px put the verdict beside the name"
         page.screenshot(path=str(out), full_page=True, animations="disabled", caret="initial")
         assert not foreign, f"the page reached off-host: {foreign}"
     finally:
@@ -172,10 +183,10 @@ def changed_fraction(a: Path, b: Path, diff_to: Path | None = None) -> float:
     return changed / (ia.size[0] * ia.size[1])
 
 
-# The views with content of their own today. Study and Ledger hold one placeholder sentence until
-# #487 and #488, and get their baselines then. This week keeps the unsuffixed names it has
+# The views with content of their own today. Study holds one placeholder sentence until #487, and
+# gets its baselines then. This week keeps the unsuffixed names it has
 # always had, so its history in git is one file per width and scheme.
-VIEW_NAMES = ("week", "games", "record")
+VIEW_NAMES = ("week", "games", "record", "ledger")
 
 
 @pytest.mark.parametrize("view", VIEW_NAMES)
