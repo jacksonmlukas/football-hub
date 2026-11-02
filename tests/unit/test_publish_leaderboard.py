@@ -102,3 +102,12 @@ def test_cli_leaderboard_flag(tmp_path, capsys, monkeypatch):
     assert publish.main(["--leaderboard", "--week", "1", "--out", str(tmp_path)]) == 0
     assert "1 contestants" in capsys.readouterr().out
     assert (tmp_path / "leaderboard.json").exists()
+
+
+def test_the_default_root_is_the_repository_root():
+    """Production calls the reader with no `root`; a wrong `ROOT` makes `git show` fail and
+    the board is Kept forever, quietly."""
+    root = publish_leaderboard.ROOT
+    assert (root / "pyproject.toml").is_file()
+    assert (root / ".git").exists()  # a directory, or a file in a worktree
+    assert (root / "src" / "hub" / "publish_leaderboard.py").is_file()
