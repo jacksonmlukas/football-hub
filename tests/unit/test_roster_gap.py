@@ -411,6 +411,35 @@ def test_a_gap_set_on_the_lineup_capture_shows_those_ranks(tmp_path, monkeypatch
     assert {r["player"]: r["ecr"] for r in got["rows"]}["Bench RB"] == 7.0
 
 
+def test_a_gap_set_on_old_ranks_shows_those_ranks_not_this_weeks(tmp_path, monkeypatch):
+    """The `ecr` column shows the ranks that set the lineup (#537). Week 7's own capture ranks
+    one player and cannot fill the lineup, so week 6's capture sets it; the column must not
+    show week 7's single rank beside a lineup week 6 chose."""
+    from hub.season import lineup_journal
+    monkeypatch.setattr(lineup_journal, "roster_week", lambda df: 7)
+    monkeypatch.setattr(lineup_journal, "ecr_ranks",
+                        lambda *a, **k: ({_key("Bench RB"): 99.0}, None))
+    monkeypatch.setattr(lineup_rule, "lineup_ecr", lambda *a, **k: ({}, None))
+    monkeypatch.setattr(lineup_rule, "last_good_ecr", lambda *a, **k: (_ranks(), 6))
+    got, _ = _publish(tmp_path, _no_te())
+    assert got["incomplete"]["lineup_source"]["ecr_week"] == 6
+    assert {r["player"]: r["ecr"] for r in got["rows"]}["Bench RB"] == 7.0
+
+
+def test_a_full_lineup_set_on_old_ranks_shows_those_ranks_not_this_weeks(tmp_path, monkeypatch):
+    """The same column rule on the ordinary path (`decide`), not only under a gap (#537)."""
+    from hub.season import lineup_journal
+    monkeypatch.setattr(lineup_journal, "roster_week", lambda df: 7)
+    monkeypatch.setattr(lineup_journal, "ecr_ranks",
+                        lambda *a, **k: ({_key("Good WR"): 99.0}, None))
+    monkeypatch.setattr(lineup_rule, "lineup_ecr", lambda *a, **k: ({}, None))
+    old = {_key(r[0]): float(i) for i, r in enumerate(FILLABLE, start=1)}
+    monkeypatch.setattr(lineup_rule, "last_good_ecr", lambda *a, **k: (old, 6))
+    got, _ = _publish(tmp_path, _fillable())
+    assert got["lineup_rule"]["ecr_week"] == 6
+    assert {r["player"]: r["ecr"] for r in got["rows"]}["Good WR"] == 9.0
+
+
 def test_partial_never_raises_when_the_search_refuses(monkeypatch):
     from hub.season import lineup
 
