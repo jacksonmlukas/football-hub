@@ -193,7 +193,7 @@ def test_moment_reads_what_a_row_holds_and_refuses_what_it_cannot():
     assert market_row._moment(aware) == dt.datetime(2026, 10, 17, 9)
 
 
-def test_an_unreadable_store_prices_nothing_and_the_row_says_the_capture_is_absent(
+def test_an_unreadable_store_prices_nothing_and_the_row_says_the_store_failed(
         site, base, monkeypatch):
     when = dt.datetime(2026, 10, 17, 9, 0)
 
@@ -201,7 +201,10 @@ def test_an_unreadable_store_prices_nothing_and_the_row_says_the_capture_is_abse
         raise RuntimeError("store locked")
     monkeypatch.setattr(market_row.store, "lines", boom)
     row = _rows(site, base, _preds([("g1", -3.5, when)]))["g1"]
-    assert row["market_prob"] is None and "not in the store" in row["market_missing"]
+    assert row["market_prob"] is None
+    # A store that failed is not a capture that is absent (#537): the row names the failure.
+    assert "not in the store" not in row["market_missing"]
+    assert "unreadable" in row["market_missing"] and "RuntimeError" in row["market_missing"]
 
 
 # --- the vig (#512) -------------------------------------------------------------------------

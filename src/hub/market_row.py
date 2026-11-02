@@ -139,16 +139,22 @@ def kickoffs(season: int) -> tuple[dict[str, datetime | None], str | None]:
     return dict(zip(got["game_id"].to_list(), got["kickoff"].to_list(), strict=True)), None
 
 
-def captures(season: int, base: Path | None) -> dict[tuple[str, datetime], dict[str, Any]]:
-    """`(game_id, captured_at)` -> that poll's spread, total and moneyline probability."""
+def captures_why(season: int, base: Path | None
+                 ) -> tuple[dict[tuple[str, datetime], dict[str, Any]], str | None]:
+    """`captures`, and the reason none could be read (a failed store is not an absent capture)."""
     try:
         polls = store.lines(season, base=base)
-    except Exception:  # a store that cannot be read prices nothing; the rows say so
-        return {}
+    except Exception as e:  # a store that cannot be read prices nothing; the rows say so
+        return {}, f"the capture store was unreadable ({type(e).__name__})"
     keep = [pl.col(c) if c in polls.columns else pl.lit(None, dtype=pl.Float64).alias(c)
             for c in ("close_spread", "close_total", "ml_home_prob", *_PRICE_COLUMNS)]
     polls = polls.select("game_id", "captured_at", *keep).drop_nulls(["game_id", "captured_at"])
-    return {(r["game_id"], r["captured_at"]): r for r in polls.to_dicts()}
+    return {(r["game_id"], r["captured_at"]): r for r in polls.to_dicts()}, None
+
+
+def captures(season: int, base: Path | None) -> dict[tuple[str, datetime], dict[str, Any]]:
+    """`(game_id, captured_at)` -> that poll's spread, total and moneyline probability."""
+    return captures_why(season, base)[0]
 
 
 def _finite(x: Any) -> float | None:
@@ -156,7 +162,8 @@ def _finite(x: Any) -> float | None:
 
 
 def market_fields(row: Mapping[str, Any], kickoff: datetime | None, kickoff_why: str | None,
-                  seen: Mapping[tuple[str, datetime], Mapping[str, Any]]) -> dict[str, Any]:
+                  seen: Mapping[tuple[str, datetime], Mapping[str, Any]],
+                  store_why: str | None = None) -> dict[str, Any]:
     """The fields for one row; pure, so the controls are tests of this."""
     from hub.models.market import MARGIN_SD, normal_cdf
     out: dict[str, Any] = {
@@ -178,7 +185,8 @@ def market_fields(row: Mapping[str, Any], kickoff: datetime | None, kickoff_why:
         cap = seen.get((str(row.get("game_id")), priced))
         spread = _finite(cap.get("close_spread")) if cap is not None else None
         if cap is None or spread is None:
-            out["market_missing"] = "the capture named by priced_at is not in the store"
+            out["market_missing"] = (store_why if cap is None and store_why
+                                     else "the capture named by priced_at is not in the store")
         else:
             out["market_spread"] = spread
             out["market_total"] = _finite(cap.get("close_total"))
@@ -198,14 +206,15 @@ def attach(rows: list[dict[str, Any]], season: int,
     if not todo and not vig_only:
         return rows
     kicks, why = kickoffs(season)
-    seen = captures(season, base)
+    seen, store_why = captures_why(season, base)
     for r in todo:
-        r.update(market_fields(r, kicks.get(str(r.get("game_id"))), why, seen))
+        r.update(market_fields(r, kicks.get(str(r.get("game_id"))), why, seen, store_why))
     for r in vig_only:
         priced = _moment(r.get("priced_at"))
         if r.get("market_prob") is None or priced is None:
             r.update(vig_fields(None, r.get("market_missing")))
             continue
         cap = seen.get((str(r.get("game_id")), priced))
-        r.update(vig_fields(cap, "the capture named by priced_at is not in the store"))
+        r.update(vig_fields(cap, store_why if cap is None and store_why
+                            else "the capture named by priced_at is not in the store"))
     return rows
