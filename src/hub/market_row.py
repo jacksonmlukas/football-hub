@@ -152,11 +152,6 @@ def captures_why(season: int, base: Path | None
     return {(r["game_id"], r["captured_at"]): r for r in polls.to_dicts()}, None
 
 
-def captures(season: int, base: Path | None) -> dict[tuple[str, datetime], dict[str, Any]]:
-    """`(game_id, captured_at)` -> that poll's spread, total and moneyline probability."""
-    return captures_why(season, base)[0]
-
-
 def _finite(x: Any) -> float | None:
     return float(x) if isinstance(x, int | float) and math.isfinite(x) else None
 
