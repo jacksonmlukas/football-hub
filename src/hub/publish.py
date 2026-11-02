@@ -1274,6 +1274,8 @@ def artifacts(season: int, week: int, base: Path | None = None,
         Artifact("draft_board", lambda: _board(out), "run `make draft`"),
         Artifact("survivor", lambda: survivor(season, out=out), "schedule unavailable"),
         Artifact("ledger", lambda: _ledger(out), "no measured verdicts found"),
+        Artifact("leaderboard", lambda: _leaderboard(out),
+                 "no interim leaderboard has been scored yet"),
     ]
 
 
@@ -1344,6 +1346,13 @@ def _ledger(out: Path) -> dict[str, Any] | Kept:
     from hub.publish_ledger import ledger
 
     return ledger(out=out)
+
+
+def _leaderboard(out: Path) -> dict[str, Any] | Kept | None:
+    # Imported here for the same reason as `_ledger`.
+    from hub.publish_leaderboard import leaderboard
+
+    return leaderboard(out=out)
 
 
 def publish_all(season: int, week: int, base: Path | None = None,
@@ -1560,6 +1569,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--live", action="store_true", help="live scores overlay only")
     ap.add_argument("--ledger", action="store_true",
                     help="one row per measured verdict, from the ADR front matter (#483)")
+    ap.add_argument("--leaderboard", action="store_true",
+                    help="relay the forecasts branch's interim leaderboard (#543)")
     ap.add_argument("--league", default="nfl", choices=sorted(LEAGUE_PATHS),
                     help="which board the overlay is for; the window decides (--live only)")
     # The destination is a parameter of every producer in this module and was the one thing
@@ -1604,6 +1615,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.ledger:
         seen = read(_ledger(a.out or SITE), "nothing found; last-good kept")
         print("  ledger: " + seen.sentence(lambda got: f"{got['n']} verdicts"))
+        return 0
+    if a.leaderboard:
+        seen = read(_leaderboard(a.out or SITE), "no interim leaderboard; last-good kept")
+        print("  leaderboard: " + seen.sentence(lambda got: f"{got['n_contestants']} contestants"))
         return 0
     if not a.all:
         ap.print_help()
