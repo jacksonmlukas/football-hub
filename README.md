@@ -1,6 +1,6 @@
 # football-hub
 
-Fantasy football and NFL forecasting, built as measurement infrastructure first.
+[Fantasy football and NFL forecasting](https://jacksonmlukas.github.io/football-hub/), built as measurement infrastructure first.
 
 The interesting problem is not predicting football. It is knowing whether your predictions
 are any good, in a domain with ~285 NFL games a season, an efficient market as the benchmark,

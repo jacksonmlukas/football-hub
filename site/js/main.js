@@ -14,6 +14,7 @@ import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
 import { chooseSort, chooseWeek, isArchived, refreshLive, renderSlate } from "./panels/slate.js";
 import { backtestStatement, modelNote } from "./panels/statement.js";
+import { chooseCondition, studyBody } from "./panels/study.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
 import { bestLineupBody, healthBody, weekHeading } from "./panels/week.js";
 import { mount } from "./router.js";
@@ -144,6 +145,16 @@ export async function render() {
     panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
   }
 
+  // --- study: the leaderboard once #453 publishes one, the designed empty state until then.
+  // A missing or unreadable artifact is the empty state, never an error and never a blank.
+  const lb = await load("leaderboard");
+  if (lb && Array.isArray(lb.contestants) && lb.contestants.length) {
+    panel("p-study", { age: ago(lb.generated_at), stale: staleOf(findArt(man, "leaderboard")),
+                       html: studyBody(lb) });
+  } else {
+    panel("p-study", { age: "", html: studyBody(null) });
+  }
+
   // --- the ledger: every verdict, drawn from the artifact and nothing else (#488)
   const led = await load("ledger");
   const ledArt = findArt(man, "ledger");
@@ -224,6 +235,11 @@ export async function tick() {
 // Switching weeks. Delegated from the document because the panel is rebuilt through
 // innerHTML on every render, so a listener bound to the link would not survive one.
 export function onClick(e) {
+  const cond = e.target.closest?.("[data-cond]");
+  if (cond) {
+    chooseCondition(cond);
+    return;
+  }
   const sort = e.target.closest?.("[data-sort]");
   if (sort) {
     chooseSort(sort.getAttribute("data-sort"));

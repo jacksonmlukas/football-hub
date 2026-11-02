@@ -2,6 +2,18 @@
 <meta charset="utf-8">
 <title>football hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<!-- Link-preview card (#489). One page, one image: site/og-image.png, rendered from the This week
+     view by scripts/render_og_image.py. `og:image` must be absolute, so it names the Pages root. -->
+<meta property="og:title" content="football hub">
+<meta property="og:description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<meta property="og:image" content="https://jacksonmlukas.github.io/football-hub/og-image.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jacksonmlukas.github.io/football-hub/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="football hub">
+<meta name="twitter:description" content="Fantasy football and NFL forecasting, built as measurement infrastructure first: every prediction is committed before kickoff and scored in public, nulls included.">
+<meta name="twitter:image" content="https://jacksonmlukas.github.io/football-hub/og-image.png">
 <!-- Inline so the page makes exactly zero requests it cannot satisfy from this repo. -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🏈</text></svg>">
 <!--
@@ -360,6 +372,36 @@
   .rb-band { fill: var(--field-tint); stroke: var(--line); stroke-width: 1; }
   .rb-measure { fill: var(--turf); fill-opacity: 0.8; }
   .rb-claim { stroke: var(--accent); stroke-width: 2; }
+  /* Study (#487). The leaderboard's whiskers use tokens only: turf for the dot, the accent for the
+     zero line (the betting market). Baselines are greyed with the muted ink; nothing animates. */
+  .lb-chips { margin: 0.2rem 0 0; }
+  .lb-question { font: 700 1.4rem/1.2 var(--font-display); letter-spacing: 0.01em; margin: 0.8rem 0 0; }
+  .lb-h { margin: 1.1rem 0 0.2rem; font-size: 0.95rem; }
+  .lb-list, .lb-steps { margin: 0.2rem 0 0; padding-left: 1.2rem; }
+  .lb-list li, .lb-steps li { padding: 0.15rem 0; }
+  .lb-list { list-style: none; padding-left: 0; }
+  .lb-n { font-variant-numeric: tabular-nums; color: var(--muted); margin: 0 0.4rem; }
+  .lb-note { color: var(--muted); font-size: 0.85rem; }
+  .lb-market { border-top: 1px solid var(--line); margin-top: 0.3rem; padding-top: 0.4rem; }
+  .lb-market b { margin-right: 0.5rem; }
+  .lb-issue { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lb-interim { margin: 0.2rem 0 0; font-size: 0.95rem; color: var(--fg); }
+  .lb-toggle { display: inline-flex; margin: 0.7rem 0 0.4rem; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .lb-toggle button { font: inherit; font-size: 0.85rem; background: transparent; color: var(--muted);
+                      border: 0; padding: 0.3rem 0.8rem; cursor: pointer; }
+  .lb-toggle button[aria-pressed="true"] { background: var(--field-tint); color: var(--fg); font-weight: 600; }
+  .lb-table td, .lb-table th { vertical-align: middle; }
+  .lb-dir { font-weight: 400; }
+  .lb-base td { color: var(--muted); }
+  .lb-prelim td { color: var(--muted); }
+  .lb-market-row td { border-bottom: 1px solid var(--line); font-weight: 600; }
+  .lb-plot { display: block; width: 160px; height: 16px; }
+  .lb-zero { stroke: var(--accent); stroke-width: 1.5; }
+  .lb-whisker { stroke: var(--fg); stroke-width: 1.5; }
+  .lb-dot { fill: var(--turf); }
+  .lb-base .lb-dot { fill: var(--muted); }
+  .lb-base .lb-whisker { stroke: var(--muted); }
+  .lb-foot { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--muted); }
   /* The view change is a same-document view transition (js/router.js), which the script skips
      under reduced motion; this stops the browser's own default fade for any path that starts one
      anyway. */
@@ -450,12 +492,15 @@
 </div>
 </div>
 
-<!-- View four holds a placeholder sentence (router.js draws it) until #487. -->
+<!-- View four, Study (#487): the LLM-vs-market leaderboard, or its empty state. Filled by render(). -->
 <div class="view" id="v-study">
 <div class="zone" id="z-study" role="region" aria-labelledby="zh-study">
   <div class="zone-head"><h2 class="zone-title" id="zh-study">Study</h2>
     <span class="zone-when">LLM leaderboard</span></div>
-  <div class="view-body"></div>
+  <div class="grid">
+    <section id="p-study" class="wide"><h3>Language models against the betting market <span class="age"></span></h3>
+    <div class="body"></div></section>
+  </div>
 </div>
 </div>
 

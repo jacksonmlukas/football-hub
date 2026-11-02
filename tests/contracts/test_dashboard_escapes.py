@@ -946,7 +946,7 @@ def test_every_stale_warning_goes_through_the_one_stale_note():
     text = _source()
     assert len(re.findall(r"`[^`]*Stale:", text)) == 1
     sites = re.findall(r"stale: staleOf\(", text)
-    assert len(sites) == 9, f"expected the nine panel exits that can be stale, got {len(sites)}"
+    assert len(sites) == 10, f"expected the ten panel exits that can be stale, got {len(sites)}"
 
 
 def _style() -> str:
