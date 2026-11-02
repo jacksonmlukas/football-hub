@@ -5508,11 +5508,15 @@ interval-alone column (weekly δ=0.3, k=4, 260 rows: 0.138 → 0.100) and in (C)
   draft at k=4) and power (0.083 / 0.083)"; the corrected figures are 0.0095 / 0.0204 and 0.060 /
   0.060. Not changed so that this ticket stays documentation-only (a `src/` edit calls for the full
   combined gate run); a one-line follow-up.
+  *(Done 2026-11-01, #536: the docstring now carries the corrected figures, with the prior ones
+  kept in a dated note.)*
 - **Not re-run, and not on the list:** #418's `gate_horizon.py --rule16` table (the attribution
   table with its 0.0001 / 0.0008 and 0.0014 / 0.0075) is a fifth heavy simulation through the same
   `gate`; its (A)-rule headline cells are reproduced by this ticket's #388 re-run (weekly 0.0001 /
   0.0007–0.0008, draft 0.0014 / 0.0075), but its factor-by-factor attribution percentages (73% / 19% /
   5% / 2%) were not recomputed.
+  *(Done 2026-11-01, #536: see the restatement after #418's attribution paragraph; on (A) the
+  split is now 75% / 17% / 6% / 1%.)*
 
 **What is deliberately not changed: the per-season tie test.** `_disposition` calls a season a
 win at `gain >= 2 * se` over its within-season clusters, with `se` the same raw bootstrap SD —
