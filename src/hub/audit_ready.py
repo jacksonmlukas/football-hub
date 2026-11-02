@@ -11,8 +11,8 @@ wrong as an audit gate. The prose test went stale silently; nothing could notice
 join `publish._finished` makes) are the games the published record scored. It never fetches
 nflverse and never opens `data/`, so it answers the same on a machine with the network down.
 
-**What it answers.** Exit 0 only when every predicted `game_id` is among the scored ids or the record's
-`tied_game_ids` (a tie is dropped from the record, not unplayed).
+**What it answers.** Exit 0 only when every predicted `game_id` is among the scored ids or the
+record's `tied_game_ids` (a tie is dropped from the record, not unplayed).
 Otherwise non-zero, naming each unscored game. There is no postponed special case: a game that
 was moved is named like any other, and what to do about it is the maintainer's call on the list.
 

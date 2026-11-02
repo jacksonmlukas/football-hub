@@ -499,7 +499,7 @@ def test_the_transport_does_not_follow_a_redirect_off_the_conference(monkeypatch
         return hops[url]
     monkeypatch.setattr(requests, "get", _get)
     monkeypatch.delenv(bigten.PYTEST_NODE_ENV, raising=False)
-    with pytest.raises(bigten.OffHostRedirect, match="evil.example.com"):
+    with pytest.raises(bigten.OffHostRedirect, match=r"evil\.example\.com"):
         bigten._get("https://bigten.org/a.pdf")
     assert "https://evil.example.com/a.pdf" not in [u for u, _ in asked], "it was fetched"
     assert bigten._get("https://bigten.org/b.pdf") == b"ok"
