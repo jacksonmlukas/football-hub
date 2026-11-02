@@ -12,7 +12,7 @@ import { isRebuilt, lineupHeadline } from "./panels/lineup.js";
 import { trackRecordBody } from "./panels/record.js";
 import { rosterBody } from "./panels/roster.js";
 import { chooseSort, chooseWeek, isArchived, refreshLive, renderSlate } from "./panels/slate.js";
-import { backtestStatement } from "./panels/statement.js";
+import { backtestStatement, modelNote } from "./panels/statement.js";
 import { eliminatedBody, survivorBody, unconfirmedNote, unreadStateNote } from "./panels/survivor.js";
 import { bestLineupBody, healthBody, weekHeading } from "./panels/week.js";
 import { mount } from "./router.js";
@@ -47,6 +47,17 @@ export async function render() {
   } catch {
     slot.className = `statement ${STATE.unconfirmed}`;
     slot.innerHTML = `<p>The backtest statement could not be built from the track record.</p>`;
+  }
+
+  // The pointer on the other two views (#486): the same counts, one line, a link to the Record.
+  // Drawn beside the statement for the same reason, and guarded for the same one.
+  for (const id of ["mn-week", "mn-games"]) {
+    const note = document.getElementById(id);
+    try {
+      note.innerHTML = modelNote(tr);
+    } catch {
+      note.innerHTML = `Model numbers: unavailable. How they score: <a href="#/record">Record</a>.`;
+    }
   }
 
   // --- draft board (retires itself when a newer slate exists, #348)
@@ -127,7 +138,7 @@ export async function render() {
   // --- track record
   if (tr) {
     panel("p-record", { age: ago(tr.generated_at), stale: staleOf(trArt),
-                        html: trackRecordBody(tr) });
+                        html: trackRecordBody(tr, trArt) });
   } else {
     panel("p-record", { age: "", warn: failureWarn(trArt, "No track record published yet.") });
   }
