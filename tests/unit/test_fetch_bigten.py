@@ -508,6 +508,39 @@ def test_the_transport_does_not_follow_a_redirect_off_the_conference(monkeypatch
         bigten._get("https://bigten.org/loop.pdf")
 
 
+def test_the_redirect_cap_follows_a_chain_at_it_and_refuses_one_hop_longer(monkeypatch):
+    """Five redirects (`MAX_REDIRECTS`) are followed and the next response is the document; one more
+    redirect than that is refused, and the request past the cap is never made (#537)."""
+    class _Resp:
+        def __init__(self, where=None):
+            self.is_redirect = where is not None
+            self.headers = {"Location": where} if where else {}
+        def raise_for_status(self): pass
+        def iter_content(self, chunk_size): yield b"ok"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    import requests
+
+    def chain(redirects):
+        asked = []
+
+        def _fake(url, **kw):
+            asked.append(url)
+            n = len(asked)
+            return _Resp(f"https://bigten.org/hop{n}.pdf") if n <= redirects else _Resp()
+        monkeypatch.setattr(requests, "get", _fake)
+        return asked
+
+    monkeypatch.delenv(bigten.PYTEST_NODE_ENV, raising=False)
+    asked = chain(5)
+    assert bigten._get("https://bigten.org/start.pdf") == b"ok"
+    assert len(asked) == 6
+    asked = chain(6)
+    with pytest.raises(bigten.OffHostRedirect, match="too many"):
+        bigten._get("https://bigten.org/start.pdf")
+    assert len(asked) == 6, "a request was made past the cap"
+
+
 def test_a_parsed_page_with_no_report_documents_is_stale_inside_the_regime(web, season):
     """#278: the link loop ran zero times, no error was set, and the run was recorded as
     fetched and not stale. Forty tests and none covered it. Inside the reporting regime a
