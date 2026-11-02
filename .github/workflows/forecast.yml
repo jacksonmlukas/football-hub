@@ -8,8 +8,9 @@ name: llm-forecast
 # reads the crons. Enabling is setting the variable, after the tag (build step 7).
 #
 # **Why fifteen triggers for one run.** GitHub schedules in UTC and delays or drops scheduled
-# runs under load. Every 15 minutes 13:30-16:30 UTC covers 09:30-11:30 ET under daylight (UTC-4)
-# and standard (UTC-5) time; each trigger asks `should-run`, which converts to ET in code and
+# runs under load. Every 15 minutes at off-round minutes, 13:52-16:22 UTC, covers 09:30-11:30 ET under standard (UTC-5)
+# time only; under daylight time (UTC-4) 09:30-09:51 ET has no trigger, so add an earlier one
+# before daylight time returns (2027-03-14). Each trigger asks `should-run`, which converts to ET in code and
 # says no outside the window or once the day is marked done. The list is
 # `hub.forecasters.days.CRON_TRIGGERS_UTC`, and the contract test holds the two to each other.
 #
@@ -24,9 +25,13 @@ name: llm-forecast
 
 on:
   schedule:
-    - cron: "30,45 13 * * *"
-    - cron: "*/15 14-15 * * *"
-    - cron: "0,15,30 16 * * *"
+    # Off-round minutes (#544): GitHub drops scheduled runs at round minutes under load, and on
+    # 2026-11-02 none of the 13 round-minute triggers fired (3 of 13 fired, hours late, on 10-31
+    # and 11-01). 13:52 is an early attempt; 14:07-16:22 every 15 minutes covers 09:30-11:30 ET
+    # under standard time (UTC-5), the season's offset from 2026-11-01.
+    - cron: "52 13 * * *"
+    - cron: "7,22,37,52 14-15 * * *"
+    - cron: "7,22 16 * * *"
   workflow_dispatch:
 
 permissions:

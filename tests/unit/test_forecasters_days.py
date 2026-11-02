@@ -90,14 +90,18 @@ def test_the_window_is_half_past_nine_to_half_past_eleven_eastern(now, inside):
     assert days.in_window(now) is inside
 
 
-def test_the_crons_cover_the_window_in_both_daylight_and_standard_time():
-    """Every 15 minutes 13:30-16:30 UTC: each 15-minute ET slot of the window is hit by at
-    least one trigger whether ET is UTC-4 or UTC-5."""
-    triggers = days.CRON_TRIGGERS_UTC
-    for day in (date(2026, 10, 10), date(2026, 11, 7)):
-        hits = {days.eastern(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC)).time()
-                for h, m in triggers if days.in_window(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC))}
-        assert len(hits) == 8                             # 09:30, 09:45, ..., 11:15
+def test_the_crons_cover_the_window_in_standard_time():
+    """Off-round triggers every 15 minutes: under standard time (UTC-5, the season's offset)
+    each 15-minute ET slot of the window is hit by at least one trigger. Daylight time is not
+    covered (09:30-09:51 ET has no trigger); see forecast.yml's header."""
+    day = date(2026, 11, 7)
+    hits = [days.eastern(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC)).time()
+            for h, m in days.CRON_TRIGGERS_UTC
+            if days.in_window(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC))]
+    for slot in range(8):                                 # 09:30, 09:45, ..., 11:15
+        lo = 9 * 60 + 30 + 15 * slot
+        assert any(lo <= t.hour * 60 + t.minute < lo + 15 for t in hits), slot
+    assert all(m % 15 != 0 for _, m in days.CRON_TRIGGERS_UTC)    # none at a round quarter
 
 
 def test_should_run_needs_the_window_and_an_unfinished_day():
