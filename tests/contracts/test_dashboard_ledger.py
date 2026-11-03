@@ -323,3 +323,14 @@ def test_the_view_has_a_panel_and_the_router_no_longer_holds_a_placeholder_for_i
     page = (SITE / "index.html").read_text()
     assert re.search(r'<section id="p-ledger"[^>]*><h3>What got measured, and what got cut', page)
     assert "ledger:" not in (JS / "router.js").read_text().split("const RENDERERS")[1].split("};")[0]
+
+
+def test_a_published_document_is_escaped_and_links_back_to_the_ledger(tmp_path):
+    from hub import publish_docs
+    root, site = tmp_path / "repo", tmp_path / "site"
+    (root / "docs" / "adr").mkdir(parents=True)
+    (root / "docs" / "adr" / "0001-x.md").write_text(f"# T\n{HOSTILE}\n")
+    assert publish_docs.build(site=site, root=root) == ["docs/adr/0001-x.html"]
+    page = (site / "docs" / "adr" / "0001-x.html").read_text()
+    assert "<script>" not in page and "&lt;script&gt;" in page
+    assert 'href="../../#/ledger"' in page

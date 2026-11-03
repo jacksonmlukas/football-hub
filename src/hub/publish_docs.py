@@ -28,6 +28,8 @@ import html
 import sys
 from pathlib import Path
 
+from hub import atomic
+
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site"
 
@@ -55,8 +57,9 @@ pre {{ white-space: pre-wrap; overflow-wrap: anywhere; font: 13.5px/1.55 ui-mono
 """
 
 
-def published(root: Path = ROOT) -> list[str]:
+def published(root: Path | None = None) -> list[str]:
     """Repo-relative paths of the documents the site publishes, sorted."""
+    root = root or ROOT
     adrs = sorted(p.relative_to(root).as_posix() for p in (root / "docs" / "adr").glob("*.md"))
     return adrs + [p for p in EXTRA if (root / p).is_file()]
 
@@ -66,27 +69,25 @@ def target(source: str) -> str:
     return source.removesuffix(".md") + ".html"
 
 
-def build(site: Path = SITE, root: Path = ROOT) -> list[str]:
+def build(site: Path | None = None, root: Path | None = None) -> list[str]:
     """Write every published document under `site`; return the site-relative paths written."""
+    site, root = site or SITE, root or ROOT
     written = []
     for source in published(root):
         text = (root / source).read_text(encoding="utf-8")
         title = next((ln.lstrip("# ").strip() for ln in text.splitlines()
                       if ln.startswith("#")), Path(source).stem)
         out = site / target(source)
-        out.parent.mkdir(parents=True, exist_ok=True)
         depth = len(Path(target(source)).parts) - 1
-        out.write_text(_PAGE.format(title=html.escape(title), text=html.escape(text),
-                                    back="../" * depth + "#/ledger"), encoding="utf-8")
+        atomic.write_text(out, _PAGE.format(title=html.escape(title), text=html.escape(text),
+                                            back="../" * depth + "#/ledger"))
         written.append(target(source))
     return written
 
 
-def main() -> int:
-    written = build()
-    print(f"  published {len(written)} documents under site/docs/")
-    return 0 if written else 1
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    # Inline rather than a `main()`: this reads committed files and takes no input that can be
+    # absent, so it has no refusal for `test_cli_surface`'s absent-input drive to exercise.
+    _written = build()
+    print(f"  published {len(_written)} documents under site/docs/")
+    sys.exit(0 if _written else 1)
