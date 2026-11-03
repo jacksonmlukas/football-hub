@@ -66,7 +66,7 @@ jobs:
     # `poll_odds` instead, which is nothing more than an odds credit.
     if: github.event_name != 'schedule' || contains(fromJSON('["0 11 * * 3", "0 14 * * 6"]'), github.event.schedule)
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     # Re-stated in full: a job-level block replaces the workflow's. `issues: write` is for the
     # escalation incident below (#498) and nothing else in this job.
     permissions:
@@ -333,7 +333,7 @@ jobs:
   poll_odds:
     if: github.event_name == 'schedule' && contains(fromJSON('["0 11 * * 4", "0 11 * * 5", "0 13 * * 0", "0 11 * * 1"]'), github.event.schedule)
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

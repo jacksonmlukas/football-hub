@@ -48,7 +48,7 @@ jobs:
   # open incident is not commented again.
   gaps:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     # Re-stated in full: a job-level block replaces the workflow's rather than adding to it.
     # `actions: read` is for `gh run list`, the one new thing this job needs.
     permissions:

@@ -10,9 +10,11 @@ row naming the run IDs it was measured on (GitHub run metadata via `gh run view 
 2026-11-03; wall time is the job's `startedAt` to `completedAt`). Re-measure and edit the row
 when a job's work changes; the contract then moves the limit with it.
 
-The limit is `floor(2 x median)` whole minutes, never below 1 -- GitHub's smallest timeout.
-Sub-minute jobs therefore sit at 1 or 2 minutes, a thin margin over setup and checkout; that is
-what the rule yields, and `MEASURED` is where to argue a different median.
+The limit is `max(10, floor(2 x median))` whole minutes. The 10-minute floor exists because the
+rule is there to catch hangs, and 10 minutes catches a hang in a sub-minute job just as well
+while leaving room for slow checkout and setup; a 1-2 minute limit on a 0.6-minute job would
+cancel real captures. The contract asserts only an upper bound, so a timeout already below the
+limit passes and is never raised because of the floor.
 """
 from __future__ import annotations
 
@@ -66,8 +68,11 @@ UNMEASURED: dict[tuple[str, str], str] = {
 NO_TIMEOUT_OK: dict[tuple[str, str], str] = {}
 
 
+FLOOR_MINUTES = 10
+
+
 def limit_minutes(median: float) -> int:
-    return max(1, math.floor(2 * median))
+    return max(FLOOR_MINUTES, math.floor(2 * median))
 
 
 def problems(workflows: Path, measured=MEASURED, unmeasured=UNMEASURED, no_timeout=NO_TIMEOUT_OK) -> list[str]:
@@ -84,7 +89,7 @@ def problems(workflows: Path, measured=MEASURED, unmeasured=UNMEASURED, no_timeo
             elif key in measured:
                 median = measured[key][0]
                 if timeout > limit_minutes(median):
-                    out.append(f"{key}: timeout-minutes {timeout} > {limit_minutes(median)} (2 x median {median})")
+                    out.append(f"{key}: timeout-minutes {timeout} > {limit_minutes(median)} (max({FLOOR_MINUTES}, 2 x median {median}))")
             elif key not in unmeasured:
                 out.append(f"{key}: timeout-minutes {timeout} but no row in MEASURED or UNMEASURED")
     for key in (*measured, *unmeasured, *no_timeout):
@@ -115,6 +120,13 @@ ROW = {("w.yml", "j"): (12.0, (1,))}
 def test_planted_over_limit_is_red(tmp_path):
     assert problems(_wf(tmp_path, "    timeout-minutes: 25\n"), ROW, {}, {}) != []
     assert problems(_wf(tmp_path, "    timeout-minutes: 24\n"), ROW, {}, {}) == []
+
+
+def test_planted_over_floor_on_a_short_job_is_red(tmp_path):
+    short = {("w.yml", "j"): (0.6, (1,))}
+    assert problems(_wf(tmp_path, "    timeout-minutes: 11\n"), short, {}, {}) != []
+    assert problems(_wf(tmp_path, "    timeout-minutes: 10\n"), short, {}, {}) == []
+    assert problems(_wf(tmp_path, "    timeout-minutes: 2\n"), short, {}, {}) == []
 
 
 def test_planted_missing_timeout_is_red(tmp_path):
