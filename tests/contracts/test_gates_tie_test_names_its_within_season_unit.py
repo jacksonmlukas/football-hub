@@ -40,6 +40,7 @@ DECLARED_UNITS: dict[str, tuple[str, ...]] = {
     "hub.models.margin.SHAPE_HARNESS": ("season",),    # one row/season: a real no-op
     "hub.models.margin.WIDTH_HARNESS": ("season",),    # one row/season: a real no-op
     "hub.models.favourite_longshot.HARNESS": ("season",),  # #465: one row/season, the same no-op
+    "hub.models.total_sd.HARNESS": ("season",),  # #502: one row/season, the same no-op
     "hub.season.weekly_gate.HARNESS": ("roster",),
     "hub.season.lineup_gate.HARNESS": ("roster",),
     # #343: the three comparisons that reached the Gate by hand before this.
