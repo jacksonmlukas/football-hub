@@ -113,13 +113,6 @@ def _doc_row(path: Path, root: Path, block: dict[str, str]) -> tuple[dict[str, A
     return row, []
 
 
-def latest_revision(text: str) -> str | None:
-    """The latest dated revision block in a document's body (its front matter excluded)."""
-    body = text.split("\n---\n", 1)[-1] if text.startswith("---") else text
-    dates = _RESTATED.findall(body)
-    return max(dates) if dates else None
-
-
 def _later_than_as_of(text: str, as_of: str, rel: str) -> list[str]:
     """A restatement dated after `as_of` means the block was not updated with it."""
     body = text.split("\n---\n", 1)[-1] if text.startswith("---") else text

@@ -208,10 +208,10 @@ def test_an_edit_to_an_exempt_module_does_not_refuse_and_the_exemption_holds(mon
     leaves the reading alone. The reason holds only if the module really is outside what the arm
     computes: `hub.paths` is constants and `hub.config` is hashed by `config_digest`; neither is
     reached except as an exempt import. Plant an edit in each and the closure is unchanged."""
-    from hub.closure import CLOSURE_EXEMPT, closure_exempt
+    from hub.closure import CLOSURE_EXEMPT
 
     for module in ("hub.paths", "hub.config", "hub.jsonio"):
-        assert closure_exempt(module) and module in CLOSURE_EXEMPT and CLOSURE_EXEMPT[module]
+        assert CLOSURE_EXEMPT.get(module)
         assert module not in wf.PINNED_ARM_MODULES
     with monkeypatch.context() as m:
         for module in ("hub.paths", "hub.config", "hub.jsonio"):

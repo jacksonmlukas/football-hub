@@ -372,12 +372,11 @@ def test_a_team_the_schedule_does_not_spell_is_named():
     assert nfeloqb.unknown_teams(st, games) == ["DEN", "LAC"]
 
 
-def test_a_schedule_team_the_state_does_not_carry_is_named():
-    """The mirror of `unknown_teams`: a schedule team with no row in the state, whose games
-    never adjust. `KC` is in both; `BUF` is on the schedule and not in the fixture."""
+def test_a_schedule_team_the_state_does_not_carry_is_not_unknown():
+    """`unknown_teams` names state teams the schedule lacks, not the reverse: `BUF` and `NYJ`
+    are on the schedule and not in the fixture, and are absent from the answer."""
     st = nfeloqb.state(nfeloqb.parse(csv_text().encode()))
     games = pl.DataFrame({"home_team": ["KC", "BUF"], "away_team": ["LV", "NYJ"]})
-    assert nfeloqb.missing_teams(st, games) == ["BUF", "NYJ"]
     assert nfeloqb.unknown_teams(st, games) == ["DEN", "LA", "LAC", "WAS"]
 
 

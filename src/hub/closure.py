@@ -54,10 +54,6 @@ def exempt_key(mod: str, exempt: dict[str, str] | None = None) -> str | None:
     return next((k for k in table if _key_matches(k, mod)), None)
 
 
-def closure_exempt(mod: str) -> bool:
-    return exempt_key(mod) is not None
-
-
 def module_source(name: str) -> Path:
     """The source file of dotted module `name`: the one resolver `code_digest` and
     `module_digests` share (#442). Raises `ValueError` for a name with no `.py` source and for
