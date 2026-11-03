@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from hub.publish_ledger import VERDICTS
 
@@ -233,15 +234,42 @@ def test_no_ledger_link_points_outside_the_site(node, art):
 
 def test_the_pages_build_runs_the_docs_step_and_redeploys_on_a_doc_change():
     wf = (ROOT / ".github" / "workflows" / "pages.yml").read_text()
-    assert "python -m hub.publish_docs" in wf
     for path in ("docs/adr/**", "docs/method.md", "docs/track-record.md"):
         assert f'- "{path}"' in wf, f"a change to {path} would not redeploy the site"
+    steps = [s for job in yaml.safe_load(wf)["jobs"].values() for s in job.get("steps", [])]
+
+    def at(key: str) -> int:
+        found = [i for i, s in enumerate(steps) if key in s.get("run", "") + s.get("uses", "")]
+        assert found, f"no pages.yml step mentions {key}"
+        return found[0]
+
+    build, guard = at("python -m hub.publish_docs"), at("site/docs/method.html")
+    assert at("site/docs/track-record.html") == guard and at("site/docs/adr") == guard
+    assert build < guard < at("upload-pages-artifact"), "the docs are built, checked, then uploaded"
 
 
-def test_every_adr_is_published(built_site):
+def test_every_adr_is_swept_or_held_back_on_purpose():
+    """A new ADR reaches the site only by a row in SWEPT, which says its sweep was run (#541)."""
     from hub import publish_docs
-    for adr in (ROOT / "docs" / "adr").glob("*.md"):
-        assert (built_site / publish_docs.target(f"docs/adr/{adr.name}")).is_file()
+    adrs = {f"docs/adr/{p.name}" for p in (ROOT / "docs" / "adr").glob("*.md")}
+    listed = set(publish_docs.SWEPT) | set(publish_docs.NOT_PUBLISHED)
+    assert adrs - listed == set(), "an ADR is in neither SWEPT nor NOT_PUBLISHED: sweep it first"
+    assert set(publish_docs.SWEPT) & set(publish_docs.NOT_PUBLISHED) == set()
+
+
+def test_every_swept_document_is_still_the_text_that_was_swept():
+    from hub import publish_docs
+    assert publish_docs.held() == [], (
+        "changed or moved since the sweep: re-run it, then record "
+        "`python -m hub.publish_docs --digests` in SWEPT")
+
+
+def test_the_built_site_is_exactly_the_swept_set(built_site):
+    from hub import publish_docs
+    got = sorted(p.relative_to(built_site).as_posix() for p in built_site.rglob("*.html"))
+    assert got == sorted(publish_docs.target(s) for s in publish_docs.SWEPT)
+    for source in publish_docs.NOT_PUBLISHED:
+        assert not (built_site / publish_docs.target(source)).exists(), source
 
 
 def test_a_hostile_feed_value_is_escaped(node):
@@ -325,12 +353,68 @@ def test_the_view_has_a_panel_and_the_router_no_longer_holds_a_placeholder_for_i
     assert "ledger:" not in (JS / "router.js").read_text().split("const RENDERERS")[1].split("};")[0]
 
 
+def _repo(tmp_path, docs: dict[str, str]) -> tuple[Path, dict[str, str]]:
+    """A temp repo holding `docs`, and the SWEPT that clears exactly their current text."""
+    from hub import publish_docs
+    root = tmp_path / "repo"
+    for rel, text in docs.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    return root, {rel: publish_docs.digest(text) for rel, text in docs.items()}
+
+
 def test_a_published_document_is_escaped_and_links_back_to_the_ledger(tmp_path):
     from hub import publish_docs
-    root, site = tmp_path / "repo", tmp_path / "site"
-    (root / "docs" / "adr").mkdir(parents=True)
-    (root / "docs" / "adr" / "0001-x.md").write_text(f"# T\n{HOSTILE}\n")
-    assert publish_docs.build(site=site, root=root) == ["docs/adr/0001-x.html"]
+    root, swept = _repo(tmp_path, {"docs/adr/0001-x.md": f"# T {HOSTILE}\n{HOSTILE}\n",
+                                   "docs/method.md": "# Method\n"})
+    site = tmp_path / "site"
+    assert publish_docs.build(site=site, root=root, swept=swept) == [
+        "docs/adr/0001-x.html", "docs/method.html"]
     page = (site / "docs" / "adr" / "0001-x.html").read_text()
     assert "<script>" not in page and "&lt;script&gt;" in page
+    title = _first(r"<title>(.*)</title>", page)
+    assert "<" not in title and "&lt;" in title, "the heading reaches <title> unescaped"
     assert 'href="../../#/ledger"' in page
+    assert 'href="../#/ledger"' in (site / "docs" / "method.html").read_text()
+
+
+@pytest.mark.parametrize("change", ["edited", "absent"])
+def test_a_document_changed_or_gone_since_its_sweep_is_held_not_served(tmp_path, change):
+    from hub import publish_docs
+    root, swept = _repo(tmp_path, {"docs/track-record.md": "# Record\ncleared text\n"})
+    if change == "edited":
+        (root / "docs" / "track-record.md").write_text("# Record\nunswept member name\n")
+    else:
+        (root / "docs" / "track-record.md").unlink()
+    site = tmp_path / "site"
+    assert publish_docs.held(root, swept) == ["docs/track-record.md"]
+    assert publish_docs.build(site=site, root=root, swept=swept) == ["docs/track-record.html"]
+    page = (site / "docs" / "track-record.html").read_text()
+    assert "unswept" not in page and "cleared text" not in page
+    assert "last cleared for publication" in page and 'href="../#/ledger"' in page
+
+
+def test_an_unlisted_document_is_not_published(tmp_path):
+    from hub import publish_docs
+    root, swept = _repo(tmp_path, {"docs/adr/0001-x.md": "# X\n"})
+    (root / "docs" / "adr" / "0002-new.md").write_text("# New, never swept\n")
+    site = tmp_path / "site"
+    assert publish_docs.build(site=site, root=root, swept=swept) == ["docs/adr/0001-x.html"]
+    assert not (site / "docs" / "adr" / "0002-new.html").exists()
+
+
+def test_the_pages_step_warns_on_a_held_document_and_fails_only_on_nothing(tmp_path, capsys):
+    from hub import publish_docs
+    root, swept = _repo(tmp_path, {"docs/method.md": "# M\n"})
+    (root / "docs" / "method.md").write_text("# M, edited\n")
+    assert publish_docs.run(site=tmp_path / "site", root=root, swept=swept) == 0
+    assert "::warning::docs/method.md is held" in capsys.readouterr().out
+    assert publish_docs.run(site=tmp_path / "empty", root=root, swept={}) == 1
+
+
+def test_digests_prints_a_swept_row_for_each_listed_document(tmp_path, capsys):
+    from hub import publish_docs
+    root, swept = _repo(tmp_path, {"docs/method.md": "# M\n"})
+    assert publish_docs.digests(root, {**swept, "docs/gone.md": "x"}) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        '    "docs/gone.md": "absent",', f'    "docs/method.md": "{swept["docs/method.md"]}",']

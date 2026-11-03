@@ -148,6 +148,8 @@ jobs:
           test -f site/index.html || { echo "site/index.html is missing"; exit 1; }
           test -d site/data || { echo "site/data is missing"; exit 1; }
           test -f site/docs/method.html || { echo "site/docs/method.html is missing"; exit 1; }
+          test -f site/docs/track-record.html || { echo "site/docs/track-record.html is missing"; exit 1; }
+          test -n "$(find site/docs/adr -name '*.html' 2>/dev/null)" || { echo "site/docs/adr/ is empty"; exit 1; }
           echo "$(find site/data -name '*.json' | wc -l) artifacts to publish"
 
       - uses: actions/configure-pages@v5

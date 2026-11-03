@@ -79,7 +79,7 @@ def limit_minutes(median: float) -> int:
 def problems(workflows: Path, measured=MEASURED, unmeasured=UNMEASURED, no_timeout=NO_TIMEOUT_OK) -> list[str]:
     out: list[str] = []
     seen: set[tuple[str, str]] = set()
-    for path in sorted(workflows.glob("*.yml")):
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         for job, spec in (yaml.safe_load(path.read_text()).get("jobs") or {}).items():
             key = (path.name, job)
             seen.add(key)
@@ -87,6 +87,8 @@ def problems(workflows: Path, measured=MEASURED, unmeasured=UNMEASURED, no_timeo
             if timeout is None:
                 if key not in no_timeout:
                     out.append(f"{key}: no timeout-minutes (GitHub default is 360)")
+            elif not isinstance(timeout, int | float) or isinstance(timeout, bool):
+                out.append(f"{key}: timeout-minutes {timeout!r} is not a number this contract can bound")
             elif key in measured:
                 median = measured[key][0]
                 if timeout > limit_minutes(median):
@@ -137,3 +139,13 @@ def test_planted_missing_timeout_is_red(tmp_path):
 
 def test_planted_unregistered_job_is_red(tmp_path):
     assert problems(_wf(tmp_path, "    timeout-minutes: 5\n"), {}, {}, {}) != []
+
+
+def test_planted_yaml_extension_is_checked(tmp_path):
+    (tmp_path / "w.yaml").write_text("jobs:\n  j:\n    runs-on: x\n    steps: []\n")
+    assert problems(tmp_path, {}, {}, {}) == ["('w.yaml', 'j'): no timeout-minutes (GitHub default is 360)"]
+
+
+def test_planted_expression_timeout_is_red_not_a_type_error(tmp_path):
+    expr = "    timeout-minutes: ${{ inputs.t }}\n"
+    assert any("not a number" in p for p in problems(_wf(tmp_path, expr), ROW, {}, {}))
