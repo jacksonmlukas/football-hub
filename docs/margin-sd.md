@@ -820,3 +820,45 @@ closure and the pinned digest is unchanged (`test_weekly_forward` green on this 
 implies, the effect is below what estimating it costs (rule-16 table), and the real run agrees.
 Whether a constant sd fitted on wins should replace the margin-fitted 12.741 is
 `margin.verdict`'s question, gated in the offseason by the maintainer, not this one's.
+
+## Restated 2026-11-02 (#539): the verdict re-derived on current main and the corrected SE
+
+Prior text kept. The run above was on 2026-10-18, before #520 corrected the gate's SE by
+`sqrt(k/(k-1))` (2026-10-20), and the branch that recorded it sat unmerged while #520 and #523
+landed. #539 re-landed it on current main and re-checked the verdict against the rule
+pre-registered above, before writing anything.
+
+**The rule, quoted from *The action for each verdict* and *The unit, the metric, the gate*
+above.** "The rule is `hub.models.experiment.gate` unchanged ... ADOPT needs a win in every
+resolved season and a t interval excluding zero from above; REMOVE the mirror; NOT-RUNNABLE
+ahead of both when the MDE exceeds the ceiling." SHOW is "anything short of either".
+
+**Re-derived** by putting the 22 per-season gains recorded in `state/gate-width.json` back
+through `HARNESS.decide` on this tree (4,000 bootstrap draws, seed 0). The schedules were not
+re-fetched: the full 1999-2026 schedule table is not in the local cache and the walk-forward is
+not re-run; only the ceiling's mean (+0.00512, above) is not recorded per season, and the gate
+reads only its mean. `test_the_recorded_502_run_redecided_on_the_corrected_se_is_show` holds this.
+
+| | recorded 2026-10-18 | re-derived 2026-11-02 |
+|---|---|---|
+| mean gain | +0.00034 | +0.00034 |
+| se (the gate's, season-clustered bootstrap) | not recorded | 0.000457 |
+| t interval | [-0.00059, +0.00128] | **[-0.00061, +0.00129]** |
+| MDE at 80% power | +0.00130 | **+0.00133** |
+| ceiling | +0.00512 | +0.00512 |
+| seasons | won 15, lost 7 of 22 | won 15, lost 7 of 22 |
+
+**Verdict: SHOW, unchanged.** Not ADOPT: 15 of 22 seasons won, not all 22, and the t interval
+contains zero. Not REMOVE: the mirror fails the same way. Not NOT-RUNNABLE: the MDE 0.00133 is
+below the ceiling 0.00512. The rule is unambiguous here. The earlier concern, that the interval
+"includes zero", is exactly why this is SHOW and not ADOPT; it is not a reason to move it. The
+correction widens the interval by about 2% and the MDE by 2.4%, in the direction that makes
+ADOPT harder, so no reading moved. The recorded t interval is the closed-form `s / sqrt(k)`
+one (0.000450); the gate's own bootstrap se is slightly larger (0.000457), which is the figure
+above.
+
+**Not re-run (#529 still owns it).** The rule-16 table above (200 trials per truth) was simulated
+on the pre-#520 SE. Closed form, its MDEs scale by `sqrt(22/21)` = 1.0235 (null 0.00109 to about
+0.00112, planted 0.00125 to about 0.00128), and no verdict in it depends on the change: ADOPT
+fired 0 of 200 in both rows and cannot fire more often on a wider interval. The simulation itself
+was not re-run for this restatement.
