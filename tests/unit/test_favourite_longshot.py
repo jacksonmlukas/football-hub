@@ -38,7 +38,7 @@ def synth(seed: int, delta=NULL, seasons=range(1999, 2026), games: int = 270) ->
     rows = []
     for yr in seasons:
         s = np.round(rng.normal(0.0, 6.5, games) * 2.0) / 2.0
-        p = fl._phi_cdf((s + np.sign(s) * d[fl.bucket(s)]) / MARGIN_SD)
+        p = fl.home_win_prob((s + np.sign(s) * d[fl.bucket(s)]) / MARGIN_SD, 1.0)
         y = (rng.random(games) < p).astype(np.int64)
         rows.append(pl.DataFrame({"season": yr, "spread_line": s, "home_won": y}))
     return pl.concat(rows)
@@ -56,7 +56,7 @@ def gated(paired: pl.DataFrame, *, ceiling: float | None = None):
 
 def _truth(spread: np.ndarray, delta) -> np.ndarray:
     d = np.asarray(delta, dtype=float)
-    return fl._phi_cdf((spread + np.sign(spread) * d[fl.bucket(spread)]) / MARGIN_SD)
+    return fl.home_win_prob((spread + np.sign(spread) * d[fl.bucket(spread)]) / MARGIN_SD, 1.0)
 
 
 GRID = np.arange(-14.0, 14.5, 0.5)

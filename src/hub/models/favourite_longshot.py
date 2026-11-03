@@ -38,7 +38,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
-from math import erf, sqrt
+from math import sqrt
 from typing import NamedTuple
 
 import numpy as np
@@ -51,7 +51,7 @@ from hub.ledger import recipe as _recipe
 from hub.models.experiment import Actions, Harness, expanding_seasons
 
 # Imported rather than restated, so the incumbent and the live price cannot drift apart.
-from hub.models.margin import TRAILING, residuals
+from hub.models.margin import TRAILING, home_win_prob, residuals
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
 
@@ -75,8 +75,6 @@ _TOL = not_an_input(
     1e-9, "the step size below which the fit stops iterating; it ends a search and sets no price")
 _EPS = not_an_input(
     1e-9, "the clip that keeps the fit's logarithms finite; it bounds a search and sets no price")
-_SQRT2 = not_an_input(
-    sqrt(2.0), "the mathematical constant that turns erf into the normal CDF; not a choice")
 _SQRT2PI = not_an_input(
     sqrt(2.0 * np.pi), "the normal density's normalising constant; mathematics and not a choice")
 
@@ -101,11 +99,6 @@ class Fit(NamedTuple):
 
     delta: tuple[float, ...]
     sd: float
-
-
-def _phi_cdf(z: np.ndarray) -> np.ndarray:
-    """The standard normal CDF, exact (`math.erf`), as `margin.home_win_prob` computes it."""
-    return 0.5 * (1.0 + np.array([erf(v / _SQRT2) for v in z]))
 
 
 def bucket(spread: np.ndarray) -> np.ndarray:
@@ -141,13 +134,13 @@ def fit_shift(spread: np.ndarray, won: np.ndarray, *, shifts: bool = True) -> Fi
 
     def objective(d: np.ndarray, lsd: float) -> float:
         z = (s + sg * d[b]) / np.exp(lsd)
-        return _nll(_phi_cdf(z), y, d)
+        return _nll(home_win_prob(z, 1.0), y, d)
 
     cur = objective(delta, ls)
     for _ in range(_MAX_ITER):
         sd = np.exp(ls)
         z = (s + sg * delta[b]) / sd
-        p = np.clip(_phi_cdf(z), _EPS, 1.0 - _EPS)
+        p = np.clip(home_win_prob(z, 1.0), _EPS, 1.0 - _EPS)
         dens = np.exp(-0.5 * z * z) / _SQRT2PI
         var = p * (1.0 - p)
         score = (y - p) * dens / var            # d log-lik / dz
@@ -188,14 +181,14 @@ def fit_shift(spread: np.ndarray, won: np.ndarray, *, shifts: bool = True) -> Fi
 
 def incumbent_prob(spread: np.ndarray) -> np.ndarray:
     """`normal_cdf(s / MARGIN_SD)`, the price every consumer computes."""
-    return _phi_cdf(np.asarray(spread, dtype=float) / MARGIN_SD)
+    return home_win_prob(np.asarray(spread, dtype=float) / MARGIN_SD, 1.0)
 
 
 def shifted_prob(spread: np.ndarray, fit: Fit) -> np.ndarray:
     """P(home win) under the location-shifted price."""
     s = np.asarray(spread, dtype=float)
     d = np.asarray(fit.delta)
-    return _phi_cdf((s + np.sign(s) * d[bucket(s)]) / fit.sd)
+    return home_win_prob((s + np.sign(s) * d[bucket(s)]) / fit.sd, 1.0)
 
 
 def oracle_rates(spread: np.ndarray, won: np.ndarray) -> dict[float, float]:

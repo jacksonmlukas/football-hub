@@ -36,7 +36,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
-from math import erf, sqrt
+from math import sqrt
 from typing import NamedTuple
 
 import numpy as np
@@ -49,7 +49,7 @@ from hub.ledger import recipe as _recipe
 from hub.models.experiment import Actions, Harness, expanding_seasons, t_interval
 
 # Imported rather than restated, so the incumbent and the live price cannot drift apart.
-from hub.models.margin import TRAILING, home_won
+from hub.models.margin import TRAILING, home_win_prob, home_won
 from hub.models.market import MARGIN_SD
 from hub.models.scoring_rules import log_loss
 
@@ -78,8 +78,6 @@ _TOL = not_an_input(
     1e-9, "the step size below which the fit stops iterating; it ends a search and sets no price")
 _EPS = not_an_input(
     1e-9, "the clip that keeps the fit's logarithms finite; it bounds a search and sets no price")
-_SQRT2 = not_an_input(
-    sqrt(2.0), "the mathematical constant that turns erf into the normal CDF; not a choice")
 _SQRT2PI = not_an_input(
     sqrt(2.0 * np.pi), "the normal density's normalising constant; mathematics and not a choice")
 
@@ -107,11 +105,6 @@ class Fit(NamedTuple):
     beta: float
 
 
-def _phi_cdf(z: np.ndarray) -> np.ndarray:
-    """The standard normal CDF, exact (`math.erf`), as `margin.home_win_prob` computes it."""
-    return 0.5 * (1.0 + np.array([erf(v / _SQRT2) for v in np.asarray(z, dtype=float)]))
-
-
 def games(schedules: pl.DataFrame) -> pl.DataFrame:
     """`(season, spread_line, total_line, result, home_won)` per scored game with a spread.
 
@@ -132,12 +125,12 @@ def sigma(total: np.ndarray, fit: Fit) -> np.ndarray:
 
 def challenger_prob(spread: np.ndarray, total: np.ndarray, fit: Fit) -> np.ndarray:
     """P(home win) under the fitted mapping."""
-    return _phi_cdf(np.asarray(spread, dtype=float) / sigma(total, fit))
+    return home_win_prob(np.asarray(spread, dtype=float) / sigma(total, fit), 1.0)
 
 
 def incumbent_prob(spread: np.ndarray) -> np.ndarray:
     """`normal_cdf(s / MARGIN_SD)`, the price every consumer computes."""
-    return _phi_cdf(np.asarray(spread, dtype=float) / MARGIN_SD)
+    return home_win_prob(np.asarray(spread, dtype=float) / MARGIN_SD, 1.0)
 
 
 def _nll(p: np.ndarray, won: np.ndarray) -> float:
@@ -160,12 +153,12 @@ def fit_sigma(spread: np.ndarray, total: np.ndarray, won: np.ndarray, *,
     active = np.array([True, by_total])
 
     def objective(th: np.ndarray) -> float:
-        return _nll(_phi_cdf(s / np.exp(th[0] + th[1] * u)), y)
+        return _nll(home_win_prob(s / np.exp(th[0] + th[1] * u), 1.0), y)
 
     cur = objective(theta)
     for _ in range(_MAX_ITER):
         z = s / np.exp(theta[0] + theta[1] * u)
-        p = np.clip(_phi_cdf(z), _EPS, 1.0 - _EPS)
+        p = np.clip(home_win_prob(z, 1.0), _EPS, 1.0 - _EPS)
         dens = np.exp(-0.5 * z * z) / _SQRT2PI
         var = p * (1.0 - p)
         score = (y - p) * dens / var            # d log-lik / dz

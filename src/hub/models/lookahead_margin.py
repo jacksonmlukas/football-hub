@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
-from math import exp, sqrt
+from math import erf, exp, sqrt
 from typing import NamedTuple
 
 import numpy as np
@@ -41,11 +41,10 @@ from hub.closure import closure_of
 from hub.declare import not_an_input
 from hub.ledger import Ledger, recipe
 from hub.models.experiment import Actions, Ceiling, GateRun, expanding_weeks, run_gate
-from hub.models.margin import fit, home_win_prob, home_won
+from hub.models.margin import fit, home_won
 
 # The incumbent. Imported rather than restated, so the two cannot drift apart.
 from hub.models.market import MARGIN_SD
-from hub.models.scoring_rules import log_loss
 
 SEASON = 2026
 
@@ -162,8 +161,13 @@ def bucket_sds(past: pl.DataFrame, *, min_n: int | None = None) -> dict[int, Fit
 
 def _row_loss(spread: np.ndarray, sd: np.ndarray, won: np.ndarray) -> np.ndarray:
     """Per-row log loss of `Phi(spread / sd)` against the outcome, each row its own sd."""
-    return np.array([log_loss(home_win_prob(spread[i:i + 1], float(sd[i])), won[i:i + 1])
-                     for i in range(len(spread))])
+    # `home_win_prob` and `log_loss` of one-row slices, written once over the arrays: the same
+    # operations in the same order (Phi via `erf`, the clip at `log_loss`'s default eps), so
+    # the losses are bit-identical to the per-row calls.
+    z = np.asarray(spread, dtype=float) / (np.asarray(sd, dtype=float) * sqrt(2.0))
+    q = np.clip(0.5 * (1.0 + np.array([erf(v) for v in z])), 1e-15, 1.0 - 1e-15)
+    y = np.asarray(won, dtype=float)
+    return -(y * np.log(q) + (1.0 - y) * np.log(1.0 - q))
 
 
 def walk_forward(rows: pl.DataFrame) -> pl.DataFrame:
