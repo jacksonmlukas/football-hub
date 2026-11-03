@@ -1475,13 +1475,6 @@ def survivor(season: int, out: Path | None = None,
     status = STATUS_PLAN if state is not None else STATUS_UNREAD_STATE
 
     try:
-        # The remaining plan *and its scope*, from `hub.season.survivor` rather than
-        # assembled here. This function used to make nine `sv.*` calls orchestrating
-        # survivor's own data, and the ones that matter were written out again in
-        # `survivor.main`. `plan_remaining`'s own docstring enumerates that sequence and is
-        # the one place it is written; restating it here is what put "six steps" over five
-        # items into two modules at once (issue #53). That sequence is the whole of issue
-        # #24's rule, so two copies is one plan silently wrong.
         got = sv.plan_remaining(sv.grid_from_schedule(season), season,
                                 # The pool's own rules, so weeks 13-18 take two teams here
                                 # even though a bare `solve` still takes one.

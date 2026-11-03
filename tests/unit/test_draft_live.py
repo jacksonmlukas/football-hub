@@ -246,25 +246,8 @@ def test_below_replacement_players_are_never_recommended():
 
 # --- bugs found running the poller against the live league ---------------
 
-def test_sync_can_be_quiet():
-    """Live-run bug: sync printed 'draft is empty' on every poll. At 10s over a three
-    hour draft that is ~1000 lines pushing the board you need off the screen."""
-    import hub.fetch.espn as espn
-    from hub.draft import state as st_mod
-
-    class _L:
-        draft: ClassVar[list] = []
-    import pytest as _pytest
-    mp = _pytest.MonkeyPatch()
-    try:
-        mp.setattr(espn, "league_settings", lambda: espn.LeagueView(_L(), {}))
-        mp.setattr(st_mod, "load", lambda path=None: DraftState())
-        st_mod.sync_from_espn(quiet=True)
-    finally:
-        mp.undo()
-
-
 def test_quiet_sync_prints_nothing(capsys):
+    """Live-run bug: sync printed 'draft is empty' on every poll, ~1000 lines over a draft."""
     import pytest as _pytest
 
     import hub.fetch.espn as espn

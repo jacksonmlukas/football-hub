@@ -251,14 +251,8 @@ class Contract:
     # "the guess was wrong" as "the source broke" -- and a red build should say which is the
     # likelier suspect rather than leaving the reader to work it out.
     #
-    # Three states, and `None` -- unmeasured -- is the default. It used to default to `True`,
-    # which made silence a claim: six of the eleven contracts were validated against no frozen
-    # payload at all, and every one of them said it had met live data on no evidence either
-    # way. A contract added from documentation, exactly like the CFBD pair below, inherited
-    # that claim and nothing went red (#66). Five are still in that position and nobody has
-    # measured them, so `None` says that and no more; guessing an answer for them would be
-    # worse than saying nothing. The sixth was `ESPN_SCOREBOARD`, and what moved it was
-    # routing its capture through a validation -- not anyone deciding it had met live data.
+    # Three states: `True` (met a captured response), `False` (only ever a hand-built
+    # shape) and `None` (unmeasured), which is the default.
     #
     # Not a free-text claim. `tests/contracts/test_every_contract_is_applied.py` resolves
     # which frozen payload each contract is validated against and requires this flag to agree

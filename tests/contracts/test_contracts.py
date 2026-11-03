@@ -455,3 +455,11 @@ def test_the_percent_repair_covers_every_column_the_percent_bound_covers():
     (rule,) = SNAP_COUNTS.normalisations
     bounded = {c for c, (_, hi) in SNAP_COUNTS.ranges.items() if hi == 1.05}
     assert set(rule.columns) == bounded == {"offense_pct", "defense_pct", "st_pct"}
+
+
+def test_a_contract_declared_without_the_flag_is_unmeasured_not_verified():
+    """The default is `None`, never `True`: silence must not claim the declaration has met a
+    live response. A contract added from documentation inherited that claim once and nothing
+    went red (#66)."""
+    bare = Contract(name="bare", required={"k": pl.Utf8})
+    assert bare.verified_against_live is None

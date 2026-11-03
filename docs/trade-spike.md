@@ -62,3 +62,5 @@ It does not say trades are a bad idea, or that this league would reject one. It 
 observed frequency is too low to justify building and maintaining an evaluator for it. If a
 trade is ever offered, evaluate it by hand with the tools that already exist — the roster
 simulator in `hub/draft/season.py` will price a roster swap directly.
+
+The spike's code was removed once the answer was "no".

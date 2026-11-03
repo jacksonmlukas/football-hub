@@ -668,51 +668,6 @@ def league_history(season: int, view: str = "mTeam") -> dict:
     return body[0] if isinstance(body, list) and body else body
 
 
-_league_history = league_history
-
-
-def transaction_counts(seasons, fetch=None) -> pl.DataFrame:
-    """Per-team trade, acquisition and drop counts for each season."""
-    fetch = fetch or _league_history
-    rows = []
-    for season in seasons:
-        teams = (fetch(season) or {}).get("teams") or []
-        if not teams:
-            raise NoLeagueHistory(
-                f"no teams for season {season}. Counting that as zero activity would "
-                "argue from a network failure.")
-        for t in teams:
-            c = t.get("transactionCounter") or {}
-            rows.append({"season": int(season),
-                         "team": t.get("name") or str(t.get("id")),
-                         "trades": int(c.get("trades") or 0),
-                         "acquisitions": int(c.get("acquisitions") or 0),
-                         "drops": int(c.get("drops") or 0)})
-    return pl.DataFrame(rows)
-
-
-def trade_summary(counts: pl.DataFrame) -> dict:
-    """League totals per season.
-
-    A trade increments the counter on both sides, so the league total is half the sum --
-    but acquisitions and drops have one side each and must not be halved. An odd trade sum
-    means the two-sided assumption broke (a three-way deal, or a team missing from league
-    history), and that is surfaced rather than rounded away.
-    """
-    per = counts.group_by("season").agg(
-        pl.col("trades").sum().alias("t"), pl.col("acquisitions").sum().alias("a"),
-        pl.col("drops").sum().alias("d"),
-        (pl.col("trades") > 0).sum().alias("n")).sort("season")
-    return {
-        "trades": {int(r["season"]): int(r["t"]) // 2 for r in per.iter_rows(named=True)},
-        "acquisitions": {int(r["season"]): int(r["a"]) for r in per.iter_rows(named=True)},
-        "drops": {int(r["season"]): int(r["d"]) for r in per.iter_rows(named=True)},
-        "teams_trading": {int(r["season"]): int(r["n"]) for r in per.iter_rows(named=True)},
-        "uneven_seasons": [int(r["season"]) for r in per.iter_rows(named=True)
-                           if int(r["t"]) % 2],
-    }
-
-
 # ESPN stat ids for the items `hub.models.components.SCORING` models. ESPN omits any item
 # worth zero, so an absent id means "not scored" rather than "disagrees".
 SCORING_STAT_IDS = {
