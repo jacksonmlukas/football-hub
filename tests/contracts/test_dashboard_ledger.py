@@ -7,8 +7,8 @@ against a stub DOM (`dashboard_render.mjs`), on the frozen `ledger.json` fixture
   `as_of`, newest first;
 * the page holds no verdict text of its own: the word on a row is the published word, and an
   empty ledger names no verdict at all;
-* every ADR link in a rendered row resolves to a committed file under `docs/adr/`, like the
-  archive-name test for the weeks;
+* every ADR, method and track-record link resolves to a file the Pages build publishes
+  (`hub.publish_docs`, #541), no link points at the private repository, and an issue is plain text;
 * the verdict sits above the name at 390px (held here against the rule that makes it so, and in
   the screenshot test against a real layout);
 * the colours come from the tokens #478 defined.
@@ -161,48 +161,87 @@ def test_an_empty_or_unreadable_ledger_names_no_verdict(node, art):
 
 def test_the_intro_and_method_text_name_no_verdict_either(node):
     text = _text(_body(node, _art([])))
-    assert "pre-registered" in text.lower() and "docs/track-record.md" in _body(node, _art([]))
+    assert "pre-registered" in text.lower() and "docs/track-record.html" in _body(node, _art([]))
     for word in VERDICTS:
         assert word.lower() not in text.lower()
 
 
 # --- links -------------------------------------------------------------------------------------
 
-_BLOB = re.compile(r'href="https://github\.com/jacksonmlukas/football-hub/blob/main/([^"]+)"')
-_ISSUE = re.compile(r'href="https://github\.com/jacksonmlukas/football-hub/issues/(\d+)"')
+_HREF = re.compile(r'href="([^"]+)"')
+_OUTSIDE_THE_SITE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#|/)", re.IGNORECASE)
 
 
 def _real_ledger() -> dict:
     return json.loads((SITE / "data" / "ledger.json").read_text())
 
 
+def _hrefs(html: str) -> list[str]:
+    return _HREF.findall(html)
+
+
+@pytest.fixture(scope="module")
+def built_site(tmp_path_factory) -> Path:
+    """A site root holding exactly what the Pages build's docs step writes."""
+    from hub import publish_docs
+    site = tmp_path_factory.mktemp("site")
+    publish_docs.build(site=site)
+    return site
+
+
 @pytest.mark.parametrize("art", [FIXTURE_ART, "site"])
-def test_every_adr_link_in_a_rendered_row_is_a_committed_file(node, art):
+def test_every_adr_link_in_a_rendered_row_is_a_published_file(node, built_site, art):
     art = _real_ledger() if art == "site" else art
     rows = _rows(_body(node, art))
-    paths = [p for r in rows for p in _BLOB.findall(r)]
-    assert paths, "no ADR link was drawn at all, so nothing was checked"
-    assert len(paths) == sum(1 for e in art["rows"] if e["adr"])
-    for p in paths:
-        assert p.startswith("docs/adr/") and p.endswith(".md"), p
-        assert (ROOT / p).is_file(), f"{p} is linked from the Ledger and is not committed"
+    hrefs = [h for r in rows for h in _hrefs(r)]
+    assert hrefs, "no ADR link was drawn at all, so nothing was checked"
+    assert len(hrefs) == sum(1 for e in art["rows"] if e["adr"])
+    for h in hrefs:
+        assert h.startswith("docs/adr/") and h.endswith(".html"), h
+        assert (built_site / h).is_file(), f"{h} is linked from the Ledger and is not published"
+        assert (ROOT / h.replace(".html", ".md")).is_file(), f"{h} has no committed source"
 
 
-def test_a_row_with_no_adr_draws_no_adr_link_and_an_issue_links_to_its_number(node):
+def test_a_row_with_no_adr_draws_no_link_and_an_issue_is_plain_text(node):
     rows = [_entry("screen", "Null", "2026-10-01"),
             _entry("adr", "Removed", "2026-10-02", adr="docs/adr/0016-x.md", issue=123)]
     got = {_name_of(r): r for r in _rows(_body(node, _art(rows)))}
-    assert _BLOB.findall(got["screen"]) == [] and _ISSUE.findall(got["screen"]) == []
-    assert _BLOB.findall(got["adr"]) == ["docs/adr/0016-x.md"]
-    assert _ISSUE.findall(got["adr"]) == ["123"]
+    assert _hrefs(got["screen"]) == []
+    assert _hrefs(got["adr"]) == ["docs/adr/0016-x.html"]
+    assert "#123" in _text(got["adr"])
+    only_issue = _rows(_body(node, _art([_entry("i", "Null", "2026-10-01", issue=7)])))[0]
+    assert _hrefs(only_issue) == [] and "#7" in _text(only_issue)
 
 
-def test_the_track_record_and_method_links_resolve(node):
-    html = _body(node, _art([]))
-    linked = _BLOB.findall(html)
-    assert "docs/track-record.md" in linked and "docs/method.md" in linked
-    for p in linked:
-        assert (ROOT / p).is_file(), p
+def test_the_track_record_and_method_links_are_published_files(node, built_site):
+    hrefs = _hrefs(_body(node, _art([])))
+    assert "docs/track-record.html" in hrefs and "docs/method.html" in hrefs
+    for h in hrefs:
+        assert (built_site / h).is_file(), h
+
+
+@pytest.mark.parametrize("art", [FIXTURE_ART, "site"])
+def test_no_ledger_link_points_outside_the_site(node, art):
+    """The repository is private: a link into it, or anywhere absolute, is dead for the reader."""
+    art = _real_ledger() if art == "site" else art
+    html = _body(node, art)
+    assert "github.com" not in html, "a Ledger link points at the private repository"
+    for h in _hrefs(html):
+        assert not _OUTSIDE_THE_SITE.match(h), f"{h} is not relative to the site"
+    assert "github.com/jacksonmlukas/football-hub" not in (JS / "panels" / "ledger.js").read_text()
+
+
+def test_the_pages_build_runs_the_docs_step_and_redeploys_on_a_doc_change():
+    wf = (ROOT / ".github" / "workflows" / "pages.yml").read_text()
+    assert "python -m hub.publish_docs" in wf
+    for path in ("docs/adr/**", "docs/method.md", "docs/track-record.md"):
+        assert f'- "{path}"' in wf, f"a change to {path} would not redeploy the site"
+
+
+def test_every_adr_is_published(built_site):
+    from hub import publish_docs
+    for adr in (ROOT / "docs" / "adr").glob("*.md"):
+        assert (built_site / publish_docs.target(f"docs/adr/{adr.name}")).is_file()
 
 
 def test_a_hostile_feed_value_is_escaped(node):
@@ -284,3 +323,14 @@ def test_the_view_has_a_panel_and_the_router_no_longer_holds_a_placeholder_for_i
     page = (SITE / "index.html").read_text()
     assert re.search(r'<section id="p-ledger"[^>]*><h3>What got measured, and what got cut', page)
     assert "ledger:" not in (JS / "router.js").read_text().split("const RENDERERS")[1].split("};")[0]
+
+
+def test_a_published_document_is_escaped_and_links_back_to_the_ledger(tmp_path):
+    from hub import publish_docs
+    root, site = tmp_path / "repo", tmp_path / "site"
+    (root / "docs" / "adr").mkdir(parents=True)
+    (root / "docs" / "adr" / "0001-x.md").write_text(f"# T\n{HOSTILE}\n")
+    assert publish_docs.build(site=site, root=root) == ["docs/adr/0001-x.html"]
+    page = (site / "docs" / "adr" / "0001-x.html").read_text()
+    assert "<script>" not in page and "&lt;script&gt;" in page
+    assert 'href="../../#/ledger"' in page

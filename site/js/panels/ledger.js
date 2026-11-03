@@ -9,10 +9,13 @@
 
 import { esc } from "../format.js";
 
-// Where the committed docs live. A link is this base plus a repo-relative path the publisher
-// emitted (`adr`), so the page invents no path; a contract test checks each one is a real file.
-const REPO = "https://github.com/jacksonmlukas/football-hub";
-const blob = path => `${REPO}/blob/main/${path}`;
+// Where the documents live (#541). The repository is private, so a link into it is dead for an
+// outside reader; the Pages build publishes each document beside the site as `docs/....html`
+// (`hub.publish_docs`) and a link is that relative path, derived from the repo-relative path the
+// publisher emitted (`adr`). The page invents no path; a contract test builds the site's docs
+// and checks each link lands on a file that build wrote. An issue is plain text: it cannot be
+// published, so it is not a link.
+const published = path => path.replace(/\.md$/, ".html");
 
 // Verdict classes in display order (Removed first), each with the colour class that draws it:
 // loss for a removal, turf for what stayed on the page, muted for no effect, the unconfirmed
@@ -46,8 +49,8 @@ const link = (href, text) => `<a href="${esc(href)}">${text}</a>`;
 
 const row = e => {
   const links = [
-    typeof e.adr === "string" && e.adr ? link(blob(e.adr), "ADR") : "",
-    Number.isInteger(e.issue) ? link(`${REPO}/issues/${e.issue}`, `#${e.issue}`) : "",
+    typeof e.adr === "string" && e.adr ? link(published(e.adr), "ADR") : "",
+    Number.isInteger(e.issue) ? `#${e.issue}` : "",
   ].filter(Boolean).join(" ");
   return `<li class="lg-row">`
     + `<span class="lg-verdict ${colourOf(e.verdict)}">${esc(e.verdict ?? "?")}</span>`
@@ -65,13 +68,13 @@ const PREREG = `<h4 class="lg-sub">How a prediction becomes pre-registered</h4>`
   + `<li>The prediction file is written before the first kickoff.</li>`
   + `<li>It is committed, and the commit time is the pre-registration.</li>`
   + `<li>It is scored only after the games, against that commit.</li></ol>`
-  + `<p class="legend">${link(blob("docs/track-record.md"), "The full rule, and what it does not prove")}</p>`;
+  + `<p class="legend">${link(published("docs/track-record.md"), "The full rule, and what it does not prove")}</p>`;
 
 const METHOD = `<h4 class="lg-sub">The method</h4>`
   + `<p class="lg-method">Fix the decision rule before looking at the numbers, in code, with a test. `
   + `Measure each predictor strictly before the outcome it is scored on, compare against the simplest `
   + `thing that works, and count every comparison tried. Each rule in the method names the mistake `
-  + `that produced it. ${link(blob("docs/method.md"), "Read the method")}</p>`;
+  + `that produced it. ${link(published("docs/method.md"), "Read the method")}</p>`;
 
 // The body of the Ledger panel. An artifact with no rows says why in the rows' place.
 export function ledgerBody(art) {
