@@ -190,10 +190,7 @@ def _keeping(out: Path, name: str, why: str, key: str = "n") -> Kept | None:
     if not (out / f"{name}.json").exists():
         return None
     had = _last_good_n(out, name, key)
-    # The printed line branches with the returned one. It used to say "0 rows against 0
-    # already published; keeping last-good" whenever the published artifact was itself
-    # empty -- an operator reading the slate's log was told last-good was being kept and
-    # that there was nothing to keep, in one sentence.
+    # The printed line branches with the returned one.
     print(f"  {name}: read and empty; keeping the {had} row(s) last published" if had
           else f"  {name}: read and empty, and so is the artifact already published",
           flush=True)
@@ -1507,8 +1504,7 @@ def survivor(season: int, out: Path | None = None,
         return Kept(f"no plan for the weeks that remain: {e}")
     except Exception as e:
         # Reported the way `live` reports its own failure: printed for the operator, None for
-        # the caller. It used to hand back a manifest entry of its own -- the only producer
-        # that did -- which is why it could never be recorded like the rest.
+        # the caller.
         print(f"  survivor: schedule unavailable ({type(e).__name__}: {e})"[:160])
         return None
     # The rules this plan rests on that nobody has confirmed, carried beside the numbers
@@ -1564,7 +1560,7 @@ def default_week(season: int, base: Path | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     # Imported here rather than at module scope, as `live` imports `live_state`: this module
     # is imported by every artifact producer, and only `--league` needs ESPN's names. The
-    # import has no side effects (#401 removed the cache directory it used to open), so this
+    # import has no side effects, so this
     # is about not loading `hub.fetch.espn` and `requests` for the other commands, not safety.
     # The names of the two boards have one owner, so `--league` takes its choices from there
     # rather than restating them.

@@ -55,9 +55,7 @@ from hub.config import DRAFTED_POSITIONS
 from hub.declare import not_an_input
 
 # The weekly spread the model assumes, from `hub.draft.season.weekly_moments`:
-# sd = k * sqrt(mu), fitted in docs/weekly-spread.md. This used to be an unfitted 0.55*mu,
-# which the per-game-played variant of this fit flagged by returning an implausible 0.041
-# for quarterbacks -- 0.55 over-subtracts badly for the steadiest position.
+# sd = k * sqrt(mu), fitted in docs/weekly-spread.md.
 from hub.models import predict
 
 TEAM_GAMES = 17
