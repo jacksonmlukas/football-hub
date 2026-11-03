@@ -1074,8 +1074,11 @@ def join_report(rates: dict[str, float]) -> list[str]:
     return lines
 
 
-# --- the CLI, as five typed modes plus a dispatcher --------------------------------
+# --- the CLI, as five typed modes plus a dispatcher (#341) --------------------------------
 #
+# Argv and stdout used to be the only interface to what each mode decided: table formatting
+# and the tripwire calls were inlined into `main` itself, across some 270 lines, so
+# `tests/unit/test_backtest.py` drove `main([...])` and scraped the sentences it printed.
 # Below, each mode is a function with a typed result -- the numbers and verdicts it
 # produced, plus the exact lines it rendered -- and `main` parses, calls one, and returns
 # its exit code: the shape `hub.publish.main` and `hub.fetch.cached.run` already have.
