@@ -270,3 +270,28 @@ def test_main_runs_the_gate_once_and_prints_the_verdict(monkeypatch, capsys):
     written = ledger._read()
     assert written is not None and len(written) == 1
     assert written[0].name == "total_sd"
+
+
+def test_the_recorded_502_run_redecided_on_the_corrected_se_is_show():
+    """#539: the 22 per-season gains the 2026-10-18 run recorded, put back through the
+    gate as it stands after #520's SE correction. ADOPT needs a win in every resolved
+    season *and* a t interval that excludes zero; this run won 15 of 22 and its interval
+    straddles zero, so the pre-registered rule says SHOW. Only the ceiling's mean
+    (+0.00512, docs/margin-sd.md) is not recorded per season, and the gate reads only its
+    mean, so it rides as a constant column."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "state" / "gate-width.json"
+    entry = next(e for e in json.loads(path.read_text())["entries"] if e["gate"] == "total_sd")
+    paired = pl.DataFrame({
+        "season": [s["season"] for s in entry["seasons"]],
+        "diff": [s["gain"] for s in entry["seasons"]],
+        "ceiling_diff": [0.00512] * len(entry["seasons"]),
+    })
+    run = ts.HARNESS.decide(paired, bootstrap=500)
+    assert run.verdict[0] == "SHOW"
+    assert (run.resolved, run.abstained) == (22, 0)
+    assert run.summary["t_lo"] < 0.0 < run.summary["t_hi"]
+    assert run.summary["mde"] < run.summary["ceiling"]
+    assert round(run.summary["mean"], 5) == 0.00034
