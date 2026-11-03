@@ -181,11 +181,18 @@ def _seasons(truth, seasons=(2019, 2020, 2021, 2022), seed=0) -> pl.DataFrame:
 
 TRUTH = {"rec": 0.96, "rush": 0.96, "pass": 0.84}
 
+# For the checks that are exact rather than statistical -- a row that must not move, a run that
+# must write nothing or one entry -- where the table's size buys no power, only time (#514): the
+# scored mean is continuous, so every held-out player-week is its own Conway-Maxwell solve.
+# Three seasons are the fewest the no-leak check can be made with: two held out, an earlier one
+# to keep and a last one to flip.
+SMALL = {"rec": 8, "rush": 4, "pass": 3}
+
 
 def test_a_later_season_changes_no_earlier_held_out_row():
     """The walk-forward scores season `s` from seasons before `s`: rewriting the last season's
     counts leaves every earlier held-out row exactly as it was."""
-    t = _seasons(TRUTH)
+    t = T.planted_table(TRUTH, (2019, 2020, 2021), SMALL, seed=0)
     base = T.walk_forward(t, ceiling=TRUTH)
     last = t["season"].max()
     flipped = t.with_columns(pl.when(pl.col("season") == last).then(pl.col("x") + 1.0)
@@ -289,7 +296,7 @@ def test_the_harness_is_season_clustered_and_names_its_own_module():
 
 
 def test_a_published_run_writes_one_ledger_entry():
-    t = _seasons(TRUTH, seasons=(2019, 2020, 2021), seed=6)
+    t = T.planted_table(TRUTH, (2019, 2020, 2021), SMALL, seed=6)
     paired = T.walk_forward(t, ceiling=TRUTH)
     ledger = Ledger(path=None)
     T.gate_run(paired, publish=True, seasons=(2019, 2020, 2021), ledger=ledger)
@@ -377,7 +384,7 @@ def test_the_tail_path_runs_offline(capsys):
 
 
 def test_the_pure_half_of_the_gate_writes_nothing():
-    t = _seasons(TRUTH, seasons=(2019, 2020, 2021), seed=7)
+    t = T.planted_table(TRUTH, (2019, 2020, 2021), SMALL, seed=7)
     paired = T.walk_forward(t, ceiling=TRUTH)
     run = T.gate_run(paired, seed=1)
     assert run.lines == [] and run.verdict[0] in {"ADOPT", "SHOW", "NOT-RUNNABLE", "REMOVE"}

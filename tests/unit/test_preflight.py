@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -556,13 +557,76 @@ def _unmarked_guards(text: str) -> list[str]:
             if m.start() not in covered]
 
 
-def _child(script: Path, selectors: tuple[str, ...]) -> subprocess.CompletedProcess:
-    """Run the tests a guard names against the script at `script`."""
+def _child(script: Path, selectors: tuple[str, ...], basetemp: Path | None = None
+           ) -> subprocess.CompletedProcess:
+    """Run the tests a guard names against the script at `script`. `basetemp` is the child's
+    own `tmp_path` root, for a child that runs beside others: two pytest processes sharing the
+    default root each prune the other's numbered directories."""
     env = os.environ.copy()
     env["PREFLIGHT_SCRIPT"] = str(script)
+    own = ["--basetemp", str(basetemp)] if basetemp is not None else []
     return subprocess.run(
-        [sys.executable, "-m", "pytest", *selector_args(selectors, TESTS), "-x", *CHILD_FLAGS],
+        [sys.executable, "-m", "pytest", *selector_args(selectors, TESTS), "-x", *CHILD_FLAGS,
+         *own],
         cwd=ROOT, capture_output=True, text=True, timeout=900, env=env)
+
+
+class _GuardRuns:
+    """Each selected guard's control and mutant children, started together (#514).
+
+    Serially they were twelve child suites end to end, each building git repositories, and the
+    excision section was a sixth of the unit run. They share nothing -- every child has its own
+    script copy and its own basetemp -- so they run at most four at a time, and each test still
+    reads and asserts about its own two, in the same order. Only the guards the session selected
+    are started; a mutant bash will not parse is never started, its test fails on the parse.
+    Under xdist each worker would see every item, so there nothing is started ahead and each
+    test starts its own.
+    """
+
+    def __init__(self, items: list[pytest.Item], root: Path) -> None:
+        self._root = root
+        self._pool = ThreadPoolExecutor(min(4, os.cpu_count() or 1))
+        self._runs: dict[Guard, tuple[Future, Future]] = {}
+        if "PYTEST_XDIST_WORKER" in os.environ:         # pragma: no cover - no xdist here
+            return
+        for item in items:
+            if not (isinstance(item, pytest.Function) and item.originalname
+                    == "test_removing_the_guard_stops_the_planted_input_being_caught"):
+                continue
+            guard = item.callspec.params["guard"]
+            if isinstance(guard, Guard):
+                self._start(guard)
+
+    def _start(self, guard: Guard) -> None:
+        if guard in self._runs:
+            return
+        here = self._root / f"{len(self._runs):03d}-{guard.name}"
+        here.mkdir()
+        mutant = here / "preflight_public.sh"
+        mutant.write_text(_without(guard))
+        if subprocess.run(["bash", "-n", str(mutant)], capture_output=True).returncode != 0:
+            return
+        self._runs[guard] = (
+            self._pool.submit(_child, SCRIPT, guard.selectors, here / "control"),
+            self._pool.submit(_child, mutant, guard.selectors, here / "mutant"))
+
+    def control(self, guard: Guard) -> subprocess.CompletedProcess:
+        self._start(guard)
+        return self._runs[guard][0].result()
+
+    def mutant(self, guard: Guard) -> subprocess.CompletedProcess:
+        self._start(guard)
+        return self._runs[guard][1].result()
+
+    def close(self) -> None:
+        self._pool.shutdown(cancel_futures=True)
+
+
+@pytest.fixture(scope="module")
+def guard_runs(request, tmp_path_factory):
+    runs = _GuardRuns(request.session.items, tmp_path_factory.mktemp("preflight-mutants"))
+    yield runs
+    runs.close()
 
 
 @pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
@@ -689,7 +753,7 @@ def test_the_child_run_uses_the_script_it_is_handed(tmp_path):
 
 @pytest.mark.skipif(MUTANT_RUN, reason="a child run of the excision harness")
 @pytest.mark.parametrize("guard", _declared_guards(), ids=repr)
-def test_removing_the_guard_stops_the_planted_input_being_caught(guard, tmp_path):
+def test_removing_the_guard_stops_the_planted_input_being_caught(guard, tmp_path, guard_runs):
     """Delete one guard, run the tests it names, require red.
 
     Three outcomes have to be told apart, and `guardlib.outcome` is what tells them apart in
@@ -709,7 +773,7 @@ def test_removing_the_guard_stops_the_planted_input_being_caught(guard, tmp_path
             f"({parses.stderr.strip()}). Widen the markers so the block stands alone -- as "
             f"written, a red run below would prove nothing.")
 
-    control = _child(SCRIPT, guard.selectors)
+    control = guard_runs.control(guard)
     assert control.returncode == 0, (
         f"the control run for {guard.name!r} is not green before anything is removed, so a "
         f"red mutant run would prove nothing. Its selectors "
@@ -721,7 +785,7 @@ def test_removing_the_guard_stops_the_planted_input_being_caught(guard, tmp_path
     # still go non-zero by erroring during collection rather than by failing an assertion --
     # and a red run for that reason proves nothing either. An actual test failure is the only
     # evidence, and it is read off pytest's short summary rather than matched for substrings.
-    got = outcome(_child(mutant, guard.selectors))
+    got = outcome(guard_runs.mutant(guard))
     if got.errors and not got.failed:                   # pragma: no cover - harness error
         pytest.fail(
             f"the mutant run for {guard.name!r} is red without a test failing, which is a "

@@ -22,8 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     # Raised 30 -> 60 on 2026-10-19: the unit+contracts suite outgrew 30 minutes on the runner,
     # and GitHub reports a job timeout as "cancelled", so every push and scheduled run from
-    # 2026-10-16 ended cancelled rather than red. `--durations` below names where the time goes;
-    # making the suite faster is its own ticket.
+    # 2026-10-16 ended cancelled rather than red. #514 made it fast again (below); this comes
+    # back down to 30 once a run on the runner shows it holds, not before -- a timeout lowered
+    # on a local measurement is how the three cancelled days started.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -38,8 +39,14 @@ jobs:
       # (espn.poll, league_settings, availability.historical_picks) or expensive harness
       # CLIs. Covering those means stubbing six things to assert an exit code, which is the
       # shape of test this repo has a documented incident about.
+      # `-n auto` (#514): pytest-xdist, one worker per core the runner has -- two on a private
+      # repo's standard runner, four on a larger one. Measured on 2026-10-21 at load ~5, the
+      # same 5,857 tests and the same per-module coverage either way: serial 19:40, `-n 2`
+      # 12:09, `-n 4` 8:47. Workers share nothing the suite writes (tmp_path throughout; a
+      # serial and two parallel runs left `state/` and `site/` untouched), and the two
+      # in-file child pools start nothing ahead under a worker (PYTEST_XDIST_WORKER).
       - run: >
-          uv run pytest tests/unit tests/contracts -q --cov=hub --cov-fail-under=88
+          uv run pytest tests/unit tests/contracts -q -n auto --cov=hub --cov-fail-under=88
           --cov-report=json:coverage.json --durations=25
       # The total floor above cannot see one module losing its tests: #104 took
       # `models/weekly.py` from 98% to 22% and the total only fell to 89.62%, which cleared

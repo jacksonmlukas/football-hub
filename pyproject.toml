@@ -51,6 +51,7 @@ dev = [
     "hypothesis",
     "playwright>=1.64.0",
     "pillow>=12.3.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [build-system]

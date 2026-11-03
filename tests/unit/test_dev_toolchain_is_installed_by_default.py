@@ -22,8 +22,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 # Everything `.claude/hooks/tdd_gate.sh` and the `ci.yml` `test` job invoke, plus what the
-# suite imports. `pytest-cov` is here because `--cov-fail-under=88` is a gate too.
-GATE_TOOLING = {"pytest", "pytest-cov", "ruff", "pyrefly", "hypothesis"}
+# suite imports. `pytest-cov` is here because `--cov-fail-under=88` is a gate too, and
+# `pytest-xdist` because the `test` job runs `-n 4` (#514): without it `-n` is an unknown flag.
+GATE_TOOLING = {"pytest", "pytest-cov", "pytest-xdist", "ruff", "pyrefly", "hypothesis"}
 
 
 @pytest.fixture(scope="module")
