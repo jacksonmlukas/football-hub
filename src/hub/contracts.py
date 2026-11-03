@@ -621,8 +621,7 @@ DEPTH_CHARTS = Contract(
     non_null=("dt", "team", "pos_grp", "pos_abb", "pos_slot", "pos_rank"),
     ranges={"pos_slot": (1, 20), "pos_rank": (1, 20)},
     # ISO 8601 UTC to the second, 221 distinct values across the 2025 pull and every one in this
-    # form; `odds.qb_starters` parses it, and a different form there used to escape the
-    # last-good fallback as a bare parse error because the cache was written first (#463).
+    # form; `odds.qb_starters` parses it.
     timestamps={"dt": "%Y-%m-%dT%H:%M:%SZ"},
     min_rows=1,
     verified_against_live=True,

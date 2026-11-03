@@ -157,8 +157,6 @@ def refresh(board: pl.DataFrame, state: DraftState, *, my_slot: int = MY_SLOT,
     }
 
 
-# The context table used to switch to sorting by `edge` from round four. It no longer does.
-#
 # `edge` -- consensus rank minus ADP -- is the repo's original draft signal and the only one
 # that has never been tested against outcomes. It cannot be: `edge` needs ADP, ESPN publishes
 # ADP for the current season only, and the historical archive returns a 169 sentinel for

@@ -14,7 +14,7 @@ export function findArt(man, name) {
   return (man?.artifacts ?? []).find(a => a.name === name) ?? null;
 }
 
-// Whether the draft board has a place on the page (#348). It is a preseason artifact: once a
+// Whether the draft board has a place on the page. It is a preseason artifact: once a
 // slate has been published after it was built, the board is a stale answer to a question
 // nobody is asking, and it retires. Derived, never deleted -- `draft_board.json` stays on disk,
 // in the manifest and published; this reads two stamps the manifest already carries, so next
@@ -54,7 +54,7 @@ export function predsArt(man) {
 
 // The published weeks a reader can reach other than the one on screen.
 //
-// The manifest's `weeks` (#480) is the publisher's own list of every `preds_*` artifact it
+// The manifest's `weeks` is the publisher's own list of every `preds_*` artifact it
 // holds, newest first; this page keeps no copy of it, and a name in it is a file the writer
 // found on disk, so a link here cannot be a name the page invented. An older manifest has no
 // `weeks`: it still offers the one week it describes and no archive links, because the page
@@ -87,7 +87,7 @@ export async function frozen(key) {
   const held = frozenPreds.get(key);
   if (held) return held;
   // `load` resolves null on any failure; a failure is not a number that was frozen, so it
-  // leaves the map and the next ask fetches again (#537). The in-flight promise stays in it
+  // leaves the map and the next ask fetches again. The in-flight promise stays in it
   // meanwhile, so concurrent callers still share one fetch.
   const p = load(key).then(got => { if (got === null) frozenPreds.delete(key); return got; });
   frozenPreds.set(key, p);

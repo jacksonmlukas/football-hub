@@ -1104,8 +1104,8 @@ class Field:
         consume from the same stream, but only ever as a function of the results and their own
         ledgers -- our entry replays a plan and consumes nothing (#151) -- so two candidate plans
         handed the same seed meet the identical field, game for game and rival pick for rival
-        pick. `weekly` relies on that and `test_two_candidates_meet_the_identical_field` is what
-        holds it.
+        pick. `weekly` relies on that and `test_two_candidate_plans_meet_the_identical_field`
+        is what holds it.
         """
         wks, weeks = self.wks, self.weeks
         led = [set(lg) for lg in ledgers]

@@ -721,10 +721,7 @@ def drafted_positions(cfg: RosterConfig | None = None) -> tuple[str, ...]:
 
 # The league's own answer, for the modules that want a constant rather than a call. Callers
 # inside `FITTED_MODULES` must use the function instead: any module-level name *assigned* in
-# one of those files is swept into `config_digest`, and the roster shape is a setting. (It
-# used to read "an upper-case module-level name", which was true and was the bug -- #201:
-# spelling decided coverage, so binding this to `drafted_positions` under a lower-case or
-# underscored name would have been a silent way out of the digest. It is not one now.)
+# one of those files is swept into `config_digest`, and the roster shape is a setting.
 DRAFTED_POSITIONS: tuple[str, ...] = drafted_positions()
 
 
@@ -737,13 +734,6 @@ def flex_capacity(cfg: RosterConfig) -> int:
     """
     return sum(n for p, n in required_starters(cfg).items()
                if p in flex_positions(cfg)) + cfg.flex
-
-
-# `flex_share(cfg)` used to sit here, reading `cfg.flex_rb/_wr/_te`. It is now
-# `hub.draft.board.FLEX_SHARES`, a plain dict beside the sensitivity that justifies it, and
-# it is hashed through `FITTED_EXTRA` rather than through the config schema. There is no
-# forwarding shim: a function here that read a constant in `hub.draft` would be a second
-# address for the same number and an import cycle besides, since `board` imports this file.
 
 
 # ESPN's own names for the slots this league starts, so a league read over the wire can be
