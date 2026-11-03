@@ -38,7 +38,6 @@ MEASURED: dict[tuple[str, str], tuple[float, tuple[int, ...]]] = {
     ("ci.yml", "golden"): (0.8, (38748031945,)),  # scheduled, so few runs exist
     ("consensus.yml", "capture"): (0.6, (41209338422, 41188232904, 41149674767, 41106558228, 40093918432,
                                          40075976244, 40041366074, 39997009964, 39705561405, 39670061859)),
-    ("forecast-dry-run.yml", "dry-run"): (2.9, (41377255960, 41282863357)),
     ("live.yml", "refresh"): (110.6, (41520258028, 41437249634, 41382883510, 41361108727, 41294812198,
                                       41281208715, 41094769483, 41044254374, 41002046921, 40920337221)),
     ("odds-close.yml", "capture"): (0.6, (41370591781, 40247829681, 40229619925, 40228037089, 39179226102,
@@ -62,6 +61,8 @@ UNMEASURED: dict[tuple[str, str], str] = {
     ("forecast.yml", "forecast"): "gated on LLM_FORECASTS_ENABLED; the only green runs (0.2 min) forecast nothing",
     ("forecast-close.yml", "capture"): "gated on LLM_FORECASTS_ENABLED; the only green runs (0.2 min) captured nothing",
     ("forecast-score.yml", "score"): "gated on LLM_FORECASTS_ENABLED; no green run exists",
+    ("forecast-dry-run.yml", "dry-run"): "does the real run's work, so it scales with the day's "
+        "slate; both green runs (2.9 min) were one-game days, which says nothing of a full one",
 }
 
 # Jobs allowed to have no timeout. Empty on purpose: a job with none runs for six hours.
