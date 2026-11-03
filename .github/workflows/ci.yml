@@ -22,10 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     # Raised 30 -> 60 on 2026-10-19: the unit+contracts suite outgrew 30 minutes on the runner,
     # and GitHub reports a job timeout as "cancelled", so every push and scheduled run from
-    # 2026-10-16 ended cancelled rather than red. #514 made it fast again (below); this comes
-    # back down to 30 once a run on the runner shows it holds, not before -- a timeout lowered
-    # on a local measurement is how the three cancelled days started.
-    timeout-minutes: 60
+    # 2026-10-16 ended cancelled rather than red. The suite was never only slow: a forked
+    # process pool in td_dispersion deadlocked on Linux and held every run at 98%. Spawning it
+    # plus `-n auto` (#514) brought the job to 11:04 on the runner (run 41571184996,
+    # 2026-11-03), so this is back to 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
