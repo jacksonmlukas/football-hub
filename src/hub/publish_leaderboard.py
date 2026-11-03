@@ -31,8 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from hub import jsonio
-
-ROOT = Path(__file__).resolve().parents[2]
+from hub.paths import ROOT
 
 NAME = "leaderboard"
 REF = "origin/forecasts"

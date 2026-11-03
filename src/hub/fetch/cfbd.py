@@ -71,9 +71,8 @@ from hub.fetch.cached import (  # noqa: F401 -- re-exported, see the guard note 
     LiveCallRefused,
     refuse_live_call,
 )
-from hub.paths import SITE, STATE_DIR
+from hub.paths import ROOT, SITE, STATE_DIR
 
-ROOT = Path(__file__).resolve().parents[3]
 CACHE = ROOT / "data" / "raw" / "cfbd"
 # Beside the odds balance and away from the cache, for the same reason. The responses under
 # `CACHE` are third-party payloads this repo cannot publish and `.gitignore` is right to

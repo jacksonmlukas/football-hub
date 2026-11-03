@@ -336,10 +336,10 @@ class Ledger:
         """
         if self.path is None:
             return list(self._entries)
-        if not self.path.exists():
-            return []
         try:
             got = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return []
         except (OSError, ValueError):
             return None
         if isinstance(got, dict) and isinstance(got.get("entries"), list):

@@ -35,11 +35,12 @@ from __future__ import annotations
 import hashlib
 import html
 import sys
+from collections.abc import Collection
 from pathlib import Path
 
 from hub import atomic
+from hub.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site"
 
 # Each published document and the sha256 (first 12 hex) of the text the sweep cleared. Adding
@@ -129,11 +130,14 @@ def target(source: str) -> str:
 
 
 def build(site: Path | None = None, root: Path | None = None,
-          swept: dict[str, str] | None = None) -> list[str]:
+          swept: dict[str, str] | None = None,
+          holding: Collection[str] | None = None) -> list[str]:
     """Write every published document under `site`; return the site-relative paths written.
-    A held document (`held`) is written as a notice in place of its text."""
+    A held document (`held`) is written as a notice in place of its text. `holding` is the
+    result of `held(root, swept)` when the caller already has it, so a deploy reads and hashes
+    each document once; left out, it is computed here."""
     site, root = site or SITE, root or ROOT
-    holding = set(held(root, swept))
+    holding = set(held(root, swept) if holding is None else holding)
     written = []
     for source in published(swept):
         if source in holding:
@@ -153,10 +157,11 @@ def build(site: Path | None = None, root: Path | None = None,
 def run(site: Path | None = None, root: Path | None = None,
         swept: dict[str, str] | None = None) -> int:
     """The Pages step: build, warn on each held document, and fail only when nothing was written."""
-    for source in held(root, swept):
+    holding = held(root, swept)
+    for source in holding:
         print(f"::warning::{source} is held: absent, or changed since it was swept "
               f"(record its digest in hub.publish_docs.SWEPT after re-running the sweep)")
-    written = build(site, root, swept)
+    written = build(site, root, swept, holding)
     print(f"  published {len(written)} documents under site/docs/")
     return 0 if written else 1
 

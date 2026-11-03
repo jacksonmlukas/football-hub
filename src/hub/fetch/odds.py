@@ -81,9 +81,8 @@ from hub.cli import unavailable
 from hub.config import SEASON_AHEAD
 from hub.contracts import ODDS_SNAPSHOT, PROP_SNAPSHOT
 from hub.names import player_key
-from hub.paths import STATE_DIR
+from hub.paths import ROOT, STATE_DIR
 
-ROOT = Path(__file__).resolve().parents[3]
 # Under `state/`, not `data/raw/`. The balance is what the floor below refuses on, and
 # `.gitignore` excludes the whole of `data/` as redistributed third-party payloads -- so on
 # an Actions runner `credits_remaining` always answered None, the floor never refused, and

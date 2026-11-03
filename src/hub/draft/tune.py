@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -39,8 +38,8 @@ from hub.config import SEASON_COMPLETED
 from hub.declare import not_an_input
 from hub.draft.projection import adjusted
 from hub.names import player_key
+from hub.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[3]
 SWEEP_OUT = ROOT / "docs" / "lambda-sweep.md"
 
 # Spanning "ignore the signal" to "nudge hard". 0.08 is the incumbent, kept in the grid so

@@ -66,8 +66,8 @@ from hub.contracts import (
     Contract,
     ContractViolation,
 )
+from hub.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[3]
 RAW = ROOT / "data" / "raw" / "nflverse"
 
 # Sources wide enough that handing one back whole is the mistake. Anything listed here

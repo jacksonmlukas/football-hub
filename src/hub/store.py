@@ -26,9 +26,8 @@ import polars as pl
 from hub import atomic
 from hub.cli import unavailable
 from hub.config import SEASON_COMPLETED
-from hub.paths import STATE_DIR
+from hub.paths import ROOT, STATE_DIR
 
-ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data" / "processed"
 CATALOG = DATA / "hub.duckdb"
 

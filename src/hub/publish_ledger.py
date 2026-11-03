@@ -30,8 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from hub import jsonio
-
-ROOT = Path(__file__).resolve().parents[2]
+from hub.paths import ROOT
 
 VERDICTS = ("Removed", "Demoted", "Shown never ranked", "Inert", "Null",
             "Inconclusive", "Not established", "Adopted")

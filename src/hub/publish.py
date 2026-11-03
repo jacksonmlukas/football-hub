@@ -40,7 +40,7 @@ from hub.declare import not_an_input
 from hub.models import coverage
 from hub.models.margin import home_won  # the repo's one tie convention -- issue #64
 from hub.models.scoring_rules import brier, log_loss, reliability
-from hub.paths import ROSTER_PARQUET
+from hub.paths import ROOT, ROSTER_PARQUET
 from hub.season.roster import degenerate, gap, withheld_reason
 
 if TYPE_CHECKING:
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     # network-adjacent source in this file does -- see its own docstring for why.
     from hub.fetch.pool import Entry
 
-ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site" / "data"
 
 
@@ -348,10 +347,10 @@ def _keeping_published(fresh: list[dict[str, Any]], path: Path,
     into a stalled record.
     """
     have = {r.get("game_id") for r in fresh}
-    if not path.exists():
-        return fresh
     try:
         prior = json.loads(path.read_text()).get("rows", [])
+    except FileNotFoundError:
+        return fresh
     except (OSError, ValueError):
         print(f"  {path.name} is unreadable; publishing this run's rows alone", flush=True)
         return fresh
@@ -1036,6 +1035,7 @@ def roster(out: Path | None = None,
     best = set(lk.best_lineup)
     bad = degenerate(df, lk)
     start, sit = lk.start, lk.bench
+    shut, dest = set(lk.locked), out or SITE
     # A gap (#531): withholding left a slot nothing eligible can fill, with a minority withheld.
     # Last week's file is the wrong answer to that -- on 2026-10-21 it started a tight end on
     # bye -- so this week's best partial lineup is published instead, labelled incomplete, with
@@ -1049,7 +1049,6 @@ def roster(out: Path | None = None,
             call = got_call
     if call is not None:
         best = set(call.partial.lineup)
-        shut = set(lk.locked)
         was = {r["player"] for r in df.iter_rows(named=True)
                if r["projected"] and r["starting"]}
         start, sit = sorted(best - was - shut), sorted(was - best - shut)
@@ -1095,7 +1094,6 @@ def roster(out: Path | None = None,
     # row and beside the lists. Only when someone is locked, so a week nobody has played yet
     # publishes byte-for-byte what it did before the lock existed.
     if lk.locked:
-        shut = set(lk.locked)
         for row in rows:
             row["locked"] = row["player"] in shut
     held = set(lk.withheld)
@@ -1122,7 +1120,7 @@ def roster(out: Path | None = None,
                                           if r["player"] in held},
                         # The prior sync's decision and the stamp it was made at (#355): the
                         # page's "what changed since the last regen" reads this and nothing else.
-                        previous=_previous_decision(out or SITE, stamp),
+                        previous=_previous_decision(dest, stamp),
                         # Each recommended swap with its odds (#479). `p_in_beats_out` is
                         # *shown and never ranked on* (ADR-0016): the call is made by `gain`,
                         # and the odds say how sure. Correlated skewed joint draws, ties half;
@@ -1164,12 +1162,10 @@ def roster(out: Path | None = None,
         # missing is anyone hearing it. Kept through `_keeping`, like every other keep; with
         # nothing published yet the page gets the artifact once, through `_publish`, and the
         # answer is still `Kept` -- the manifest carries the reason, which is what the page reads.
-        dest = out or SITE
         if kept := _keeping(dest, "roster", bad):
             return kept
         _publish(dest, "roster", payload)
         return Kept(f"{bad}; published once so the page has a file to read")
-    dest = out or SITE
     got = _publish(dest, "roster", payload)
     # What this publish set, journalled as the week's `published` decision (#517): the Friday
     # lineup capture lands after the Wednesday entry is frozen, so the entry's own `rule` block
@@ -1256,11 +1252,9 @@ def _board(out: Path) -> dict[str, Any] | None:
     file's shape, not who writes it.
     """
     p = out / "draft_board.json"
-    if not p.exists():
-        return None
     try:
         got = json.loads(p.read_text())
-    except ValueError:
+    except (FileNotFoundError, ValueError):
         return None
     return got if isinstance(got, dict) else {"generated_at": None}
 
@@ -1300,11 +1294,11 @@ def side_record(out: Path, name: str) -> dict[str, Any]:
     module does not. Absent or unreadable is a standing reason and never an exception
     (CLAUDE.md, graceful degradation)."""
     path = out / f"{name}.json"
-    if not path.exists():
-        return {"name": name, "present": False, "fetched": False, "stale": True,
-                "reason": f"no {name}.json has been published", "generated_at": None}
     try:
         got = json.loads(path.read_text())
+    except FileNotFoundError:
+        return {"name": name, "present": False, "fetched": False, "stale": True,
+                "reason": f"no {name}.json has been published", "generated_at": None}
     except (OSError, ValueError):
         got = None
     if not isinstance(got, dict):
