@@ -28,7 +28,7 @@ export async function render() {
         : "no manifest — run `make slate`";
 
   // The status line is drawn before any panel, so a panel that throws cannot take it with it.
-  // Guarded: a record that makes the status line throw costs the footer and nothing
+  // Guarded (#352): a record that makes the status line throw costs the footer and nothing
   // else -- the panels below it still draw.
   try {
     document.getElementById("footer").innerHTML = statusLine(statusRecords(man));
@@ -38,7 +38,7 @@ export async function render() {
   }
 
   // The statement is drawn before any panel for the reason the footer is: nothing below can take
-  // it down. Its slot is never left empty, so a record it cannot read says why.
+  // it down. Its slot is never left empty, so a record it cannot read says why (#354).
   const tr = await load("track_record");
   const trArt = findArt(man, "track_record");
   const slot = document.getElementById("st-backtest");
@@ -51,7 +51,7 @@ export async function render() {
     slot.innerHTML = `<p>The backtest statement could not be built from the track record.</p>`;
   }
 
-  // The pointer on the other two views: the same counts, one line, a link to the Record.
+  // The pointer on the other two views (#486): the same counts, one line, a link to the Record.
   // Drawn beside the statement for the same reason, and guarded for the same one.
   for (const id of ["mn-week", "mn-games"]) {
     const note = document.getElementById(id);
@@ -62,7 +62,7 @@ export async function render() {
     }
   }
 
-  // --- draft board (retires itself when a newer slate exists)
+  // --- draft board (retires itself when a newer slate exists, #348)
   const boardEl = document.getElementById("p-board");
   const shows = boardShows(man);
   boardEl.hidden = !shows;
@@ -71,7 +71,7 @@ export async function render() {
     boardEl.querySelector(".body").innerHTML = "";
   }
   const boardArt = shows ? await load("draft_board") : null;
-  // The envelope. A clone on an older commit still has the bare list this used to
+  // The envelope since #107. A clone on an older commit still has the bare list this used to
   // be, and reading both is one `??` -- cheaper than a page that renders nothing for anyone
   // who has not pulled.
   const board = Array.isArray(boardArt) ? boardArt : (boardArt?.rows ?? null);

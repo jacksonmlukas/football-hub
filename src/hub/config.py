@@ -63,7 +63,8 @@ class RosterConfig:
     wr: int = 3                         # three-WR league, not the ESPN default
     te: int = 1
     flex: int = 1
-    # Who may fill the flex. **Eligibility is a league rule and stays here.**
+    # Who may fill the flex. **Eligibility is a league rule and stays here**; how the flex is
+    # actually *used* is `hub.draft.board.FLEX_SHARES`.
     flex_from: list[str] = field(default_factory=lambda: ["RB", "WR", "TE"])
 
 

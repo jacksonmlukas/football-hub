@@ -291,3 +291,19 @@ def test_nothing_imports_this_module():
     offenders = [str(p) for p in (ROOT / "src").rglob("*.py")
                  if p != me and "lookahead_margin" in p.read_text()]
     assert offenders == []
+
+
+def test_row_loss_is_log_loss_of_each_row_bit_for_bit():
+    """`_row_loss` restates `home_win_prob` and `log_loss`'s clip once over the arrays; the
+    per-row calls are the definition, so a change to either one's eps or Phi shows up here.
+    The extreme spreads drive the probability into the clip at both ends."""
+    from hub.models.margin import home_win_prob
+    from hub.models.scoring_rules import log_loss
+
+    rng = np.random.default_rng(7)
+    spread = np.concatenate([rng.normal(0, 7, 200), [400.0, -400.0, 0.0]])
+    sd = np.concatenate([rng.uniform(8, 18, 200), [1.0, 1.0, 13.5]])
+    won = np.concatenate([rng.integers(0, 2, 200), [0, 1, 1]])
+    expected = [log_loss(home_win_prob(np.array([s]), d), np.array([w]))
+                for s, d, w in zip(spread, sd, won, strict=True)]
+    assert LM._row_loss(spread, sd, won).tolist() == expected
