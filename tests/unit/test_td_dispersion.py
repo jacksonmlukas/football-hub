@@ -396,6 +396,30 @@ def test_the_simulation_runs_across_worker_processes():
     assert out["reps"] == 2.0 and 0.0 <= out["adopt"] <= 1.0
 
 
+def test_the_worker_pool_spawns_rather_than_forks(monkeypatch):
+    """Linux defaults to fork, and forking a process that already runs threads (xdist's, the
+    coverage tracer's) deadlocked this pool on CI for weeks; macOS defaults to spawn, so only
+    the start method itself can show the difference here."""
+    seen = []
+
+    class Pool:
+        def __init__(self, workers, mp_context=None):
+            seen.append(mp_context)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def map(self, fn, jobs):
+            return map(fn, jobs)
+
+    monkeypatch.setattr(T, "ProcessPoolExecutor", Pool)
+    T.simulate(TRUTH, {"rec": 6, "rush": 4, "pass": 3}, (2019, 2020, 2021), 2, workers=2, seed=3)
+    assert [c.get_start_method() if c else None for c in seen] == ["spawn"]
+
+
 def test_the_power_path_prints_both_scenarios(monkeypatch, capsys):
     seen = []
 

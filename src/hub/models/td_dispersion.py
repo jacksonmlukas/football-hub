@@ -25,6 +25,7 @@ the within-season unit, and the ceiling is a dispersion fitted to the held-out s
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
@@ -350,7 +351,9 @@ def simulate(truth: Mapping[str, float], per_phase: Mapping[str, int], seasons: 
     if map_fn is not None:
         got = list(map_fn(_replicate, jobs))
     elif workers > 1:
-        with ProcessPoolExecutor(workers) as pool:
+        # Spawn, not Linux's default fork: forking a process that already runs threads (xdist,
+        # the coverage tracer) deadlocked this pool on CI. draft/backtest.py does the same.
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
             got = list(pool.map(_replicate, jobs))
     else:
         got = [_replicate(j) for j in jobs]
