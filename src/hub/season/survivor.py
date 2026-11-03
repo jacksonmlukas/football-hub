@@ -494,14 +494,6 @@ def plan_remaining(grid: pl.DataFrame, season: int, *,
     in-season and neither shows in the output: a whole-season solve prints exactly like a
     plan from here.
 
-    **Written once, because it was written twice.** These five steps -- what is ahead, which
-    weeks are behind, what those weeks spent, which of the weeks left are priced, solve
-    against the rest -- were verbatim in `hub.publish.survivor` and in this module's `main`.
-    (It read "six steps" over five items, in both copies, until issue #53: a hand-kept count
-    of a list printed beside it.) That sequence *is* the rule issue #24 was about, so a drift
-    between the copies would have the panel and the CLI planning different seasons with
-    nothing in either output saying so.
-
     `at` and `season_weeks` are arguments rather than reads of the clock and of a constant,
     so a test can put the season anywhere in itself; `prior` is the last published plan's
     rows, passed in for the reason `solve` takes `spent` rather than inferring it -- this

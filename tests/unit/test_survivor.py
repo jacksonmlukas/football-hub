@@ -556,6 +556,26 @@ def test_the_cli_asks_for_a_plan_rather_than_assembling_one(monkeypatch):
     assert seen, "the CLI builds its own plan instead of asking for one"
 
 
+def test_the_panel_asks_for_a_plan_through_plan_remaining_and_calls_no_step_itself():
+    """The other half of the drift guard: `hub.publish.survivor` reaches the plan through
+    `sv.plan_remaining` and does not itself call the steps that function sequences, so the
+    sequence is written in one place. Structural, over the function's source, because a
+    behavioural check would mock the whole of publish's survivor path."""
+    import ast
+    import inspect
+    import textwrap
+
+    from hub import publish
+    tree = ast.parse(textwrap.dedent(inspect.getsource(publish.survivor)))
+    called = {n.func.attr for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+              and isinstance(n.func.value, ast.Name) and n.func.value.id == "sv"}
+    steps = {"played", "spent_teams", "week_fixtures", "coverage", "snapshot_only_weeks",
+             "solve", "survival"}
+    assert "plan_remaining" in called, "the panel builds its own plan instead of asking"
+    assert not called & steps, f"the panel calls plan steps itself: {sorted(called & steps)}"
+
+
 def test_the_season_length_is_spelled_once():
     """`hub.publish` carried its own `NFL_WEEKS = 18` beside this CLI's `--weeks` default of
     18. One number, two spellings, in the two places that plan the same season."""
