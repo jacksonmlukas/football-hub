@@ -28,6 +28,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the H2 pin test asks `git log -- src/hub/forecasters/score.py` for the
+          # scorer's last commit, which a depth-1 clone answers with HEAD (2026-11-03, #514).
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       # `uv sync`, not `uv venv && uv pip install -e .`: the latter is the legacy interface,
       # and matching what SETUP.md and the Makefile tell a human to run means CI exercises
