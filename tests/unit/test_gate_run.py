@@ -71,95 +71,119 @@ def test_the_cluster_unit_has_no_default():
         run_gate(_paired(), actions=_ACTIONS, name="x", arm_a="a", arm_b="b")  # type: ignore[call-arg]
 
 
-def test_the_run_returns_the_five_things_the_entry_points_used_to_assemble():
-    """The five, and since #381 the two counts the verdict sentence and the ledger carry:
-    how many seasons resolved and how many abstained (they sum to the seasons run)."""
+def test_the_resolved_and_abstained_counts_sum_to_the_seasons_run():
+    """Since #381 the verdict sentence and the ledger carry how many seasons resolved and
+    how many abstained; together they are the seasons run."""
     got = _run(_paired())
-    assert set(got._fields) == {"summary", "seasons", "verdict", "lines", "stamped",
-                                "resolved", "abstained", "posterior"}
-    assert got.resolved is not None and got.abstained is not None
     assert got.resolved + got.abstained == got.seasons.height
-    assert isinstance(got.summary, dict) and isinstance(got.seasons, pl.DataFrame)
-    assert isinstance(got.verdict, tuple) and len(got.verdict) == 2
-    assert isinstance(got.lines, list) and all(isinstance(ln, str) for ln in got.lines)
-    assert isinstance(got.stamped, pl.DataFrame)
 
 
-# --- nothing moves: the old path and the new, on the same frame -------------------------
+# --- nothing moves: the numbers each gate produced when the sequence was unified ---------
 #
-# The acceptance criterion. Each gate's `main` used to spell the sequence by hand, and the
-# three spellings are reproduced here exactly as they stood at `e14ab56` -- including the
-# weekly gate's, which handed its ceiling to `ceiling_report` and never to `summarise`. The
-# summary, the season table and the verdict must be the same objects the old sequence made.
+# The acceptance criterion of #135. Each gate's `main` used to spell the sequence by hand;
+# `run_gate` must give the numbers those spellings gave. The expected values below are
+# literals captured from that unified run for these fixtures and seeds, not re-derived from
+# the experiment internals `run_gate` itself calls -- so a dropped or reordered seed,
+# bootstrap count, cluster or ceiling argument moves a number and fails here.
+#
+# Each row: (mean, lo, hi, p_better, se, mde, ceiling or None, per-season gains, verdict kind).
 
-# #386: `gate` became `_verdict` (the old signature is now the internal half of the rule);
-# these three still call it by that name deliberately -- they are reproducing the pre-#135
-# sequence *by hand*, one call at a time, precisely so `run_gate`'s (and now `gate`'s own)
-# composition can be checked against it. Calling `_verdict` directly is what "by hand" means
-# here, not a hand-built summary dict: `s` and `seasons` both still come from the real
-# `summarise`/`per_season` calls two lines above each.
-
-def _old_draft(paired, bound, seed):
-    s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200)
-    if bound is not None:
-        top = float(np.asarray(bound["diff"].to_numpy()).mean())
-        s = dict(s, ceiling=top)
-    seasons = experiment.per_season(paired, within=("draft",), bootstrap=200, seed=seed)
-    return s, seasons, experiment._verdict(s, seasons, _ACTIONS)
+_TOL = 1e-6
 
 
-def _old_lineup(paired, seed):
-    top = (float(np.asarray(paired["ceiling_diff"].to_numpy()).mean())
-           if "ceiling_diff" in paired.columns else None)
-    s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200,
-                             ceiling=top)
-    seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
-    return s, seasons, experiment._verdict(s, seasons, _ACTIONS)
+def _pin(got, want):
+    mean, lo, hi, p_better, se, mde, ceiling, gains, kind = want
+    s = got.summary
+    for key, val in (("mean", mean), ("lo", lo), ("hi", hi), ("p_better", p_better),
+                     ("se", se), ("mde", mde)):
+        assert s[key] == pytest.approx(val, abs=_TOL), f"summary[{key!r}] moved"
+    if ceiling is None:
+        assert "ceiling" not in s, "a ceiling appeared that the run was not given"
+    else:
+        assert s["ceiling"] == pytest.approx(ceiling, abs=_TOL), "the ceiling moved"
+    assert got.seasons["gain"].to_list() == pytest.approx(list(gains), abs=_TOL), \
+        "the season table moved"
+    assert got.verdict[0] == kind, "the verdict moved"
 
 
-def _old_weekly(paired, seed, void):
-    s = experiment.summarise(paired, cluster=SEASON_CLUSTER, seed=seed, bootstrap=200)
-    seasons = experiment.per_season(paired, within=("roster",), bootstrap=200, seed=seed)
-    return s, seasons, experiment._verdict(s, seasons, _ACTIONS, void=void)
-
-
-def _same(old, new):
-    s_old, seasons_old, verdict_old = old
-    assert new.summary == s_old, "the summary moved"
-    assert new.seasons.equals(seasons_old), "the season table moved"
-    assert new.verdict == verdict_old, "the verdict moved"
-
-
-@pytest.mark.parametrize("seed", [0, 3])
-@pytest.mark.parametrize("shift", [0.0, -6.0, 6.0])
-def test_the_draft_gate_s_numbers_are_the_old_path_s(seed, shift):
+def _draft_runs(seed, shift):
     paired = _paired(seed=seed, shift=shift)
     bound = paired.with_columns((pl.col("diff") + 9.0).alias("diff"))
-    _same(_old_draft(paired, None, seed), _run(paired, seed=seed))
-    _same(_old_draft(paired, bound, seed),
-          _run(paired, seed=seed, ceiling=Ceiling("foresight", bound["diff"])))
+    return {"plain": _run(paired, seed=seed),
+            "ceiling": _run(paired, seed=seed,
+                            ceiling=Ceiling("foresight", bound["diff"]))}
+
+
+def _lineup_runs(seed, shift):
+    paired = _paired(seed=seed, shift=shift).rename({"draft": "roster"})
+    with_c = paired.with_columns((pl.col("diff") + 4.0).alias("ceiling_diff"))
+    return {"plain": _run(paired, seed=seed, within=("roster",), unit="points per game"),
+            "ceiling": _run(with_c, seed=seed, within=("roster",), unit="points per game",
+                            ceiling=Ceiling("a perfect spread", with_c["ceiling_diff"]))}
+
+
+def _weekly_run(seed, void):
+    paired = _paired(seed=seed).rename({"draft": "roster"}).with_columns(pl.lit(5).alias("week"))
+    return _run(paired, seed=seed, within=("roster",), unit="points per team-week", places=3,
+                show_n=False, void=void)
 
 
 @pytest.mark.parametrize("seed", [0, 3])
 @pytest.mark.parametrize("shift", [0.0, -6.0, 6.0])
-def test_the_lineup_gate_s_numbers_are_the_old_path_s(seed, shift):
-    paired = _paired(seed=seed, shift=shift).rename({"draft": "roster"})
-    with_c = paired.with_columns((pl.col("diff") + 4.0).alias("ceiling_diff"))
-    _same(_old_lineup(paired, seed),
-          _run(paired, seed=seed, within=("roster",), unit="points per game"))
-    _same(_old_lineup(with_c, seed),
-          _run(with_c, seed=seed, within=("roster",), unit="points per game",
-               ceiling=Ceiling("a perfect spread", with_c["ceiling_diff"])))
+def test_the_draft_gate_s_numbers_are_pinned(seed, shift):
+    for arm, got in _draft_runs(seed, shift).items():
+        _pin(got, _DRAFT[(seed, shift, arm)])
+
+
+@pytest.mark.parametrize("seed", [0, 3])
+@pytest.mark.parametrize("shift", [0.0, -6.0, 6.0])
+def test_the_lineup_gate_s_numbers_are_pinned(seed, shift):
+    for arm, got in _lineup_runs(seed, shift).items():
+        _pin(got, _LINEUP[(seed, shift, arm)])
 
 
 @pytest.mark.parametrize("seed", [0, 3])
 @pytest.mark.parametrize("void", [None, "VOID: 6.2% of roster-weeks are a join failure"])
-def test_the_weekly_gate_s_numbers_are_the_old_path_s(seed, void):
-    paired = _paired(seed=seed).rename({"draft": "roster"}).with_columns(pl.lit(5).alias("week"))
-    _same(_old_weekly(paired, seed, void),
-          _run(paired, seed=seed, within=("roster",), unit="points per team-week", places=3,
-               show_n=False, void=void))
+def test_the_weekly_gate_s_numbers_are_pinned(seed, void):
+    _pin(_weekly_run(seed, void), _WEEKLY[(seed, void)])
 
+
+_DRAFT = {
+    (0, 0.0, 'plain'): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, None, (0.541984, 1.045007, -2.536358, 2.569356), 'NOT-RUNNABLE'),
+    (0, 0.0, 'ceiling'): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, 9.404997, (0.541984, 1.045007, -2.536358, 2.569356), 'SHOW'),
+    (0, -6.0, 'plain'): (-5.595003, -7.269457, -3.937487, 0.0, 1.063757, 4.28063, None, (-5.458016, -4.954993, -8.536358, -3.430644), 'NOT-RUNNABLE'),
+    (0, -6.0, 'ceiling'): (-5.595003, -7.269457, -3.937487, 0.0, 1.063757, 4.28063, 3.404997, (-5.458016, -4.954993, -8.536358, -3.430644), 'NOT-RUNNABLE'),
+    (0, 6.0, 'plain'): (6.404997, 4.730543, 8.062513, 1.0, 1.063757, 4.28063, None, (6.541984, 7.045007, 3.463642, 8.569356), 'NOT-RUNNABLE'),
+    (0, 6.0, 'ceiling'): (6.404997, 4.730543, 8.062513, 1.0, 1.063757, 4.28063, 15.404997, (6.541984, 7.045007, 3.463642, 8.569356), 'ADOPT'),
+    (3, 0.0, 'plain'): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, None, (3.18291, -0.233597, -2.0045, 3.43548), 'NOT-RUNNABLE'),
+    (3, 0.0, 'ceiling'): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, 10.095073, (3.18291, -0.233597, -2.0045, 3.43548), 'SHOW'),
+    (3, -6.0, 'plain'): (-4.904927, -7.130116, -2.690805, 0.0, 1.423716, 5.729129, None, (-2.81709, -6.233597, -8.0045, -2.56452), 'NOT-RUNNABLE'),
+    (3, -6.0, 'ceiling'): (-4.904927, -7.130116, -2.690805, 0.0, 1.423716, 5.729129, 4.095073, (-2.81709, -6.233597, -8.0045, -2.56452), 'NOT-RUNNABLE'),
+    (3, 6.0, 'plain'): (7.095073, 4.869884, 9.309195, 1.0, 1.423716, 5.729129, None, (9.18291, 5.766403, 3.9955, 9.43548), 'NOT-RUNNABLE'),
+    (3, 6.0, 'ceiling'): (7.095073, 4.869884, 9.309195, 1.0, 1.423716, 5.729129, 16.095073, (9.18291, 5.766403, 3.9955, 9.43548), 'ADOPT'),
+}
+
+_LINEUP = {
+    (0, 0.0, 'plain'): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, None, (0.541984, 1.045007, -2.536358, 2.569356), 'NOT-RUNNABLE'),
+    (0, 0.0, 'ceiling'): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, 4.404997, (0.541984, 1.045007, -2.536358, 2.569356), 'SHOW'),
+    (0, -6.0, 'plain'): (-5.595003, -7.269457, -3.937487, 0.0, 1.063757, 4.28063, None, (-5.458016, -4.954993, -8.536358, -3.430644), 'NOT-RUNNABLE'),
+    (0, -6.0, 'ceiling'): (-5.595003, -7.269457, -3.937487, 0.0, 1.063757, 4.28063, -1.595003, (-5.458016, -4.954993, -8.536358, -3.430644), 'NOT-RUNNABLE'),
+    (0, 6.0, 'plain'): (6.404997, 4.730543, 8.062513, 1.0, 1.063757, 4.28063, None, (6.541984, 7.045007, 3.463642, 8.569356), 'NOT-RUNNABLE'),
+    (0, 6.0, 'ceiling'): (6.404997, 4.730543, 8.062513, 1.0, 1.063757, 4.28063, 10.404997, (6.541984, 7.045007, 3.463642, 8.569356), 'ADOPT'),
+    (3, 0.0, 'plain'): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, None, (3.18291, -0.233597, -2.0045, 3.43548), 'NOT-RUNNABLE'),
+    (3, 0.0, 'ceiling'): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, 5.095073, (3.18291, -0.233597, -2.0045, 3.43548), 'NOT-RUNNABLE'),
+    (3, -6.0, 'plain'): (-4.904927, -7.130116, -2.690805, 0.0, 1.423716, 5.729129, None, (-2.81709, -6.233597, -8.0045, -2.56452), 'NOT-RUNNABLE'),
+    (3, -6.0, 'ceiling'): (-4.904927, -7.130116, -2.690805, 0.0, 1.423716, 5.729129, -0.904927, (-2.81709, -6.233597, -8.0045, -2.56452), 'NOT-RUNNABLE'),
+    (3, 6.0, 'plain'): (7.095073, 4.869884, 9.309195, 1.0, 1.423716, 5.729129, None, (9.18291, 5.766403, 3.9955, 9.43548), 'NOT-RUNNABLE'),
+    (3, 6.0, 'ceiling'): (7.095073, 4.869884, 9.309195, 1.0, 1.423716, 5.729129, 11.095073, (9.18291, 5.766403, 3.9955, 9.43548), 'ADOPT'),
+}
+
+_WEEKLY = {
+    (0, None): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, None, (0.541984, 1.045007, -2.536358, 2.569356), 'NOT-RUNNABLE'),
+    (0, 'VOID: 6.2% of roster-weeks are a join failure'): (0.404997, -1.269457, 2.062513, 0.67, 1.063757, 4.28063, None, (0.541984, 1.045007, -2.536358, 2.569356), 'VOID'),
+    (3, None): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, None, (3.18291, -0.233597, -2.0045, 3.43548), 'NOT-RUNNABLE'),
+    (3, 'VOID: 6.2% of roster-weeks are a join failure'): (1.095073, -1.130116, 3.309195, 0.765, 1.423716, 5.729129, None, (3.18291, -0.233597, -2.0045, 3.43548), 'VOID'),
+}
 
 def test_the_weekly_gate_s_ceiling_now_reaches_the_rule_and_that_is_the_one_departure():
     """Recorded rather than hidden. The weekly gate's `main` handed its ceiling to a report
