@@ -19,9 +19,14 @@ name: pages
 on:
   push:
     branches: [main]
-    # Only when something the site actually serves changes. A docs commit should not redeploy.
+    # Only when something the site actually serves changes. The three documents the Ledger links
+    # to are served (#541), so they count; the rest of docs/ is not, and should not redeploy.
     paths:
       - "site/**"
+      - "docs/adr/**"
+      - "docs/method.md"
+      - "docs/track-record.md"
+      - "src/hub/publish_docs.py"
       - ".github/workflows/pages.yml"
 
   # The scheduled slate commits `site/data` and that push deploys nothing, because GitHub
@@ -128,6 +133,11 @@ jobs:
           echo "  refreshing the ${LEAGUE:-nfl} board"
           uv run python -m hub.publish --live --league "${LEAGUE:-nfl}" || true
 
+      # The documents the Ledger links to (#541). The repository is private, so a link into it is
+      # dead for an outside reader; these are built from the committed docs, beside the site.
+      - name: Publish the ADRs, method and track record
+        run: uv run python -m hub.publish_docs
+
       # Fail loudly rather than deploying an empty site. `upload-pages-artifact` is happy to
       # tar a directory holding nothing, and the result is a live 404 that looks like a
       # broken build rather than a broken commit.
@@ -135,6 +145,7 @@ jobs:
         run: |
           test -f site/index.html || { echo "site/index.html is missing"; exit 1; }
           test -d site/data || { echo "site/data is missing"; exit 1; }
+          test -f site/docs/method.html || { echo "site/docs/method.html is missing"; exit 1; }
           echo "$(find site/data -name '*.json' | wc -l) artifacts to publish"
 
       - uses: actions/configure-pages@v5
