@@ -75,6 +75,7 @@ def test_the_resolved_and_abstained_counts_sum_to_the_seasons_run():
     """Since #381 the verdict sentence and the ledger carry how many seasons resolved and
     how many abstained; together they are the seasons run."""
     got = _run(_paired())
+    assert got.resolved is not None and got.abstained is not None
     assert got.resolved + got.abstained == got.seasons.height
 
 
