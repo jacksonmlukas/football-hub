@@ -120,6 +120,14 @@ def test_the_first_held_out_season_has_five_seasons_behind_it_and_incomplete_one
     assert out["season"].to_list() == [2004, 2005, 2006, 2007, 2008, 2010]
 
 
+def test_a_season_of_exactly_the_floor_is_scored_and_one_game_short_is_not():
+    frame = synth(5, NULL, seasons=range(1999, 2006))
+    for n, scored in ((240, [2004, 2005]), (239, [2004])):
+        cut = frame.filter(pl.col("season") == 2005).head(n)
+        out = ts.walk_forward(pl.concat([frame.filter(pl.col("season") != 2005), cut]))
+        assert out["season"].to_list() == scored, n
+
+
 def test_no_held_out_season_is_an_empty_frame_with_the_columns():
     out = ts.walk_forward(synth(5, NULL, seasons=range(1999, 2003)))
     assert out.is_empty() and "diff" in out.columns and "ceiling_diff" in out.columns
