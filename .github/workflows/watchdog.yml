@@ -82,7 +82,7 @@ env:
 jobs:
   heartbeat:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -353,7 +353,7 @@ jobs:
   # lags the commit until something else deploys. `actions/checkout` has the commit.
   bigten:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
