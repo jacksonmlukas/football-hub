@@ -25,8 +25,9 @@ jobs:
     # 2026-10-16 ended cancelled rather than red. The suite was never only slow: a forked
     # process pool in td_dispersion deadlocked on Linux and held every run at 98%. Spawning it
     # plus `-n auto` (#514) brought the job to 11:04 on the runner (run 41571184996,
-    # 2026-11-03), so this is back to 30.
-    timeout-minutes: 30
+    # 2026-11-03; 13:37 on the next), so the limit is twice the 12.3-minute median: 24. The
+    # contract in tests/contracts/test_job_timeouts_track_measured_runtime.py holds it there.
+    timeout-minutes: 24
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,7 +64,7 @@ jobs:
     # third-party schema change should not block a docs commit.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

@@ -30,8 +30,9 @@ jobs:
   screenshots:
     runs-on: ubuntu-latest
     # Its own limit, not the test job's 60: the whole job is a browser start and four renders,
-    # a few minutes with a warm cache. Twenty is a hang, and it should say so.
-    timeout-minutes: 20
+    # a few minutes with a warm cache (median 1.1). Ten is the contract's floor, and
+    # past it is a hang, and it should say so.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
