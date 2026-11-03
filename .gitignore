@@ -28,3 +28,6 @@ htmlcov/
 
 # Screenshot check output (#475): actual and diff images written when a baseline comparison fails.
 test-results/
+
+# Built at deploy time from the committed docs by hub.publish_docs (#541).
+site/docs/
