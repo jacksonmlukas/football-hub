@@ -63,15 +63,7 @@ class RosterConfig:
     wr: int = 3                         # three-WR league, not the ESPN default
     te: int = 1
     flex: int = 1
-    # Who may fill the flex. **Eligibility is a league rule and stays here**; how the flex
-    # actually gets *used* is not, and left this class on 2026-09-10 for
-    # `hub.draft.board.FLEX_SHARES` (#184). The two used to sit adjacent as
-    # `flex_from` and `flex_rb/wr/te`, separated by a comment saying they were different
-    # kinds of thing -- which is the arrangement that let three replacement levels coexist:
-    # a quantity nobody derived, wearing a Hydra override knob, next to one the commissioner
-    # owns. ADR-0006 puts a number that changes a prediction beside its provenance and out of
-    # reach of the command line, and the shares change every VOR at every flex-eligible
-    # position. Eligibility genuinely is a choice, so it genuinely belongs here.
+    # Who may fill the flex. **Eligibility is a league rule and stays here.**
     flex_from: list[str] = field(default_factory=lambda: ["RB", "WR", "TE"])
 
 
