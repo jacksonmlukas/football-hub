@@ -1,0 +1,123 @@
+{
+ "as_of": "2026-11-04T18:27:32.636482+00:00",
+ "basis": "value = the free agent's ESPN projection per game minus that of the lowest-projected non-IR rostered player at his position (ESPN's own points, unshrunk); rest-of-season totals and bye_ahead are shown, not used",
+ "claimed": null,
+ "label": "provisional",
+ "outcome": null,
+ "picks": [
+  {
+   "ecr": null,
+   "nfl_team": "ARI",
+   "player": "Bam Knight",
+   "pos": "RB",
+   "proj": 45.39,
+   "rank": 1,
+   "replaces": "Tyler Goodson",
+   "replaces_proj": 42.92,
+   "snap_delta": null,
+   "value": 6.58
+  },
+  {
+   "ecr": null,
+   "nfl_team": "WSH",
+   "player": "Treylon Burks",
+   "pos": "WR",
+   "proj": 104.97,
+   "rank": 2,
+   "replaces": "Marvin Harrison Jr.",
+   "replaces_proj": 70.88,
+   "snap_delta": 0.16400000000000003,
+   "value": 3.41
+  },
+  {
+   "ecr": null,
+   "nfl_team": "CLE",
+   "player": "Dylan Sampson",
+   "pos": "RB",
+   "proj": 71.76,
+   "rank": 3,
+   "replaces": "Tyler Goodson",
+   "replaces_proj": 42.92,
+   "snap_delta": 0.51,
+   "value": 3.2
+  },
+  {
+   "ecr": null,
+   "nfl_team": "WSH",
+   "player": "Austin Ekeler",
+   "pos": "RB",
+   "proj": 75.36,
+   "rank": 4,
+   "replaces": "Tyler Goodson",
+   "replaces_proj": 42.92,
+   "snap_delta": 0.17333333333333337,
+   "value": 2.7700000000000005
+  },
+  {
+   "ecr": null,
+   "nfl_team": "ATL",
+   "player": "Brian Robinson Jr.",
+   "pos": "RB",
+   "proj": 54.46,
+   "rank": 5,
+   "replaces": "Tyler Goodson",
+   "replaces_proj": 42.92,
+   "snap_delta": null,
+   "value": 2.04
+  },
+  {
+   "ecr": null,
+   "nfl_team": "NYG",
+   "player": "Malachi Fields",
+   "pos": "WR",
+   "proj": 86.82,
+   "rank": 7,
+   "replaces": "Marvin Harrison Jr.",
+   "replaces_proj": 70.88,
+   "snap_delta": -0.016666666666666496,
+   "value": 1.5899999999999999
+  },
+  {
+   "ecr": null,
+   "nfl_team": "ATL",
+   "player": "Jahan Dotson",
+   "pos": "WR",
+   "proj": 76.11,
+   "rank": 9,
+   "replaces": "Marvin Harrison Jr.",
+   "replaces_proj": 70.88,
+   "snap_delta": -0.05666666666666664,
+   "value": 1.370000000000001
+  },
+  {
+   "ecr": null,
+   "nfl_team": "TB",
+   "player": "Chris Godwin Jr.",
+   "pos": "WR",
+   "proj": 74.06,
+   "rank": 11,
+   "replaces": "Marvin Harrison Jr.",
+   "replaces_proj": 70.88,
+   "snap_delta": -0.06333333333333346,
+   "value": 1.1400000000000006
+  },
+  {
+   "ecr": null,
+   "nfl_team": "SEA",
+   "player": "Rashid Shaheed",
+   "pos": "WR",
+   "proj": 65.64,
+   "rank": 12,
+   "replaces": "Marvin Harrison Jr.",
+   "replaces_proj": 70.88,
+   "snap_delta": -0.21333333333333332,
+   "value": 1.120000000000001
+  }
+ ],
+ "recorded_at": "2026-11-04T18:27:38.176655+00:00",
+ "scored": false,
+ "season": 2026,
+ "shrinkage": "unshrunk: the empirical-Bayes player model (#497) is not built, so a top-of-the-pool projection is biased upward by the selection that put it there",
+ "week": 9,
+ "why_different": null
+}
