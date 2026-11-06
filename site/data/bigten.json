@@ -1,12 +1,12 @@
 {
   "name": "bigten",
   "source": "hub.fetch.bigten",
-  "generated_at": "2026-11-05T08:09:56+00:00",
+  "generated_at": "2026-11-06T08:17:24+00:00",
   "shape": "summary",
   "season": 2026,
   "week": 10,
   "deadline": {
-    "id": "2026-11-05T0130Z",
+    "id": "2026-11-06T0130Z",
     "name": "evening"
   },
   "fetched": true,
@@ -28,7 +28,7 @@
   },
   "lines": {
     "rows": 64,
-    "captured_at": "2026-11-05T08:09:56+00:00",
+    "captured_at": "2026-11-06T08:17:24+00:00",
     "why": null
   },
   "missed": {
@@ -56,10 +56,10 @@
       "2026-10-04T0130Z"
     ]
   },
-  "archive_rows": 51,
+  "archive_rows": 53,
   "quota": {
     "month": "2026-11",
-    "used": 6,
+    "used": 7,
     "limit": 1000
   }
 }
