@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-04T18:27:42+00:00",
+  "generated_at": "2026-11-07T18:38:10+00:00",
   "season": 2026,
   "week": 9,
   "artifacts": [
@@ -8,28 +8,28 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:39+00:00"
+      "generated_at": "2026-11-07T18:38:08+00:00"
     },
     {
       "name": "track_record",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:40+00:00"
+      "generated_at": "2026-11-07T18:38:08+00:00"
     },
     {
       "name": "live",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:40+00:00"
+      "generated_at": "2026-11-07T18:38:09+00:00"
     },
     {
       "name": "roster",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:31+00:00"
+      "generated_at": "2026-11-07T18:38:01+00:00"
     },
     {
       "name": "draft_board",
@@ -43,14 +43,14 @@
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:42+00:00"
+      "generated_at": "2026-11-07T18:38:10+00:00"
     },
     {
       "name": "ledger",
       "present": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:42+00:00"
+      "generated_at": "2026-11-07T18:38:10+00:00"
     },
     {
       "name": "leaderboard",
@@ -65,7 +65,7 @@
       "fetched": true,
       "stale": true,
       "reason": "the page parsed but linked no report documents; nothing was archived from it (2 links skipped: off-host)",
-      "generated_at": "2026-11-04T07:56:40+00:00"
+      "generated_at": "2026-11-07T07:28:16+00:00"
     },
     {
       "name": "cfbd",
@@ -73,7 +73,7 @@
       "fetched": true,
       "stale": false,
       "reason": null,
-      "generated_at": "2026-11-04T18:27:22+00:00"
+      "generated_at": "2026-11-07T18:37:56+00:00"
     }
   ],
   "weeks": [
@@ -81,7 +81,7 @@
       "name": "preds_2026_wk09",
       "season": 2026,
       "week": 9,
-      "generated_at": "2026-11-04T18:27:39+00:00"
+      "generated_at": "2026-11-07T18:38:08+00:00"
     },
     {
       "name": "preds_2026_wk08",
