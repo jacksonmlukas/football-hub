@@ -1,0 +1,25 @@
+{
+ "captured_at": "2026-11-08T20:37:18.819816+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_09_HOU_LAC",
+   "home_win_prob": 0.32648401826484014,
+   "kickoff": "2026-11-08T21:05:00+00:00",
+   "lead_minutes": 27.686336400000002
+  },
+  {
+   "books": 9,
+   "game_id": "2026_09_LV_SF",
+   "home_win_prob": 0.7952622673434856,
+   "kickoff": "2026-11-08T21:05:00+00:00",
+   "lead_minutes": 27.686336400000002
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "52da64928f1cae6fe2ce9cbc9677db39ed2361b1e4a0393a4690359199e015ec",
+ "remaining": 459,
+ "snapshot_id": "20261108T203718Z-52da64928f1c",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 11
+}
