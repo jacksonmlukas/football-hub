@@ -45,9 +45,11 @@ jobs:
   forecast:
     if: vars.LLM_FORECASTS_ENABLED == 'true'
     runs-on: ubuntu-latest
-    # A run must finish within 30 minutes for the 60-minute-before-kickoff rule to cut nothing
-    # (the prereg's arithmetic); this bounds a wedged run a little beyond that.
-    timeout-minutes: 40
+    # A full Sunday slate takes about an hour (2026-11-08: 12 games, cancelled at 40 minutes and
+    # finished by the next kick). A run that starts by 10:40 ET still finishes by 12:10, over 90
+    # minutes before a 13:00 kickoff; one that starts late in the window is cut by the prereg's
+    # 60-minute rule, row by row, not by this.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
