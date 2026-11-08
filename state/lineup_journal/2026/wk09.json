@@ -1,0 +1,100 @@
+{
+ "disagree": true,
+ "published": {
+  "decided_at": "2026-11-07T18:38:10.147423+00:00",
+  "ecr_capture": {
+   "captured_at": "2026-11-07T14:39:29.682275+00:00",
+   "note": "consensus ranks as of Fri 2026-11-06, taken after Thursday's games, so in time only for players whose game had not started",
+   "purpose": "lineup",
+   "scrape_date": "2026-11-06"
+  },
+  "ecr_from_week": 7,
+  "ecr_week": 9,
+  "label": "provisional",
+  "lineup": [
+   "Bhayshul Tuten",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "locked": [
+   "Bhayshul Tuten",
+   "Brenton Strange"
+  ],
+  "reason": null,
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 9
+ },
+ "realised": {
+  "ecr": null,
+  "espn": null,
+  "mu": null
+ },
+ "recorded_at": "2026-11-04T18:27:32.200458+00:00",
+ "rule": {
+  "basis": "weekly expert consensus rank (FantasyPros ECR), from the newest capture taken before the week's first game day; best legal lineup by rank among projected, startable, available players not on bye",
+  "caveat": "provisional rule (ADR-0014), not a measured edge: no gate has run on it; it sets the lineup from week 7 (#492) until a forward-gated model beats it, and every week is journalled so the forward record can reopen it",
+  "ecr_from_week": 7,
+  "ecr_week": 8,
+  "label": "provisional",
+  "lineup": [
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "KC Concepcion",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "reason": "no pre-kickoff consensus capture for week 9; set on week 8's lineup capture of 2026-10-30 (last-good)",
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 9
+ },
+ "scored": false,
+ "season": 2026,
+ "sources": {
+  "ecr": {
+   "lineup": null,
+   "n_unranked": 12,
+   "reason": "no pre-kickoff consensus capture for week 9",
+   "superseded_by": "published",
+   "superseded_reason": "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the consensus lineup is the one published off the Friday lineup capture, scored at settle as `realised.consensus` (#530)"
+  },
+  "espn": {
+   "lineup": [
+    "Denzel Boston",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "Matthew Golden",
+    "Ollie Gordon II",
+    "T.J. Hockenson"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  },
+  "mu": {
+   "lineup": [
+    "Brenton Strange",
+    "Denzel Boston",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "Matthew Golden",
+    "Ollie Gordon II"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  }
+ },
+ "week": 9
+}
