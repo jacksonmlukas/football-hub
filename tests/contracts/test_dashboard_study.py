@@ -257,6 +257,9 @@ console.log(JSON.stringify({ p: bs.map(b => b.a["aria-pressed"]), h: ds.map(d =>
 
 def test_the_rendered_leaderboard_goes_stale_through_the_manifest_entry(node):
     man = json.loads((SITE / "data" / "manifest.json").read_text())
+    # replace, not append: the live manifest has carried its own leaderboard entry since the
+    # week 9 slate refresh (59df145), and the first entry by name is the one read
+    man["artifacts"] = [a for a in man["artifacts"] if a["name"] != "leaderboard"]
     man["artifacts"].append({"name": "leaderboard", "stale": True, "reason": "scoring failed",
                              "generated_at": "2026-10-01T00:00:00+00:00"})
     got = _render(node, {"leaderboard": _lb(), "manifest": man})["panels"]["p-study"]
