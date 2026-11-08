@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
@@ -38,8 +39,14 @@ def _schedule(week=9):
     ids = [*GAMES, "g10a", "pre8"]
     weeks = [week] * 4 + [10, 8]
     frame = pl.DataFrame({"game_id": ids, "season": [2026] * 6, "game_type": ["REG"] * 6,
-                          "week": weeks, "home_score": [None] * 6, "away_score": [None] * 6})
+                          "week": weeks, "home_score": [None] * 6, "away_score": [None] * 6,
+                          "gameday": ["2026-11-05", "2026-11-08", "2026-11-08", "2026-11-09",
+                                      "2026-11-12", "2026-10-29"],
+                          "gametime": ["20:15", "09:30", "13:00", "20:15", "20:15", "20:15"]})
     return lambda season: frame
+
+
+AFTER_WEEK = datetime(2026, 11, 10, 15, 0, tzinfo=UTC)                 # Tuesday 10:00 ET
 
 
 def _rows(skip: tuple[str, str] | None = None, null_market: str | None = None):
@@ -70,13 +77,14 @@ def _forecasts(tmp_path, **kw) -> Path:
     return out
 
 
-def _run(tmp_path, *, forecasts=None, out=None, schedule=None, analysis=PINNED, sims=200):
+def _run(tmp_path, *, forecasts=None, out=None, schedule=None, analysis=PINNED, sims=200,
+         now=AFTER_WEEK):
     lines: list[str] = []
     dest = out or tmp_path / "prereg" / "burn-in.json"
     rc = burn_in.main(["--forecasts", str(forecasts or _forecasts(tmp_path)),
                        "--out", str(dest), "--week", "9"],
                       echo=lines.append, config=CFG, analysis=analysis,
-                      schedule=schedule or _schedule(), simulations=sims)
+                      schedule=schedule or _schedule(), simulations=sims, now=lambda: now)
     return rc, lines, dest
 
 
@@ -148,6 +156,60 @@ def test_a_game_the_runner_refused_does_not_make_the_week_incomplete(tmp_path):
     (out / score.EXCLUSIONS).write_text(json.dumps({"game_id": "g9a"}) + "\n")
     rc, _, dest = _run(tmp_path, forecasts=out)
     assert rc == 0 and dest.exists()
+
+
+def _without(out: Path, keep) -> Path:
+    day = out / "day.jsonl"
+    rows = [json.loads(x) for x in day.read_text().splitlines()]
+    day.write_text("".join(json.dumps(r) + "\n" for r in rows if keep(r)))
+    return out
+
+
+def test_a_game_no_run_reached_is_left_out_and_named(tmp_path):
+    # 2026-11-08: no Saturday run, so the London game has no record from any contestant
+    out = _without(_forecasts(tmp_path), lambda r: r["game_id"] != "g9d")
+    rc, lines, dest = _run(tmp_path, forecasts=out)
+    assert rc == 0 and dest.exists()
+    assert any("g9d" in x and "no run reached" in x for x in lines)
+    # measured as if g9d were never scheduled: the same SDs, the same power
+    frame = _schedule()(2026).filter(pl.col("game_id") != "g9d")
+    _, alone, ref = _run(tmp_path / "ref", forecasts=out, schedule=lambda season: frame)
+    assert json.loads(dest.read_text()) == json.loads(ref.read_text())
+    assert [x for x in lines if "power" in x] == [x for x in alone if "power" in x]
+
+
+@pytest.mark.parametrize("now", [
+    datetime(2026, 11, 9, 14, 0, tzinfo=UTC),       # Monday 09:00 ET: g9d's run has not started
+    datetime(2026, 11, 9, 16, 29, tzinfo=UTC),      # Monday 11:29 ET: its window is still open
+])
+def test_a_game_whose_window_has_not_closed_is_pending_not_unreached(tmp_path, now):
+    # run before Monday's forecast, the Monday night game must refuse the week, not leave it:
+    # the record is a v1 artifact that is never rewritten
+    out = _without(_forecasts(tmp_path), lambda r: r["game_id"] != "g9d")
+    rc, lines, dest = _run(tmp_path, forecasts=out, now=now)
+    assert rc == burn_in.INCOMPLETE and len(lines) == 1 and not dest.exists()
+    assert "g9d" in lines[0]
+
+
+def test_the_window_closes_at_half_past_eleven_on_the_run_day(tmp_path):
+    out = _without(_forecasts(tmp_path), lambda r: r["game_id"] != "g9d")
+    rc, _, dest = _run(tmp_path, forecasts=out, now=datetime(2026, 11, 9, 16, 30, tzinfo=UTC))
+    assert rc == 0 and dest.exists()
+
+
+def test_a_game_only_some_contestants_reached_still_refuses(tmp_path):
+    # the blind arm reached g9a, so a run did; the line-aware records are missing, not unreached
+    out = _without(_forecasts(tmp_path),
+                   lambda r: not (r["game_id"] == "g9a" and r["contestant"] in AWARE))
+    rc, lines, dest = _run(tmp_path, forecasts=out)
+    assert rc == burn_in.INCOMPLETE and len(lines) == 1 and not dest.exists()
+
+
+def test_a_week_no_run_reached_at_all_is_refused_by_name(tmp_path):
+    out = _without(_forecasts(tmp_path), lambda r: r["game_id"] not in GAMES)
+    rc, lines, dest = _run(tmp_path, forecasts=out)
+    assert rc == burn_in.INCOMPLETE and not dest.exists()
+    assert len(lines) == 1 and "no run reached" in lines[0]
 
 
 def test_a_different_record_is_never_overwritten(tmp_path):

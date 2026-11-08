@@ -23,7 +23,9 @@ an outcome -- and does two things:
 
 **Refusal.** One sentence, nothing written, when the burn-in week's records are missing or
 incomplete: every game of the week (from nflverse's schedule, less those the runner logged as
-refused) needs a scorable record and a market probability for every line-aware LLM.
+refused and those no run reached, which the report names) needs a scorable record and a
+market probability for every line-aware LLM. A game with no record whose forecast window has
+not closed refuses too: the week is not over.
 
 Exit codes: 0 ok, 2 an input that cannot be read, 3 the analysis is not pinned, 4 the week's
 records are missing or incomplete, 5 a record already exists with different content; 1 the
@@ -35,6 +37,7 @@ import argparse
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +46,7 @@ import polars as pl
 
 from hub import atomic, cli
 from hub.forecasters import config as study_config
-from hub.forecasters import score
+from hub.forecasters import days, runner, score, sources
 from hub.forecasters.config import Analysis, StudyConfig
 from hub.forecasters.packet import Condition
 from hub.forecasters.runner import NotPinned
@@ -76,6 +79,41 @@ def burn_in_games(frame: pl.DataFrame, *, season: int, week: int,
         .iter_rows(named=True)
         if r["game_type"] == "REG" and int(r["season"]) == season and int(r["week"]) == week
         and r["game_id"] not in refused)
+
+
+def reached(game_ids: Sequence[str], written: set[tuple[str, str]],
+            closes: Mapping[str, datetime], now: datetime, week: int
+            ) -> tuple[list[str], list[str]]:
+    """The games some run wrote a record for, any contestant, and those no run reached
+    (2026-11-08's London game: no Saturday run). An unreached game is forecast by no one, as
+    a refused one is, so it leaves the week; a game reached by only some contestants does not.
+    A game counts as unreached only once its run day's window has closed (`closes`); before
+    that it is pending, and the week is not over. `Refused` if any game is pending or no run
+    reached any of them."""
+    seen = {g for g, _ in written}
+    hit = [g for g in game_ids if g in seen]
+    missed = [g for g in game_ids if g not in seen]
+    pending = [g for g in missed if g not in closes or now < closes[g]]
+    if pending:
+        raise Refused(f"refused: Week {week} is not over, {len(pending)} of {len(game_ids)} "
+                      f"games have no record and their forecast window has not closed "
+                      f"(first: {pending[0]}).")
+    if game_ids and not hit:
+        raise Refused(f"refused: no run reached any of the {len(game_ids)} Week {week} games, "
+                      f"so there is nothing to measure.")
+    return hit, missed
+
+
+def window_closes(frame: pl.DataFrame, game_ids: Sequence[str]) -> dict[str, datetime]:
+    """When each game's forecast window closes: 11:30 ET on its run day. A game without a
+    kickoff date is left out, so it reads as pending."""
+    want = set(game_ids)
+    out: dict[str, datetime] = {}
+    for r in frame.select("game_id", "gameday", "gametime").iter_rows(named=True):
+        if r["game_id"] in want and r["gameday"]:
+            day = days.run_day(sources.kickoff(r["gameday"], r["gametime"]))
+            out[str(r["game_id"])] = datetime.combine(day, days.WINDOW_CLOSE, tzinfo=days.ET)
+    return out
 
 
 def deviations(forecasts: score.Forecasts, markets: Mapping[str, float], contestant: str,
@@ -212,7 +250,8 @@ def report_lines(rec: Mapping[str, object], power: Mapping[str, Mapping[str, flo
 def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = print,
          config: StudyConfig | None = None, analysis: Analysis | None = None,
          schedule: Callable[[int], pl.DataFrame] = score.cached_schedule,
-         simulations: int = SIMULATIONS) -> int:
+         simulations: int = SIMULATIONS,
+         now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
     ap = argparse.ArgumentParser(prog="python -m hub.forecasters.burn_in")
     ap.add_argument("--forecasts", type=Path, required=True, help="the forecasts checkout")
     ap.add_argument("--week", type=int, default=BURN_IN_WEEK, help="the burn-in week")
@@ -237,8 +276,10 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
     except Exception as exc:                 # the nflverse cache or wire: a sentence, exit 1
         return cli.unavailable("hub.forecasters.burn_in", f"the {args.season} schedule", exc)
     try:
-        games = burn_in_games(frame, season=args.season, week=args.week,
-                              refused=score.refused_games(args.forecasts))
+        week_games = burn_in_games(frame, season=args.season, week=args.week,
+                                   refused=score.refused_games(args.forecasts))
+        games, missed = reached(week_games, runner.written(args.forecasts),
+                                window_closes(frame, week_games), now(), args.week)
         markets = score.load_markets(args.forecasts).home
         sds = deviation_sds(score.load_forecasts(args.forecasts), markets, aware_names(cfg),
                             games, args.week)
@@ -254,6 +295,8 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
                              games_per_week=len(games), simulations=simulations,
                              written=written, path=args.out):
         echo(line)
+    if missed:
+        echo(f"Left out, forecast by no one because no run reached them: {', '.join(missed)}")
     return OK
 
 
