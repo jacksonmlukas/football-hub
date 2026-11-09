@@ -2151,12 +2151,17 @@ def _null_diffs(seed, n=_E_HORIZON, mean=0.0, sd=0.4):
     return np.clip(raw, -_E_BOUND, _E_BOUND)
 
 
-def _fixed_n_t_rejects(d, alpha=0.05):
+@functools.cache
+def _t_crit(n):
+    return experiment.t_quantile(1 - experiment.E_PROCESS_ALPHA, n - 1)
+
+
+def _fixed_n_t_rejects(d):
     """The planted defect: a fixed-n one-sided t test re-run at every look from week 5."""
     for n in range(5, len(d) + 1):
         x = d[:n]
         sd = float(x.std(ddof=1))
-        if sd > 0 and x.mean() / (sd / math.sqrt(n)) > experiment.t_quantile(1 - alpha, n - 1):
+        if sd > 0 and x.mean() / (sd / math.sqrt(n)) > _t_crit(n):
             return True
     return False
 
@@ -2165,7 +2170,7 @@ def test_e_process_planted_gap_crosses_threshold():
     runs = [experiment.e_process(_null_diffs(s, mean=0.25), bound=_E_BOUND) for s in range(50)]
     assert all(r.crossed for r in runs)
     assert all(r.first_crossing is not None and r.first_crossing <= _E_HORIZON for r in runs)
-    assert all(r.e_value >= 20.0 for r in runs)
+    assert all(r.e_value >= 1 / experiment.E_PROCESS_ALPHA for r in runs)
 
 
 def test_e_process_null_crossing_rate_stays_within_alpha_under_continuous_monitoring():
@@ -2206,7 +2211,7 @@ def test_e_process_path_is_positive_and_prefix_consistent(xs):
     assert full.e_value == full.path[-1]
     k = len(xs) // 2 or 1
     assert experiment.e_process(xs[:k], bound=1.0).path == full.path[:k]
-    assert full.crossed == any(w >= 20.0 for w in full.path)
+    assert full.crossed == any(w >= 1 / experiment.E_PROCESS_ALPHA for w in full.path)
 
 
 @given(st.lists(st.floats(-1.0, 1.0), min_size=1, max_size=40), st.floats(0.5, 20.0))

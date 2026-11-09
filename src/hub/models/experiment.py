@@ -745,6 +745,8 @@ class EProcess(NamedTuple):
 
 # Fixed betting fractions the mixture averages over. Capped at 1/2 so every factor
 # `1 + lam * x` with `x` in [-1, 1] is at least 1/2: the wealth stays positive for any data.
+# Declared `not_an_input` while nothing decides from a crossing; once a decision reads
+# `e_process`, this belongs under `chosen`.
 E_PROCESS_LAMBDAS: tuple[float, ...] = not_an_input(
     tuple(round(0.05 * k, 2) for k in range(1, 11)),
     "the betting grid of a monitoring statistic; no prediction reads it, so it stays out of "
