@@ -730,6 +730,75 @@ def paired_gain(base_err: npt.ArrayLike, arm_err: npt.ArrayLike, *,
     return Gain(mean, se, t, wins, wins + ties + losses, ties, losses)
 
 
+class EProcess(NamedTuple):
+    """What `e_process` reads off one stream of paired differences. Numbers only.
+
+    `path[t]` is the e-value after look `t + 1`; `e_value` is its last entry; `first_crossing`
+    is the 1-based look at which the path first reached `1 / alpha` (None if it never did) and
+    `crossed` is `first_crossing is not None`.
+    """
+    e_value: float
+    path: tuple[float, ...]
+    crossed: bool
+    first_crossing: int | None
+
+
+# Fixed betting fractions the mixture averages over. Capped at 1/2 so every factor
+# `1 + lam * x` with `x` in [-1, 1] is at least 1/2: the wealth stays positive for any data.
+E_PROCESS_LAMBDAS: tuple[float, ...] = not_an_input(
+    tuple(round(0.05 * k, 2) for k in range(1, 11)),
+    "the betting grid of a monitoring statistic; no prediction reads it, so it stays out of "
+    "the config digest")
+
+# The type-I bound a crossing of `1 / alpha` is stated at. A monitoring threshold, read by no
+# prediction.
+E_PROCESS_ALPHA = not_an_input(
+    0.05, "the type-I bound a weekly e-process look is stated at; it flags a candidate and "
+          "nothing here predicts")
+
+
+def e_process(paired_losses: npt.ArrayLike, *, bound: float,
+              alpha: float = E_PROCESS_ALPHA) -> EProcess:
+    """Anytime-valid betting e-process for H0: E[d_t] <= 0, on per-week paired differences.
+
+    `paired_losses[t] = loss(incumbent) - loss(candidate)` in week `t`, so **positive favours
+    the candidate** (the sign `paired_gain` uses). Each difference must lie in `[-bound, bound]`;
+    `bound` is required, with no default, because the martingale is only valid for a stated
+    range (scale losses to a known range first; the e-value is invariant to the unit).
+
+    The wealth is a testing-by-betting martingale (Waudby-Smith & Ramdas): for a fixed fraction
+    `lam` in (0, 1/2], `K_t(lam) = prod_{i<=t} (1 + lam * d_i / bound)`. Under H0 each factor
+    has conditional mean <= 1, so `K(lam)` is a nonnegative supermartingale started at 1. The
+    reported e-process is the equal-weight mean over the fixed grid `E_PROCESS_LAMBDAS`, which
+    is again a nonnegative supermartingale (a fixed mixture of them) and needs no guess at the
+    effect size: the grid member closest to the true standardised gap carries the growth.
+
+    **Ville's inequality** then gives `P(sup_t K_t >= 1 / alpha) <= alpha` under H0: the
+    crossing may be checked after every week, forever, and the type-I rate still holds. That is
+    what a fixed-n t test re-run weekly cannot say, and what makes a weekly look a test rather
+    than a descriptive number. Independence is not required: it holds for any data whose
+    conditional mean given the past is <= 0.
+
+    Raises ValueError on empty or non-finite input, a value outside `[-bound, bound]`, a
+    non-positive or non-finite `bound`, or `alpha` outside (0, 1).
+    """
+    if not (math.isfinite(bound) and bound > 0.0):
+        raise ValueError(f"bound must be positive and finite, got {bound!r}")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), got {alpha!r}")
+    x = np.asarray(paired_losses, dtype=float).ravel()
+    if x.size == 0 or not np.all(np.isfinite(x)):
+        raise ValueError("paired_losses must be non-empty and finite")
+    if np.any(np.abs(x) > bound):
+        raise ValueError(f"paired_losses must lie within [-{bound}, {bound}]")
+    lam = np.asarray(E_PROCESS_LAMBDAS)
+    log_wealth = np.cumsum(np.log1p(np.outer(x / bound, lam)), axis=0)   # (look, lambda)
+    path = np.exp(log_wealth).mean(axis=1)
+    hit = np.flatnonzero(path >= 1.0 / alpha)
+    first = int(hit[0]) + 1 if hit.size else None
+    return EProcess(float(path[-1]), tuple(float(w) for w in path), first is not None, first)
+
+
 def _stats(season: int) -> pl.DataFrame:                        # pragma: no cover - network
     from hub.fetch import nflverse
     return nflverse.load("player_stats", [season], cols=list(PLAYER_STATS_COLS))

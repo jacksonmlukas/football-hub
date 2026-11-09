@@ -2130,3 +2130,88 @@ def test_smallest_n_resolving_is_none_when_no_n_up_to_the_cap_reaches_the_target
 def test_smallest_n_resolving_starts_where_asked():
     assert experiment.smallest_n_resolving(10.0, lambda n: 1.0 / math.sqrt(n), cap=50,
                                            start=7) == 7
+
+
+# --- #506: e_process, the anytime-valid look at the weekly paired loss ---------------------
+#
+# Rule 18 (docs/td-dispersion.md section 5): the control plants the condition, and a planted
+# defect is shown to fail in the same harness, so the harness is known able to fail.
+
+from hypothesis import given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+_E_HORIZON = 100          # weeks of one monitored season-equivalent
+_E_SEEDS = 2000           # null replications
+_E_BOUND = 1.0
+
+
+def _null_diffs(seed, n=_E_HORIZON, mean=0.0, sd=0.4):
+    """Bounded paired differences, clipped to the bound; mean 0 (the null's edge) by default."""
+    raw = np.random.default_rng(seed).normal(mean, sd, n)
+    return np.clip(raw, -_E_BOUND, _E_BOUND)
+
+
+def _fixed_n_t_rejects(d, alpha=0.05):
+    """The planted defect: a fixed-n one-sided t test re-run at every look from week 5."""
+    for n in range(5, len(d) + 1):
+        x = d[:n]
+        sd = float(x.std(ddof=1))
+        if sd > 0 and x.mean() / (sd / math.sqrt(n)) > experiment.t_quantile(1 - alpha, n - 1):
+            return True
+    return False
+
+
+def test_e_process_planted_gap_crosses_threshold():
+    runs = [experiment.e_process(_null_diffs(s, mean=0.25), bound=_E_BOUND) for s in range(50)]
+    assert all(r.crossed for r in runs)
+    assert all(r.first_crossing is not None and r.first_crossing <= _E_HORIZON for r in runs)
+    assert all(r.e_value >= 20.0 for r in runs)
+
+
+def test_e_process_null_crossing_rate_stays_within_alpha_under_continuous_monitoring():
+    alpha = 0.05
+    hits = sum(experiment.e_process(_null_diffs(s), bound=_E_BOUND, alpha=alpha).crossed
+               for s in range(_E_SEEDS))
+    # Ville: P(ever crossing) <= alpha. Monte Carlo slack: 3 sd of a Binomial(2000, .05) rate.
+    slack = 3.0 * math.sqrt(alpha * (1 - alpha) / _E_SEEDS)
+    assert hits / _E_SEEDS <= alpha + slack
+
+
+def test_control_can_fail_a_fixed_n_t_test_peeked_every_week_exceeds_alpha():
+    rate = sum(_fixed_n_t_rejects(_null_diffs(s)) for s in range(_E_SEEDS)) / _E_SEEDS
+    assert rate > 0.05 + 3.0 * math.sqrt(0.05 * 0.95 / _E_SEEDS)
+
+
+def test_e_process_under_a_losing_candidate_never_crosses():
+    r = experiment.e_process(_null_diffs(1, mean=-0.3), bound=_E_BOUND)
+    assert not r.crossed and r.first_crossing is None and r.e_value < 1.0
+
+
+def test_e_process_rejects_bad_input():
+    for bad in ([], [0.1, float("nan")], [0.1, float("inf")], [0.1, 1.5], [-2.0]):
+        with pytest.raises(ValueError):
+            experiment.e_process(bad, bound=1.0)
+    with pytest.raises(ValueError):
+        experiment.e_process([0.1], bound=0.0)
+    with pytest.raises(ValueError):
+        experiment.e_process([0.1], bound=1.0, alpha=1.0)
+
+
+@given(st.lists(st.floats(-1.0, 1.0), min_size=1, max_size=60))
+@settings(max_examples=100, deadline=None)
+def test_e_process_path_is_positive_and_prefix_consistent(xs):
+    full = experiment.e_process(xs, bound=1.0)
+    assert len(full.path) == len(xs)
+    assert all(w > 0.0 and math.isfinite(w) for w in full.path)
+    assert full.e_value == full.path[-1]
+    k = len(xs) // 2 or 1
+    assert experiment.e_process(xs[:k], bound=1.0).path == full.path[:k]
+    assert full.crossed == any(w >= 20.0 for w in full.path)
+
+
+@given(st.lists(st.floats(-1.0, 1.0), min_size=1, max_size=40), st.floats(0.5, 20.0))
+@settings(max_examples=50, deadline=None)
+def test_e_process_is_scale_invariant_in_loss_units(xs, scale):
+    a = experiment.e_process(xs, bound=1.0)
+    b = experiment.e_process([x * scale for x in xs], bound=scale)
+    assert b.e_value == pytest.approx(a.e_value, rel=1e-9)
