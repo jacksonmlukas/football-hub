@@ -104,8 +104,8 @@ def test_the_crons_cover_the_window_in_standard_time():
 
 
 def test_the_crons_cover_the_window_in_daylight_time():
-    """The same, for 2027-03-14 onward (UTC-4). The 13:22 and 13:37 triggers exist for this: without
-    them 09:30-09:51 ET has none, and a dropped 13:52 would leave the day unforecast."""
+    """The same, for 2027-03-14 onward (UTC-4). The 13:37 trigger exists for this: without it
+    09:30-09:51 ET has none, and a dropped 13:52 would leave the day unforecast."""
     day = date(2027, 3, 20)
     hits = [days.eastern(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC)).time()
             for h, m in days.CRON_TRIGGERS_UTC

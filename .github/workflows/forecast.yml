@@ -8,9 +8,9 @@ name: llm-forecast
 # reads the crons. Enabling is setting the variable, after the tag (build step 7).
 #
 # **Why fifteen triggers for one run.** GitHub schedules in UTC and delays or drops scheduled
-# runs under load. Every 15 minutes at off-round minutes, 13:22-16:22 UTC, covers 09:30-11:30 ET under both
-# standard (UTC-5) and daylight (UTC-4) time; the 13:22 and 13:37 triggers are the daylight-time
-# addition, needed from 2027-03-14. Each trigger asks `should-run`, which converts to ET in code and
+# runs under load. Every 15 minutes at off-round minutes, 13:37-16:22 UTC, covers 09:30-11:30 ET under both
+# standard (UTC-5) and daylight (UTC-4) time; the 13:37 trigger is the daylight-time addition,
+# needed from 2027-03-14. Each trigger asks `should-run`, which converts to ET in code and
 # says no outside the window or once the day is marked done. The list is
 # `hub.forecasters.days.CRON_TRIGGERS_UTC`, and the contract test holds the two to each other.
 #
@@ -28,12 +28,11 @@ on:
     # Off-round minutes (#544): GitHub drops scheduled runs at round minutes under load, and on
     # 2026-11-02 none of the 13 round-minute triggers fired (3 of 13 fired, hours late, on 10-31
     # and 11-01). 13:52 is an early attempt; 14:07-16:22 every 15 minutes covers 09:30-11:30 ET
-    # under standard time (UTC-5), the season's offset from 2026-11-01. 13:22 and 13:37 are the
-    # daylight-time (UTC-4) addition: EDT starts 2027-03-14, when the window opens at 13:30 UTC and
-    # 13:52 would otherwise be the first in-window trigger. Under standard time they fire at
-    # 08:22 and 08:37 ET, outside the window, and the gate says no.
-    - cron: "22,37 13 * * *"
-    - cron: "52 13 * * *"
+    # under standard time (UTC-5), the season's offset from 2026-11-01. 13:37 is the daylight-time
+    # (UTC-4) addition: EDT starts 2027-03-14, when the window opens at 13:30 UTC and 13:52 would
+    # otherwise be the first in-window trigger. Under standard time it fires at 08:37 ET, outside
+    # the window, and the gate says no. Nothing earlier: 13:22 is outside the window in both.
+    - cron: "37,52 13 * * *"
     - cron: "7,22,37,52 14-15 * * *"
     - cron: "7,22 16 * * *"
   workflow_dispatch:
