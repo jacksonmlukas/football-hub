@@ -7,10 +7,10 @@ name: llm-forecast
 # `scripts/preflight_public.sh` warns about, and `tests/contracts/test_forecast_workflow.py`
 # reads the crons. Enabling is setting the variable, after the tag (build step 7).
 #
-# **Why fifteen triggers for one run.** GitHub schedules in UTC and delays or drops scheduled
-# runs under load. Every 15 minutes at off-round minutes, 13:37-16:22 UTC, covers 09:30-11:30 ET under both
-# standard (UTC-5) and daylight (UTC-4) time; the 13:37 trigger is the daylight-time addition,
-# needed from 2027-03-14. Each trigger asks `should-run`, which converts to ET in code and
+# **Why a dozen triggers for one run.** GitHub schedules in UTC and delays or drops scheduled
+# runs under load. Every 15 minutes at off-round minutes, 13:37-16:22 UTC, covers 09:30-11:30 ET
+# under both standard (UTC-5) and daylight (UTC-4) time; the 13:37 trigger is the daylight-time
+# addition, needed from 2027-03-14. Each trigger asks `should-run`, which converts to ET in code and
 # says no outside the window or once the day is marked done. The list is
 # `hub.forecasters.days.CRON_TRIGGERS_UTC`, and the contract test holds the two to each other.
 #
