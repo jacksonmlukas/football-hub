@@ -2196,8 +2196,9 @@ def test_e_process_rejects_bad_input():
     for bad in ([], [0.1, float("nan")], [0.1, float("inf")], [0.1, 1.5], [-2.0]):
         with pytest.raises(ValueError):
             experiment.e_process(bad, bound=1.0)
-    with pytest.raises(ValueError):
-        experiment.e_process([0.1], bound=0.0)
+    for bound in (0.0, -1.0, float("inf"), float("nan")):   # an infinite bound bets nothing
+        with pytest.raises(ValueError):
+            experiment.e_process([0.1], bound=bound)
     with pytest.raises(ValueError):
         experiment.e_process([0.1], bound=1.0, alpha=1.0)
 
