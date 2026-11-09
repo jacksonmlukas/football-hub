@@ -195,3 +195,29 @@ credit. Still **produces no ADOPT, REMOVE or SHOW**; no published number moves.
   naming the capture as late and the first not; a window with nothing past its grace is `NOT-YET`.
 
 **What would reopen it as a decision:** any proposal to attach a verdict to it.
+
+### 2026-11-09 criteria 1, 3, 4 (#469) -- still no verdict
+
+`uv run python -m hub.instrument_check --week 9 --from 2026-11-05T00:00 --until 2026-11-10T00:00`
+(Thursday to Tuesday), then the same for week 8 (`--from 2026-10-29T00:00 --until 2026-11-03T00:00`),
+from a fresh worktree of committed `HEAD` with no `data/`, spending no Odds credit. **Produces no
+ADOPT, REMOVE or SHOW**; no published number moves. Both runs exit 1 (criterion 2 FAIL, below).
+
+- **Criteria 1, 3, 4: NOT-YET for weeks 8 and 9, and still not evaluable.** The blockers #469 named
+  have landed: #468 is closed, and `state/consensus/2026/lineup/` now holds four in-time lineup
+  captures each for weeks 7, 8 and 9 (ADR-0027). What is missing is the input the check reads, a
+  stamped paired parquet (`weekly_gate --run --out`, then `--paired`). That run needs the pinned
+  nflverse data, absent here, and the check reads only the committed tree, so none was supplied.
+  The check reports `pipeline` (1), `ledger` (3) and `k` (4) each as `NOT-YET`, and exits non-zero
+  rather than 0. No `config_digest`/`data_digest` pair exists for a 2026-rows run, so nothing is
+  compared in the ledger and k is unreported. These are not PASS; recording them as PASS would
+  invent a stamp that was never read. A maintainer-side gate run over the 2026 captures, written
+  with `--out`, is what unblocks them.
+- **Criterion 2 (context, not asked for): FAIL for weeks 8 and 9 at the 9h grace, on lateness
+  alone.** Week 9: 1 of 5 checkable polls (11-09 11:00Z) is committed but lands 10.2h after its slot
+  (21:09Z). Week 8: 1 of 5 (11-02 11:00Z) lands 9.5h late (20:32Z). Every other checkable poll is
+  committed inside the grace. Whether the grace should move is the maintainer's call, as on
+  2026-10-09. The week-9 window runs to 11-10, so its last slot is not yet checkable.
+- **Back-fill**: PASS, 8 polls x 18 weeks readable from a fresh checkout (2,737 rows).
+
+**What would reopen it as a decision:** any proposal to attach a verdict to it.

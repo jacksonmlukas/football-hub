@@ -90,11 +90,13 @@ def test_the_window_is_half_past_nine_to_half_past_eleven_eastern(now, inside):
     assert days.in_window(now) is inside
 
 
-def test_the_crons_cover_the_window_in_standard_time():
-    """Off-round triggers every 15 minutes: under standard time (UTC-5, the season's offset)
-    each 15-minute ET slot of the window is hit by at least one trigger. Daylight time is not
-    covered (09:30-09:51 ET has no trigger); see forecast.yml's header."""
-    day = date(2026, 11, 7)
+# Standard time (UTC-5) is the season's offset. Daylight time (UTC-4) returns 2027-03-14; the
+# 13:37 trigger exists for it, since without it the 09:30-09:45 ET slot has none.
+@pytest.mark.parametrize("day", [date(2026, 11, 7), date(2027, 3, 20)],
+                         ids=["standard", "daylight"])
+def test_the_crons_cover_the_window(day):
+    """Off-round triggers every 15 minutes: each 15-minute ET slot of the window is hit by at
+    least one trigger, under either offset."""
     hits = [days.eastern(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC)).time()
             for h, m in days.CRON_TRIGGERS_UTC
             if days.in_window(datetime(day.year, day.month, day.day, h, m, tzinfo=UTC))]
