@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-11-09T00:53:54.068798+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_09_TB_CHI",
+   "home_win_prob": 0.7081545064377682,
+   "kickoff": "2026-11-09T01:20:00+00:00",
+   "lead_minutes": 26.098853366666667
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "91564c0f109362ee8cbaa62ec69fafcbd97e32397831eaa49244a5fc8e8c3267",
+ "remaining": 451,
+ "snapshot_id": "20261109T005354Z-91564c0f1093",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 16
+}
