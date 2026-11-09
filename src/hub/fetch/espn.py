@@ -638,10 +638,6 @@ def fetch_free_agents(year: int = SEASON_AHEAD, size: int = FREE_AGENT_SIZE,
 LM_API = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
 
 
-class NoLeagueHistory(Exception):
-    """ESPN returned no teams for a season."""
-
-
 # kona_player_info returns nothing without a filter naming how many players to send and in
 # what order. `filterIds` looks like the precise way to ask for the drafted players only and
 # returns HTTP 400 here, so take the top of the draft-rank ordering in one request and match
