@@ -23,11 +23,12 @@ SAME_DAY_FROM = time(13, 0)
 WINDOW_OPEN = time(9, 30)
 WINDOW_CLOSE = time(11, 30)
 
-# The workflow's schedule, as (hour, minute) UTC: off-round minutes (#544), an early 13:52 and
-# then every 15 minutes from 14:07 to 16:22. `.github/workflows/forecast.yml` is held to this by
+# The workflow's schedule, as (hour, minute) UTC: off-round minutes (#544), 13:22 and 13:37
+# (daylight time, UTC-4: the window opens at 13:30 UTC from 2027-03-14), 13:52, and then every
+# 15 minutes from 14:07 to 16:22. `.github/workflows/forecast.yml` is held to this by
 # a test.
 CRON_TRIGGERS_UTC: tuple[tuple[int, int], ...] = (
-    (13, 52), *((h, m) for h in (14, 15) for m in (7, 22, 37, 52)), (16, 7), (16, 22))
+    (13, 22), (13, 37), (13, 52), *((h, m) for h in (14, 15) for m in (7, 22, 37, 52)), (16, 7), (16, 22))
 
 
 def eastern(t: datetime) -> datetime:

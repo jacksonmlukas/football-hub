@@ -1,6 +1,6 @@
 """`.github/workflows/forecast.yml` holds to the prereg's *Forecast procedure*.
 
-Off-round minutes 13:52-16:22 UTC, every 15 from 14:07 (the same list as `hub.forecasters.days.CRON_TRIGGERS_UTC`),
+Off-round minutes 13:22-16:22 UTC, every 15 from 14:07 (the same list as `hub.forecasters.days.CRON_TRIGGERS_UTC`),
 gated in code to the 09:30-11:30 ET window; a concurrency group; output saved as an artifact
 *before* it is committed; committed only to the `forecasts` branch; and switched off until
 `prereg-llm-v0` is tagged, by a repository variable rather than by commenting out the schedule
