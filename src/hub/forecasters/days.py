@@ -28,7 +28,8 @@ WINDOW_CLOSE = time(11, 30)
 # 15 minutes from 14:07 to 16:22. `.github/workflows/forecast.yml` is held to this by
 # a test.
 CRON_TRIGGERS_UTC: tuple[tuple[int, int], ...] = (
-    (13, 22), (13, 37), (13, 52), *((h, m) for h in (14, 15) for m in (7, 22, 37, 52)), (16, 7), (16, 22))
+    (13, 22), (13, 37), (13, 52), *((h, m) for h in (14, 15) for m in (7, 22, 37, 52)),
+    (16, 7), (16, 22))
 
 
 def eastern(t: datetime) -> datetime:
