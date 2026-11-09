@@ -1,0 +1,21 @@
+{
+ "captured_at": "2026-11-09T21:09:01.662025",
+ "rows": [
+  {
+   "captured_at": "2026-11-09T21:09:01.662025",
+   "close_spread": -3.5,
+   "close_total": 45.0,
+   "game_id": "2026_09_BUF_MIN",
+   "ml_away_price": -194.0,
+   "ml_home_price": 164.0,
+   "ml_home_prob": 0.3630958183058778,
+   "polls_unmoved": 1,
+   "spread_price": -115.00000000000001,
+   "spread_price_away": -105.0,
+   "total_price": -109.0,
+   "unmoved_since": "2026-11-09T21:09:01.662025"
+  }
+ ],
+ "season": 2026,
+ "week": 9
+}
