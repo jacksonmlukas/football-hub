@@ -70,7 +70,7 @@ CLI_MODULES = (
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
     "hub.season.weekly_forward", "hub.season.survivor", "hub.season.pool", "hub.season.journal",
-    "hub.season.lineup_journal", "hub.season.stream", "hub.season.waiver",
+    "hub.season.lineup_journal", "hub.season.stream", "hub.season.waiver", "hub.season.ros",
     "hub.store",
 )
 
@@ -337,6 +337,10 @@ ABSENT_INPUT = [
     # The league capture (#545): no league and no cookie is a sentence and, without `--write`
     # (the slate's never-failing mode), a non-zero exit. `--out` keeps it off `state/league/`.
     ("hub.fetch.league", ["--out", "{tmp}/league"]),
+    # Scoring a Move (#501): a capture named on the command line that is not there is a
+    # sentence and exit 1. (With no `--capture` and nothing under `state/league/` it exits 0 --
+    # the capture is the slate's optional step -- so this drives the named-file case.)
+    ("hub.season.ros", ["--capture", "{tmp}/nope.json", "--add", "A", "--drop", "B"]),
     # The waiver ranking (#493): a roster that is not there is a sentence.
     ("hub.season.waiver", ["--roster", "{tmp}/nope.parquet"]),
     ("hub.season.survivor", []),
@@ -530,17 +534,47 @@ def test_season_does_not_reach_into_draft_for_league_rules():
     `FLEX_*`, `starting_lineup` and `REG_SEASON_WEEKS`. Those are `hub.league` now. The seven
     that remain are `board`, `backtest`, `optimize` and `state`, which are genuinely the draft.
     """
-    import ast
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "season"
-    bad = []
-    for path in root.rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if (isinstance(node, ast.ImportFrom) and node.module == "hub.draft.season"):
-                bad.append(f"{path.name} -> {node.module}")
+    bad = [f"{path.name} -> hub.draft.season"
+           for path in root.rglob("*.py")
+           if path.name not in SEASON_DRAFT_REACH_EXEMPT and _reaches_draft_season(path.read_text())]
     assert not bad, (
         f"season/ imports the draft's season simulator for league rules: {bad}. "
         f"The roster shape and `starting_lineup` are in `hub.league`.")
+
+
+# `hub.season.ros` (#501) reaches the draft's season simulator on purpose: the 2026-11-09 design
+# session (#501, Settled design) chose to reuse the pinned bracket (`champion`) rather than copy
+# it, and `bye_weeks` is schedule data. Neither is a league rule, which is what this contract
+# bans. It is named here so the reach is on the record and any other module still fails.
+SEASON_DRAFT_REACH_EXEMPT = {"ros.py"}
+
+
+def _reaches_draft_season(source: str) -> bool:
+    """`from hub.draft.season import x`, `from hub.draft import season` and
+    `import hub.draft.season` -- the three spellings of one reach."""
+    import ast
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "hub.draft.season":
+                return True
+            if node.module == "hub.draft" and any(a.name == "season" for a in node.names):
+                return True
+        if isinstance(node, ast.Import) and any(a.name == "hub.draft.season" for a in node.names):
+            return True
+    return False
+
+
+def test_every_spelling_of_the_draft_season_reach_is_caught_and_ros_is_the_only_exemption():
+    assert _reaches_draft_season("from hub.draft.season import champion\n")
+    assert _reaches_draft_season("from hub.draft import season as s\n")
+    assert _reaches_draft_season("import hub.draft.season\n")
+    assert not _reaches_draft_season("from hub.draft.playoff_sos import canon_team\n")
+    assert SEASON_DRAFT_REACH_EXEMPT == {"ros.py"}
+    import pathlib
+    ros = pathlib.Path(__file__).resolve().parents[2] / "src" / "hub" / "season" / "ros.py"
+    assert _reaches_draft_season(ros.read_text()), "without the exemption ros.py fails"
 
 
 def test_nothing_reads_the_preds_view_around_the_one_reader():
