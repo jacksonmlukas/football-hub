@@ -350,6 +350,11 @@ UNCHECKED: dict[str, str] = {
     "pace": "a real quantity the repo may one day model; the entry forbids it only as a "
             "name for Team volume, which it is not",
     "tempo": "same entry, same distinction: a rate, not a count",
+    # **Move** (2026-11-09, #501).
+    "transaction": "ESPN's own transaction counter is a real thing the repo may read; the "
+                   "entry forbids the word only as a name for a Move",
+    "pickup": "an add is correctly a pickup (`hub.season.waiver` says so); the entry forbids "
+              "it only as a name for the whole Move, which may be a trade",
 }
 
 # Headwords are a different class from `_Avoid_` terms: using **Board** for the draft board
