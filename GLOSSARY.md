@@ -408,6 +408,14 @@ _Avoid_: edge (which means something else entirely here).
 A candidate the simulation cannot separate from the best one — within two standard errors of
 the difference. A tie is reported as a tie rather than broken by noise.
 
+**Move**:
+A change to our fantasy roster during the season: an add/drop from the free-agent pool, or a
+trade with another team. Judged by how it changes our odds of making the playoffs, earning a bye
+and winning the title over the rest of the season, with every other team held at its current
+roster.
+_Avoid_: transaction (ESPN's transaction counter counts something else), pickup (only half of
+it).
+
 **Ledger**:
 The teams an entry has already spent and cannot pick again — one per entry, ours and every
 rival's. `hub.season.pool` takes it as `ledger` for one entry and `ledgers` for the field, and
