@@ -57,6 +57,10 @@ slate:          ## Weekly pregame refresh -> site/data/*.json
 # The league's free agents, one bulk read, kept last-good (#493); the stream's availability and
 # the waiver ranking both read it, so it runs first. Optional like the roster.
 	-uv run python -m hub.fetch.free_agents
+# Every team's roster, standings and remaining schedule, one League load (#545): the offline half of
+# a Move's scoring. Optional like the other ESPN-cookie sources: offline it writes nothing, says so,
+# and the last-good file stays. After the free agents because it copies that pool into the capture.
+	-uv run python -m hub.fetch.league --write
 # Which K and D/ST to start or pick up, by the market's implied totals (#494). A labelled
 # heuristic, journalled once per week so a gate can run on it later; offline it changes nothing.
 	-uv run python -m hub.season.stream --record

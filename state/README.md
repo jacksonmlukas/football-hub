@@ -20,6 +20,18 @@ What this repo has spent against two metered third-party accounts:
   one that reaches the tree any other way. Never edit or delete one. **The licence basis of this
   directory has not been checked**, unlike `odds/`'s: if this repository is ever made public,
   re-examine `consensus/` first.
+- `league/<season>/wk<NN>.json` — **the weekly league capture** (#545): every team in the league,
+  from one ESPN League load by `hub.fetch.league` (run by `make slate`, committed by the `slate`
+  workflow). Per team: id, name, `is_mine` (the SWID), wins/losses/ties, regular-season
+  points-for, and the roster as `espn.roster_rows` rows plus `week_proj`, ESPN's projection for
+  each remaining week through 17 where it gives one. Beside them: the remaining regular-season
+  schedule as `(week, team_id, opponent_id)` pairs (no home/away), the playoff weeks, the trade
+  deadline as an ISO UTC timestamp (`null` when ESPN carries none), a copy of the free-agent pool
+  `hub.fetch.free_agents` last wrote (rows as written, with its at-cap flag; `null` when none), and
+  `captured_at`. **One file per week, overwritten by a re-run in the same week**, so the Saturday
+  slate supersedes Wednesday's. Offline or without the cookie the CLI writes nothing and exits 0,
+  leaving the last-good file; `check_league_capture` refuses a malformed capture the same way.
+  Scoring a Move from it is #501. The roster rows carry player names.
 - `cfbd-quota.json` — CFBD calls made, by billing month, against the 1,000-a-month free tier.
 - `gate-width.json` — **an append-only ledger, since #362 (S5)**, of every season-clustered
   interval width a backtest gate has produced. `hub.ledger.Ledger.record` (`experiment.
