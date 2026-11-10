@@ -165,7 +165,9 @@ def seed_standings(pts: np.ndarray, schedule: Sequence[tuple[int, int, int]], *,
 
     `pts` is (sims, weeks, teams) indexed by week from 1, as `hub.draft.season.seed_table`
     reads it; `schedule` is (week, team, opponent) index triples, each game once or from both
-    sides. `wins0` already counts a tie as half a win and `points0` is points-for to date.
+    sides. `wins0` already counts a tie as half a win and `points0` is regular-season points-for
+    through the week before the first simulated one: the in-progress week is not counted, and its
+    simulated points are added from `pts` instead.
     Seeds on wins, ties on regular-season points (`pts[:, :reg_weeks]` plus `points0`) --
     with no record and a round-robin schedule this orders the table as `seed_table` does.
     """
@@ -182,6 +184,12 @@ def seed_standings(pts: np.ndarray, schedule: Sequence[tuple[int, int, int]], *,
 
 # --- scoring -------------------------------------------------------------------------------
 
+def _utc(stamp: str) -> datetime:
+    """An ISO timestamp as an aware UTC datetime; a naive one is read as UTC."""
+    t = datetime.fromisoformat(stamp)
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
+
+
 def _paired(after: np.ndarray, before: np.ndarray) -> Estimate:
     d = after.astype(float) - before.astype(float)
     n = d.size
@@ -190,7 +198,7 @@ def _paired(after: np.ndarray, before: np.ndarray) -> Estimate:
 
 def _apart(e: Estimate) -> bool:
     """True when the gain is within two standard errors: nothing here tells it from zero."""
-    return not abs(e.delta) > 2 * e.se
+    return abs(e.delta) <= 2 * e.se
 
 
 def _find(rows: Sequence[Mapping[str, Any]], name: str) -> int | None:
@@ -255,6 +263,9 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
             or len(capture["teams"]) < PLAYOFF_TEAMS):
         raise MoveError("only the six-team, three-round bracket `hub.draft.season.champion` "
                         "plays can be scored")
+    if pw != [reg + 1, reg + 2, reg + 3]:
+        raise MoveError(f"playoff weeks {pw} are not the {[reg + 1, reg + 2, reg + 3]} "
+                        "that `champion` reads straight after the regular season")
     if first > reg:
         raise MoveError(f"week {first} is past the regular season ({reg} weeks); the field "
                         "is set and a Move no longer changes the seeding")
@@ -275,15 +286,17 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
         if i is not None and roster is not None:
             mu2[:, i], sd2[:, i], _, _ = _team_moments(roster, weeks, byes)
 
-    z = np.random.default_rng(seed).standard_normal((n_draws, len(weeks), len(teams)))
+    shocks = np.random.default_rng(seed).standard_normal((n_draws, len(weeks), len(teams)))
+    # Only games still to play: a pair before `first` would score 0-0 and hand both teams a half
+    # win, and one past the regular season indexes beyond the array.
     sched = [(p["week"], index[p["team_id"]], index[p["opponent_id"]])
-             for p in capture["schedule"]]
+             for p in capture["schedule"] if first <= p["week"] <= reg]
     wins0 = np.array([t["wins"] + 0.5 * t["ties"] for t in teams], dtype=float)
     points0 = np.array([t["points_for"] for t in teams], dtype=float)
 
-    def world(m, d):
+    def world(mean, spread):
         pts = np.zeros((n_draws, last, len(teams)))
-        pts[:, first - 1:, :] = np.maximum(m[None] + d[None] * z, 0.0)
+        pts[:, first - 1:, :] = np.maximum(mean[None] + spread[None] * shocks, 0.0)
         _, seeds = seed_standings(pts, sched, wins0=wins0, points0=points0, reg_weeks=reg)
         champ = np.fromiter((draft_season.champion(pts, seeds, k, reg_weeks=reg)
                              for k in range(n_draws)), dtype=int, count=n_draws)
@@ -292,25 +305,26 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
     seeds0, champ0 = world(mu, sd)
     seeds1, champ1 = world(mu2, sd2)
 
-    def hit(seeds, champ, i):
+    def outcomes(seeds, champ, i):
         return {"playoffs": (seeds == i).any(axis=1), "bye": (seeds[:, :2] == i).any(axis=1),
                 "title": champ == i}
 
-    b, a = hit(seeds0, champ0, me), hit(seeds1, champ1, me)
-    est = {k: _paired(a[k], b[k]) for k in b}
+    before_hit, after_hit = outcomes(seeds0, champ0, me), outcomes(seeds1, champ1, me)
+    est = {k: _paired(after_hit[k], before_hit[k]) for k in before_hit}
     counter = None
     if cp is not None:
         counter = Counterparty(
             teams[cp]["name"],
-            _paired(hit(seeds1, champ1, cp)["playoffs"], hit(seeds0, champ0, cp)["playoffs"]))
+            _paired(outcomes(seeds1, champ1, cp)["playoffs"],
+                    outcomes(seeds0, champ0, cp)["playoffs"]))
 
     warnings: list[str] = []
-    captured = datetime.fromisoformat(capture["captured_at"])
+    captured = _utc(capture["captured_at"])
     if now - captured > timedelta(days=STALE_DAYS):
         warnings.append(f"the capture is stale: taken {captured:%Y-%m-%d}, "
                         f"{(now - captured).days} days ago (over {STALE_DAYS})")
     deadline = s.get("trade_deadline")
-    if cp is not None and deadline and now > datetime.fromisoformat(deadline):
+    if cp is not None and deadline and now > _utc(deadline):
         warnings.append(f"the trade deadline passed on {deadline[:10]}; ESPN will not process "
                         "this trade")
     if byes is None:
@@ -318,8 +332,8 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
                         "on byes")
     return MoveResult(
         n_draws=n_draws, team=teams[me]["name"],
-        before={k: float(v.mean()) for k, v in b.items()},
-        after={k: float(v.mean()) for k, v in a.items()},
+        before={k: float(v.mean()) for k, v in before_hit.items()},
+        after={k: float(v.mean()) for k, v in after_hit.items()},
         playoffs=est["playoffs"], bye=est["bye"], title=est["title"],
         indistinguishable={k: _apart(e) for k, e in est.items()},
         counterparty=counter, flat_share=flat / total if total else 0.0, warnings=warnings)

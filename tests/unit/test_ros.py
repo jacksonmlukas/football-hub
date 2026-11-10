@@ -312,3 +312,30 @@ def test_with_no_capture_named_the_newest_one_is_scored(tmp_path, capsys):
     code = ros.main(["--league-dir", str(tmp_path / "league"), "--add", "Waiver Star",
                      "--drop", "WR deep t1", "--draws", "300", "--no-byes"])
     assert code == 0 and "wk06.json" in capsys.readouterr().out
+
+
+# --- the capture's edges -------------------------------------------------------------------
+
+def test_a_schedule_pair_outside_the_games_left_changes_nothing():
+    cap = make_capture(week=5)
+    base = score(cap, move_add(), n=500)
+    cap["schedule"] += [{"week": 3, "team_id": 1, "opponent_id": 2},
+                        {"week": 3, "team_id": 2, "opponent_id": 1},
+                        {"week": 15, "team_id": 3, "opponent_id": 4}]
+    assert score(cap, move_add(), n=500) == base
+
+
+def test_playoff_weeks_that_do_not_follow_the_regular_season_are_refused():
+    cap = make_capture()
+    cap["settings"]["playoff_weeks"] = [16, 17, 18]
+    with pytest.raises(ros.MoveError, match="playoff weeks"):
+        score(cap, move_add(), n=10)
+
+
+def test_naive_timestamps_are_read_as_utc():
+    cap = make_capture(deadline="2026-11-01T00:00:00")
+    cap["captured_at"] = "2026-11-01T00:00:00"
+    got = score(cap, ros.Move(give=("RB0 t1",), get=("QB0 t12",)), n=100,
+                now=NOW + timedelta(days=8))
+    text = " ".join(got.warnings)
+    assert "stale" in text and "trade deadline" in text
