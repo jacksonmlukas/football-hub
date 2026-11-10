@@ -79,6 +79,7 @@ FLOOR: dict[str, int] = {
     "src/hub/fetch/consensus.py": 3,
     "src/hub/fetch/espn.py": 0,
     "src/hub/fetch/free_agents.py": 0,
+    "src/hub/fetch/league.py": 0,
     "src/hub/fetch/nfeloqb.py": 1,
     "src/hub/fetch/nflverse.py": 19,
     "src/hub/fetch/odds.py": 10,

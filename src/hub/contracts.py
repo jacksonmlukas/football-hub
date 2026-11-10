@@ -21,6 +21,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, cast
 
 import polars as pl
@@ -1103,6 +1104,89 @@ ESPN_FREE_AGENTS = Contract(
     min_rows=1,
     verified_against_live=False,
 )
+
+
+LEAGUE_ROSTER_COLUMNS = ("player", "key", "pos", "espn_id", "nfl_team", "slot",
+                         "injury_status", "espn_avg", "espn_total", "espn_week",
+                         "espn_week_proj", "week_proj")
+
+
+def check_league_capture(payload: dict[str, Any]) -> None:
+    """The weekly league capture's shape (#545), refused where it is written.
+
+    Declared from `espn_api`'s League vocabulary rather than from a capture -- the league needs
+    the user's cookie -- so the frozen fixture is hand-built (`verified_against_live` has no
+    analogue here). Raises `ContractViolation` naming every problem.
+    """
+    problems: list[str] = []
+    teams = payload.get("teams") or []
+    ids = [t.get("team_id") for t in teams]
+    # GUARD league-has-teams [unit/test_league_capture_schema.py]: a break is refused
+    # an empty league scores nothing
+    if not teams:
+        problems.append("no teams")
+    # /GUARD
+    # GUARD league-team-ids-unique [unit/test_league_capture_schema.py]: a break is refused
+    # a team twice would
+    # be scored twice, and its opponents' schedules would point at the wrong roster
+    if len(set(ids)) != len(ids):
+        problems.append(f"team ids are not unique: {sorted(ids, key=str)}")
+    # /GUARD
+    # GUARD league-exactly-one-ours [unit/test_league_capture_schema.py]: a break is refused
+    # a Move is scored
+    # for our side, so zero or two of them makes every number a guess
+    mine = [t.get("team_id") for t in teams if t.get("is_mine")]
+    if len(mine) != 1 or payload.get("my_team_id") not in mine:
+        problems.append(f"{len(mine)} teams marked ours; my_team_id is "
+                        f"{payload.get('my_team_id')!r}")
+    # /GUARD
+    # GUARD league-roster-columns [unit/test_league_capture_schema.py]: a break is refused
+    # a renamed column fills nothing and fails nowhere
+    for t in teams:
+        for r in t.get("roster") or []:
+            gone = [c for c in LEAGUE_ROSTER_COLUMNS if c not in r]
+            if gone:
+                problems.append(f"team {t.get('team_id')} {r.get('player')!r}: roster row lacks "
+                                f"{gone}")
+    # /GUARD
+    s = payload.get("settings") or {}
+    deadline = s.get("trade_deadline")
+    # GUARD league-deadline-iso-or-null [unit/test_league_capture_schema.py]: a break is refused
+    # ESPN's 0 for
+    # no deadline is stored as null; a 1970 timestamp would read as a deadline long past
+    if deadline is not None:
+        try:
+            parsed = datetime.fromisoformat(deadline)
+            if parsed.tzinfo is None or parsed.year < 2000:
+                raise ValueError(deadline)
+        except (TypeError, ValueError):
+            problems.append(f"trade_deadline {deadline!r} is not an ISO UTC timestamp or null")
+    # /GUARD
+    week, reg = payload.get("week"), s.get("reg_season_weeks")
+    # GUARD league-schedule-pairs [unit/test_league_capture_schema.py]: a break is refused
+    # a pair naming a team that is not in the league, or a week already played, is a
+    # schedule the Move would be scored against
+    for p in payload.get("schedule") or []:
+        in_range = (isinstance(p.get("week"), int) and isinstance(week, int)
+                    and isinstance(reg, int) and week <= p["week"] <= reg)
+        if (not in_range or p.get("team_id") not in ids or p.get("opponent_id") not in ids
+                or p.get("opponent_id") == p.get("team_id")):
+            problems.append(f"schedule pair {p!r} is out of range or names a non-team")
+    # /GUARD
+    fa = payload.get("free_agents")
+    # GUARD league-free-agents-valid [unit/test_league_capture_schema.py]: a break is refused
+    # the pool is copied as written, so it must still be what ESPN_FREE_AGENTS admits
+    if fa is not None:
+        from hub.fetch.espn import FREE_AGENT_SCHEMA
+        try:
+            ESPN_FREE_AGENTS.validate(pl.DataFrame(fa.get("rows") or [], schema=FREE_AGENT_SCHEMA))
+        except Exception as e:
+            problems.append(f"free_agents: {type(e).__name__}: {e}")
+    # /GUARD
+    # GUARD league-problems-are-raised [unit/test_league_capture_schema.py]: collected are refused
+    if problems:
+        raise ContractViolation("league capture: " + "; ".join(problems))
+    # /GUARD
 
 
 def check_roster_artifact(payload: dict[str, Any]) -> None:

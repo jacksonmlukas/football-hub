@@ -57,7 +57,7 @@ CLI_MODULES = (
     "hub.draft.fit_corrections", "hub.draft.impute_cv",
     "hub.draft.live", "hub.draft.tune", "hub.exhibits.leverage", "hub.exhibits.state_space_rating",
     "hub.exhibits.weekly_projection", "hub.fetch.bigten",
-    "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.free_agents", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
+    "hub.fetch.cfbd", "hub.fetch.consensus", "hub.fetch.free_agents", "hub.fetch.league", "hub.fetch.nfeloqb", "hub.fetch.nflverse", "hub.fetch.odds",
     "hub.fetch.pool", "hub.forecasters.cli", "hub.forecasters.close_line", "hub.forecasters.receipts", "hub.forecasters.score", "hub.forecasters.leaderboard", "hub.forecasters.burn_in", "hub.closing", "hub.inspect", "hub.live_chain", "hub.watchdog_gap", "hub.escalate", "hub.audit_ready",
     "hub.instrument_check",
     "hub.models.conformal",
@@ -332,6 +332,9 @@ ABSENT_INPUT = [
     ("hub.season.stream", ["--roster", "{tmp}/nope.parquet"]),
     # The free-agent fetch (#493): no league, no cookie and nothing last-good is a sentence.
     ("hub.fetch.free_agents", ["--out", "{tmp}/nope.parquet"]),
+    # The league capture (#545): no league and no cookie is a sentence and, without `--write`
+    # (the slate's never-failing mode), a non-zero exit. `--out` keeps it off `state/league/`.
+    ("hub.fetch.league", ["--out", "{tmp}/league"]),
     # The waiver ranking (#493): a roster that is not there is a sentence.
     ("hub.season.waiver", ["--roster", "{tmp}/nope.parquet"]),
     ("hub.season.survivor", []),

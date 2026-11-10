@@ -217,6 +217,11 @@ jobs:
           # until now, which is gitignored, so no scheduled run had ever seen what any
           # other had spent; the coverage artifact had the same fault (#273).
           git add site/data state
+          # The league capture (#545) is written by `make slate` and re-stamped (`captured_at`)
+          # on every run that gets through, so none staged means ESPN was out of reach or the
+          # cookie lapsed. A warning, never an exit: the slate is already built (CLAUDE.md).
+          git diff --cached --name-only | grep -q '^state/league/' \
+            || echo "::warning::no state/league/ capture was written -- the league was unreachable or the cookie lapsed"
           if git diff --cached --quiet; then
             echo "nothing changed; no commit"
             exit 0
