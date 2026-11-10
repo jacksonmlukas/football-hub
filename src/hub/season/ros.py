@@ -30,6 +30,9 @@ Assumptions the output states, because each moves the answer:
   come from `hub.draft.season.bye_weeks`, the nflverse schedule through its validated loader
   (cached under data/raw). When that cannot be read the byes are not zeroed, and the output says
   so. Check the first real capture's `week_proj` coverage before leaning on the late weeks.
+- Each moved player's NFL opponent in the playoff weeks (15-17; "BYE" where his team has no
+  game) is printed from the same nflverse schedule (`nfl_opponents`); when it cannot be read the
+  line is omitted with a warning.
 - Weekly scores are Normal and independent across players except teammates in a lineup
   (`group_sd`); no injury beyond the IR slot, no skew.
 
@@ -93,6 +96,15 @@ class Counterparty:
 
 
 @dataclass(frozen=True)
+class MovedPlayer:
+    """A player who changes sides and his NFL opponent in each playoff week ("BYE" if none)."""
+    name: str
+    direction: str
+    nfl_team: str
+    opponents: tuple[tuple[int, str], ...]
+
+
+@dataclass(frozen=True)
 class MoveResult:
     n_draws: int
     team: str
@@ -105,6 +117,7 @@ class MoveResult:
     counterparty: Counterparty | None
     flat_share: float
     warnings: list[str]
+    moved: list[MovedPlayer]
 
 
 # --- the weekly mean -----------------------------------------------------------------------
@@ -210,7 +223,8 @@ def _find(rows: Sequence[Mapping[str, Any]], name: str) -> int | None:
 
 
 def _resolve(capture: Mapping[str, Any], move: Move):
-    """(our index, counterparty index or None, our roster after, their roster after)."""
+    """(our index, counterparty index or None, our roster after, their roster after, the
+    players that move as (direction, row))."""
     teams = capture["teams"]
     me = next(i for i, t in enumerate(teams) if t["is_mine"])
     mine = list(teams[me]["roster"])
@@ -246,13 +260,30 @@ def _resolve(capture: Mapping[str, Any], move: Move):
         theirs = list(teams[cp]["roster"])
         out = {i for _, i in hits}
         got = [dict(theirs[i], slot="BE") for i in sorted(out)]
-        return me, cp, after_mine + got, [r for i, r in enumerate(theirs) if i not in out] + given
+        moved = [("give", r) for r in given] + [("get", r) for r in got]
+        return (me, cp, after_mine + got,
+                [r for i, r in enumerate(theirs) if i not in out] + given, moved)
     got = [dict(pool[j], slot="BE", week_proj={}) for _, j in from_pool]
-    return me, None, after_mine + got, None
+    moved = [("give", r) for r in given] + [("get", r) for r in got]
+    return me, None, after_mine + got, None, moved
+
+
+def nfl_opponents(season: int) -> dict[str, dict[int, str]]:
+    """Each NFL team's opponent by week ("@XXX" when away), from the nflverse schedule through
+    the validated loader -- the source `hub.draft.season.bye_weeks` reads."""
+    from hub.fetch.nflverse import load
+    sched = load("schedules", seasons=[season],
+                 cols=["game_id", "season", "week", "home_team", "away_team", "game_type"])
+    out: dict[str, dict[int, str]] = {}
+    for g in sched.iter_rows(named=True):
+        out.setdefault(g["home_team"], {})[int(g["week"])] = g["away_team"]
+        out.setdefault(g["away_team"], {})[int(g["week"])] = "@" + g["home_team"]
+    return out
 
 
 def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int] | None,
-               n_draws: int, seed: int, now: datetime | None = None) -> MoveResult:
+               n_draws: int, seed: int, now: datetime | None = None,
+               opponents: Mapping[str, Mapping[int, str]] | None = None) -> MoveResult:
     """Our change in P(playoffs), P(bye) and P(title) from `move`, each with a paired SE, and
     the counterparty's change in P(playoffs) for a trade. Pure: `capture` is a loaded dict."""
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -273,7 +304,7 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
     weeks = list(range(first, last + 1))
     teams = capture["teams"]
     index = {t["team_id"]: i for i, t in enumerate(teams)}
-    me, cp, mine_after, theirs_after = _resolve(capture, move)
+    me, cp, mine_after, theirs_after, moved = _resolve(capture, move)
 
     flat = total = 0
     mu = np.zeros((len(weeks), len(teams)))
@@ -330,13 +361,24 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
     if byes is None:
         warnings.append("NFL bye weeks could not be read, so flat projections are not zeroed "
                         "on byes")
+    if opponents is None:
+        warnings.append("the NFL schedule could not be read, so the playoff-week opponents "
+                        "of the moved players are not shown")
+    shown = []
+    for direction, row in moved:
+        team = canon_team(row.get("nfl_team"))
+        by_week = (opponents or {}).get(team or "", {})
+        shown.append(MovedPlayer(
+            str(row["player"]), direction, str(row.get("nfl_team") or ""),
+            tuple((w, by_week.get(w, "BYE")) for w in pw) if opponents is not None else ()))
     return MoveResult(
         n_draws=n_draws, team=teams[me]["name"],
         before={k: float(v.mean()) for k, v in before_hit.items()},
         after={k: float(v.mean()) for k, v in after_hit.items()},
         playoffs=est["playoffs"], bye=est["bye"], title=est["title"],
         indistinguishable={k: _apart(e) for k, e in est.items()},
-        counterparty=counter, flat_share=flat / total if total else 0.0, warnings=warnings)
+        counterparty=counter, flat_share=flat / total if total else 0.0, warnings=warnings,
+        moved=shown)
 
 
 # --- the command line ----------------------------------------------------------------------
@@ -367,6 +409,10 @@ def render(res: MoveResult) -> list[str]:
         out.append(f"  {c.name} P(playoffs) {c.playoffs.delta * 100:+.1f} +/- "
                    f"{c.playoffs.se * 100:.1f} pts"
                    + ("  (can't tell apart)" if _apart(c.playoffs) else ""))
+    for m in res.moved:
+        if m.opponents:
+            weeks = ", ".join(f"wk{w} {o}" for w, o in m.opponents)
+            out.append(f"  {m.direction:<4} {m.name} ({m.nfl_team}): {weeks}")
     out.append("  Other teams keep their current rosters and start their best lineup by "
                "projection; that flatters weak managers.")
     out.append(f"  Remaining weeks are a flat projection for {res.flat_share:.0%} of "
@@ -435,8 +481,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as e:                       # graceful degradation, per CLAUDE.md
             print(f"hub.season.ros: bye weeks unavailable ({type(e).__name__}: {e})",
                   file=sys.stderr)
+    opponents = None
+    if not a.no_byes:
+        try:
+            opponents = nfl_opponents(int(capture["season"]))
+        except Exception as e:                       # graceful degradation, per CLAUDE.md
+            print(f"hub.season.ros: NFL schedule unavailable ({type(e).__name__}: {e})",
+                  file=sys.stderr)
     try:
-        res = score_move(capture, move, byes=byes, n_draws=a.draws, seed=a.seed)
+        res = score_move(capture, move, byes=byes, n_draws=a.draws, seed=a.seed,
+                         opponents=opponents)
     except MoveError as e:
         print(f"hub.season.ros: {e}", file=sys.stderr)
         return 1

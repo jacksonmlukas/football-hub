@@ -293,6 +293,7 @@ def test_an_unreadable_schedule_degrades_to_unzeroed_byes_and_says_so(tmp_path, 
     def refuse(season):
         raise OSError("no schedule cached")
     monkeypatch.setattr(ros.draft_season, "bye_weeks", refuse)
+    monkeypatch.setattr(ros, "nfl_opponents", refuse)
     p = write(tmp_path)
     code = ros.main(["--capture", str(p), "--add", "Waiver Star", "--drop", "WR deep t1",
                      "--draws", "300"])
@@ -312,6 +313,60 @@ def test_with_no_capture_named_the_newest_one_is_scored(tmp_path, capsys):
     code = ros.main(["--league-dir", str(tmp_path / "league"), "--add", "Waiver Star",
                      "--drop", "WR deep t1", "--draws", "300", "--no-byes"])
     assert code == 0 and "wk06.json" in capsys.readouterr().out
+
+
+# --- the moved players' playoff-week opponents ---------------------------------------------
+
+OPP = {"PHI": {15: "@DAL", 16: "DAL"}}                     # no week-17 game: a bye
+
+
+def test_each_moved_player_carries_his_nfl_opponent_in_weeks_15_to_17_bye_where_none():
+    got = ros.score_move(make_capture(), move_add(), byes=BYES, n_draws=200, seed=1, now=NOW,
+                         opponents=OPP)
+    assert [(m.direction, m.name) for m in got.moved] == [("give", "WR deep t1"),
+                                                          ("get", "Waiver Star")]
+    assert all(m.opponents == ((15, "@DAL"), (16, "DAL"), (17, "BYE")) for m in got.moved)
+    text = "\n".join(ros.render(got))
+    assert "get  Waiver Star (PHI): wk15 @DAL, wk16 DAL, wk17 BYE" in text
+
+
+def test_an_unreadable_nfl_schedule_is_a_warning_not_a_failure():
+    got = score(make_capture(), move_add(), n=200)
+    assert any("NFL schedule" in w for w in got.warnings)
+    assert all(m.opponents == () for m in got.moved)
+
+
+def test_the_nfl_opponents_come_from_the_validated_schedule_loader(monkeypatch):
+    import polars as pl
+
+    from hub.fetch import nflverse
+    frame = pl.DataFrame({"game_id": ["g"], "season": [2026], "week": [15],
+                          "home_team": ["DAL"], "away_team": ["PHI"], "game_type": ["REG"]})
+    monkeypatch.setattr(nflverse, "load", lambda *a, **k: frame)
+    assert ros.nfl_opponents(2026) == {"DAL": {15: "PHI"}, "PHI": {15: "@DAL"}}
+
+
+# --- a team whose fate is already settled --------------------------------------------------
+
+def _settled(wins_for_us, wins_for_them):
+    cap = make_capture(week=11)                    # four games left
+    for t in cap["teams"]:
+        t["wins"], t["losses"] = (wins_for_us, 0) if t["is_mine"] else (wins_for_them, 0)
+    return cap
+
+
+def test_a_team_that_has_clinched_a_playoff_spot_by_its_record_gains_exactly_nothing():
+    got = score(_settled(10, 3), move_add(), n=1000)       # 3 + 4 games can never reach 10
+    assert got.before["playoffs"] == got.after["playoffs"] == 1.0
+    assert (got.playoffs.delta, got.playoffs.se) == (0.0, 0.0)
+    assert got.indistinguishable["playoffs"]
+
+
+def test_a_team_that_is_mathematically_eliminated_gains_exactly_nothing():
+    got = score(_settled(0, 8), move_add(), n=1000)        # 0 + 4 games can never reach 8
+    assert got.before["playoffs"] == got.after["playoffs"] == 0.0
+    assert (got.playoffs.delta, got.playoffs.se) == (0.0, 0.0)
+    assert got.indistinguishable["playoffs"]
 
 
 # --- the capture's edges -------------------------------------------------------------------
