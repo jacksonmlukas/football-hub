@@ -1,0 +1,11 @@
+{
+ "burn_in_week": 9,
+ "deviation_sd": {
+  "llm1:line_aware": 0.046781,
+  "llm2:line_aware": 0.036816,
+  "llm3:line_aware": 0.023367,
+  "llm4:line_aware": 0.032468
+ },
+ "h1_min_deviation_sd": 0.25,
+ "season": 2026
+}
