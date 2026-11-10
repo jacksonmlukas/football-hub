@@ -494,7 +494,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except MoveError as e:
         print(f"hub.season.ros: {e}", file=sys.stderr)
         return 1
-    print(f"  {path.name}: week {capture['week']}")
+    print(f"  {path.name}: week {capture['week']}, captured {capture['captured_at']}")
     print("\n".join(render(res)))
     return 0
 

@@ -213,6 +213,14 @@ def test_the_cli_prints_the_verdict_and_the_assumptions(tmp_path, capsys):
     assert twin == 0 and "can't tell apart" in capsys.readouterr().out
 
 
+def test_the_header_prints_when_the_capture_was_taken_even_when_it_is_fresh(tmp_path, capsys):
+    p = write(tmp_path)
+    ros.main(["--capture", str(p), "--add", "Waiver Star", "--drop", "WR deep t1",
+              "--draws", "200", "--no-byes"])
+    out = capsys.readouterr().out
+    assert f"captured {NOW.isoformat()}" in out
+
+
 def test_the_default_capture_is_the_newest_week_of_the_newest_season(tmp_path):
     write(tmp_path, week=5)
     newest = write(tmp_path, week=10)
