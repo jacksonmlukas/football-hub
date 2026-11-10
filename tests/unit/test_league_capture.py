@@ -130,6 +130,23 @@ def test_league_capture_main_exits_zero_offline(tmp_path, monkeypatch, capsys):
     assert list(tmp_path.rglob("*")) == []
 
 
+def test_league_capture_a_build_bug_is_not_called_a_network_failure(tmp_path):
+    broken = make_league()
+    del broken.settings.reg_season_count        # build_capture raises AttributeError
+    line, ok = L.capture(lambda: broken, out_root=tmp_path, now=NOW, swid="swid-2",
+                         free_agents=lambda: None)
+    assert not ok and "the capture could not be built (AttributeError:" in line
+    assert "unreachable" not in line and "nothing written" in line
+    assert list(tmp_path.rglob("*")) == []
+
+
+def test_league_capture_file_is_compact_json_with_a_trailing_newline(tmp_path):
+    run(tmp_path, make_league)
+    text = (tmp_path / "2026" / "wk10.json").read_text()
+    assert text.endswith("}\n") and "\n" not in text[:-1] and ": " not in text[:200]
+    assert json.loads(text)["week"] == 10
+
+
 def test_league_capture_without_write_summarises_and_creates_nothing(tmp_path):
     line, ok = L.capture(make_league, out_root=tmp_path, now=NOW, swid="swid-2",
                          free_agents=lambda: None, write=False)

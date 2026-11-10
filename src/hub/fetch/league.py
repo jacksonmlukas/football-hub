@@ -83,6 +83,7 @@ def build_capture(league: Any, *, swid: str | None = None, now: datetime | None 
     schedule = []
     for t in league.teams:
         for w in range(week, reg + 1):
+            # espn-api's schedule is indexed by matchup period from 0, so week w is index w - 1
             if w - 1 < len(t.schedule):
                 schedule.append({"week": w, "team_id": int(t.team_id),
                                  "opponent_id": int(t.schedule[w - 1].team_id)})
@@ -126,10 +127,14 @@ def capture(load: Callable[[], Any], *, out_root: Path, now: datetime | None = N
     source. `ok` is False whenever nothing could be captured."""
     try:
         league = load()
-        cap = build_capture(league, swid=swid, now=now, free_agents=free_agents())
     except Exception as e:                      # graceful degradation, per CLAUDE.md
         print(f"hub.fetch.league: load failed: {type(e).__name__}: {e}", file=sys.stderr)
         return f"ESPN unreachable or no cookie ({type(e).__name__}); nothing written", False
+    try:
+        cap = build_capture(league, swid=swid, now=now, free_agents=free_agents())
+    except Exception as e:                      # a bug here is not a network failure
+        print(f"hub.fetch.league: build failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return f"the capture could not be built ({type(e).__name__}: {e}); nothing written", False
     if not 1 <= cap["week"] <= LAST_NFL_WEEK:
         return f"league week is {cap['week']}, not a scoring week; nothing written", False
     try:
@@ -141,7 +146,7 @@ def capture(load: Callable[[], Any], *, out_root: Path, now: datetime | None = N
     if not write:
         return f"week {cap['week']}: {summary} (not written; pass --write)", True
     path = out_root / str(cap["season"]) / f"wk{cap['week']:02d}.json"
-    atomic.write_text(path, json.dumps(cap, indent=1, sort_keys=True) + "\n")
+    atomic.write_text(path, json.dumps(cap, separators=(",", ":"), sort_keys=True) + "\n")
     return f"week {cap['week']}: {summary}, wrote {path.name}", True
 
 

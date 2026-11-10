@@ -1121,27 +1121,25 @@ def check_league_capture(payload: dict[str, Any]) -> None:
     problems: list[str] = []
     teams = payload.get("teams") or []
     ids = [t.get("team_id") for t in teams]
-    # GUARD league-has-teams [unit/test_league_capture_schema.py]: a break is refused
-    # an empty league scores nothing
+    # GUARD league-has-teams [unit/test_league_capture_schema.py]: An empty league scores nothing.
+    # A capture with no teams is refused.
     if not teams:
         problems.append("no teams")
     # /GUARD
-    # GUARD league-team-ids-unique [unit/test_league_capture_schema.py]: a break is refused
-    # a team twice would
-    # be scored twice, and its opponents' schedules would point at the wrong roster
+    # GUARD league-team-ids-unique [unit/test_league_capture_schema.py]: A team twice scores twice.
+    # A repeated id would score one roster twice.
     if len(set(ids)) != len(ids):
         problems.append(f"team ids are not unique: {sorted(ids, key=str)}")
     # /GUARD
-    # GUARD league-exactly-one-ours [unit/test_league_capture_schema.py]: a break is refused
-    # a Move is scored
-    # for our side, so zero or two of them makes every number a guess
+    # GUARD league-exactly-one-ours [unit/test_league_capture_schema.py]: Exactly one team is ours.
+    # A Move is scored for our side, so zero or two make every number a guess.
     mine = [t.get("team_id") for t in teams if t.get("is_mine")]
     if len(mine) != 1 or payload.get("my_team_id") not in mine:
         problems.append(f"{len(mine)} teams marked ours; my_team_id is "
                         f"{payload.get('my_team_id')!r}")
     # /GUARD
-    # GUARD league-roster-columns [unit/test_league_capture_schema.py]: a break is refused
-    # a renamed column fills nothing and fails nowhere
+    # GUARD league-roster-columns [unit/test_league_capture_schema.py]: A rename would pass quiet.
+    # A renamed roster column would fill nothing and fail nowhere.
     for t in teams:
         for r in t.get("roster") or []:
             gone = [c for c in LEAGUE_ROSTER_COLUMNS if c not in r]
@@ -1151,9 +1149,8 @@ def check_league_capture(payload: dict[str, Any]) -> None:
     # /GUARD
     s = payload.get("settings") or {}
     deadline = s.get("trade_deadline")
-    # GUARD league-deadline-iso-or-null [unit/test_league_capture_schema.py]: a break is refused
-    # ESPN's 0 for
-    # no deadline is stored as null; a 1970 timestamp would read as a deadline long past
+    # GUARD league-deadline-iso-or-null [unit/test_league_capture_schema.py]: No 1970 deadlines.
+    # ESPN's 0 is stored as null; an epoch timestamp would read as long past.
     if deadline is not None:
         try:
             parsed = datetime.fromisoformat(deadline)
@@ -1163,9 +1160,8 @@ def check_league_capture(payload: dict[str, Any]) -> None:
             problems.append(f"trade_deadline {deadline!r} is not an ISO UTC timestamp or null")
     # /GUARD
     week, reg = payload.get("week"), s.get("reg_season_weeks")
-    # GUARD league-schedule-pairs [unit/test_league_capture_schema.py]: a break is refused
-    # a pair naming a team that is not in the league, or a week already played, is a
-    # schedule the Move would be scored against
+    # GUARD league-schedule-pairs [unit/test_league_capture_schema.py]: Pairs must name real teams.
+    # A pair naming a non-team or an already played week is refused.
     for p in payload.get("schedule") or []:
         in_range = (isinstance(p.get("week"), int) and isinstance(week, int)
                     and isinstance(reg, int) and week <= p["week"] <= reg)
@@ -1174,8 +1170,8 @@ def check_league_capture(payload: dict[str, Any]) -> None:
             problems.append(f"schedule pair {p!r} is out of range or names a non-team")
     # /GUARD
     fa = payload.get("free_agents")
-    # GUARD league-free-agents-valid [unit/test_league_capture_schema.py]: a break is refused
-    # the pool is copied as written, so it must still be what ESPN_FREE_AGENTS admits
+    # GUARD league-free-agents-valid [unit/test_league_capture_schema.py]: The pool must stay valid.
+    # The pool is copied as written, so it must still meet ESPN_FREE_AGENTS.
     if fa is not None:
         from hub.fetch.espn import FREE_AGENT_SCHEMA
         try:
@@ -1183,7 +1179,8 @@ def check_league_capture(payload: dict[str, Any]) -> None:
         except Exception as e:
             problems.append(f"free_agents: {type(e).__name__}: {e}")
     # /GUARD
-    # GUARD league-problems-are-raised [unit/test_league_capture_schema.py]: collected are refused
+    # GUARD league-problems-are-raised [unit/test_league_capture_schema.py]: Problems are raised.
+    # Every collected problem becomes a ContractViolation.
     if problems:
         raise ContractViolation("league capture: " + "; ".join(problems))
     # /GUARD
