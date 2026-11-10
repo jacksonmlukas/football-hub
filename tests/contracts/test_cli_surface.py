@@ -276,12 +276,14 @@ ABSENT_INPUT = [
     # The LLM-forecaster run (#444): until v0 is pinned the config refuses before any model
     # or odds call, and says so. `--out` keeps it off any real forecasts checkout.
     ("hub.forecasters.cli", ["run", "--out", "{tmp}", "--day", "2026-10-25"]),
-    # The study's scoring (#452, #448): until the H2 implementation pin (and delta and the H1
-    # threshold) is set the committed config refuses in one sentence, before any input is
-    # read. With no `--games` it would read nflverse's schedule cache; it never gets there.
-    ("hub.forecasters.score", ["--forecasts", "{tmp}"]),
-    # The interim leaderboard (#453): with no burn-in record it refuses in one sentence (exit 4)
-    # and writes nothing, before any schedule is read.
+    # The study's scoring (#452, #448): armed by the committed burn-in record since
+    # prereg-llm-v1, so the absent input is an unreadable `--games` file, refused in one
+    # sentence (exit 2). Without `--games` it reads nflverse's schedule and a failed read
+    # raises -- left so, because any edit to score.py moves the H2 implementation pin, and
+    # its one real run is by hand after Week 18.
+    ("hub.forecasters.score", ["--forecasts", "{tmp}", "--games", "{tmp}/nope.jsonl"]),
+    # The interim leaderboard (#453): armed by the committed burn-in record, it reads the
+    # schedule; unreachable, it says so in one sentence (exit 2) and writes nothing.
     ("hub.forecasters.leaderboard", ["--forecasts", "{tmp}", "--out", "{tmp}/lb.json"]),
     # The burn-in report (#451): the Week 9 schedule cannot be read, so it says so and exits 1
     # before any record is written. `--out` keeps it off the committed prereg record.

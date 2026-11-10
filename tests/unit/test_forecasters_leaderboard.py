@@ -132,3 +132,12 @@ def test_the_refusal_codes_are_the_ones_the_workflow_treats_as_clean(rc):
     wf = (Path(__file__).resolve().parents[2] / ".github" / "workflows"
           / "forecast-score.yml").read_text()
     assert str(rc) in wf.split("case")[1].split("*)")[0]
+
+
+@pytest.mark.parametrize("exc", [OSError("no network"), ValueError("Failed to parse data")])
+def test_an_unreachable_schedule_is_an_error_reported_not_raised(tmp_path, exc):
+    def schedule(season):
+        raise exc
+    rc, lines, out = _run(tmp_path, schedule=schedule)
+    assert rc == leaderboard.UNREADABLE and not out.exists()
+    assert len(lines) == 1 and lines[0].startswith("refused: the 2026 schedule cannot be read")

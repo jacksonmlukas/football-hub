@@ -116,7 +116,16 @@ def main(argv: Sequence[str] | None = None, *, echo: Callable[[str], object] = p
         return NO_BURN_IN
     markets = score.load_markets(args.forecasts)
     refused = score.refused_games(args.forecasts)
-    games = score.games_from_schedule(schedule(burn_in.season), markets.home,
+    # nflreadpy wraps a failed download in ValueError and the network in OSError; either way
+    # there is nothing to score against this run, an unreadable input and not a traceback.
+    # Caught here rather than in `score`, whose every commit moves the H2 implementation pin.
+    try:
+        sched = schedule(burn_in.season)
+    except (OSError, ValueError) as exc:
+        echo(f"refused: the {burn_in.season} schedule cannot be read "
+             f"({type(exc).__name__}: {exc})")
+        return UNREADABLE
+    games = score.games_from_schedule(sched, markets.home,
                                       season=burn_in.season, first_week=burn_in.first_scored_week,
                                       refused=refused)
     if not any(g.outcome is not None for g in games):
