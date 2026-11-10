@@ -70,7 +70,7 @@ CLI_MODULES = (
     "hub.models.weekly_screen", "hub.publish", "hub.season.lineup",
     "hub.season.lineup_gate", "hub.season.roster", "hub.season.weekly_gate",
     "hub.season.weekly_forward", "hub.season.survivor", "hub.season.pool", "hub.season.journal",
-    "hub.season.lineup_journal", "hub.season.stream", "hub.season.waiver",
+    "hub.season.lineup_journal", "hub.season.stream", "hub.season.waiver", "hub.season.ros",
     "hub.store",
 )
 
@@ -337,6 +337,10 @@ ABSENT_INPUT = [
     # The league capture (#545): no league and no cookie is a sentence and, without `--write`
     # (the slate's never-failing mode), a non-zero exit. `--out` keeps it off `state/league/`.
     ("hub.fetch.league", ["--out", "{tmp}/league"]),
+    # Scoring a Move (#501): a capture named on the command line that is not there is a
+    # sentence and exit 1. (With no `--capture` and nothing under `state/league/` it exits 0 --
+    # the capture is the slate's optional step -- so this drives the named-file case.)
+    ("hub.season.ros", ["--capture", "{tmp}/nope.json", "--add", "A", "--drop", "B"]),
     # The waiver ranking (#493): a roster that is not there is a sentence.
     ("hub.season.waiver", ["--roster", "{tmp}/nope.parquet"]),
     ("hub.season.survivor", []),
