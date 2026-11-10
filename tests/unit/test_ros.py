@@ -188,6 +188,9 @@ def test_a_week_old_capture_is_stale_and_a_passed_trade_deadline_is_flagged_for_
 def test_without_bye_weeks_the_result_says_the_flat_projection_is_not_zeroed():
     got = score(make_capture(), move_add(), n=200, byes=None)
     assert any("bye" in w for w in got.warnings)
+    assert "zeroed on NFL byes" not in "\n".join(ros.render(got))
+    with_byes = score(make_capture(), move_add(), n=200, byes={})
+    assert "zeroed on NFL byes" in "\n".join(ros.render(with_byes))
 
 
 # --- the command line ----------------------------------------------------------------------
@@ -219,6 +222,29 @@ def test_the_header_prints_when_the_capture_was_taken_even_when_it_is_fresh(tmp_
               "--draws", "200", "--no-byes"])
     out = capsys.readouterr().out
     assert f"captured {NOW.isoformat()}" in out
+
+
+def test_a_failing_run_still_says_which_capture_it_read_and_that_it_is_stale(tmp_path, capsys):
+    cap = make_capture()
+    cap["captured_at"] = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    p = tmp_path / "wk05.json"
+    p.write_text(json.dumps(cap))
+    code = ros.main(["--capture", str(p), "--add", "Ghost Back", "--drop", "WR deep t1",
+                     "--no-byes"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert f"captured {cap['captured_at']}" in out and "stale" in out
+
+
+def test_a_stale_capture_is_warned_once_on_a_run_that_scores(tmp_path, capsys):
+    cap = make_capture()
+    cap["captured_at"] = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    p = tmp_path / "wk05.json"
+    p.write_text(json.dumps(cap))
+    code = ros.main(["--capture", str(p), "--add", "Waiver Star", "--drop", "WR deep t1",
+                     "--draws", "200", "--no-byes"])
+    out = capsys.readouterr().out
+    assert code == 0 and out.count("stale") == 1
 
 
 def test_the_default_capture_is_the_newest_week_of_the_newest_season(tmp_path):

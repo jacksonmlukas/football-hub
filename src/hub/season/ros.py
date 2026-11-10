@@ -46,7 +46,7 @@ import json
 import math
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -116,6 +116,7 @@ class MoveResult:
     indistinguishable: dict[str, bool]
     counterparty: Counterparty | None
     flat_share: float
+    byes_zeroed: bool
     warnings: list[str]
     moved: list[MovedPlayer]
 
@@ -196,6 +197,15 @@ def seed_standings(pts: np.ndarray, schedule: Sequence[tuple[int, int, int]], *,
 
 
 # --- scoring -------------------------------------------------------------------------------
+
+def stale_warning(captured_at: str, now: datetime) -> str | None:
+    """The sentence saying a capture taken at `captured_at` is over STALE_DAYS old, else None."""
+    captured = _utc(captured_at)
+    if now - captured <= timedelta(days=STALE_DAYS):
+        return None
+    return (f"the capture is stale: taken {captured:%Y-%m-%d}, "
+            f"{(now - captured).days} days ago (over {STALE_DAYS})")
+
 
 def _utc(stamp: str) -> datetime:
     """An ISO timestamp as an aware UTC datetime; a naive one is read as UTC."""
@@ -349,11 +359,8 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
             _paired(outcomes(seeds1, champ1, cp)["playoffs"],
                     outcomes(seeds0, champ0, cp)["playoffs"]))
 
-    warnings: list[str] = []
-    captured = _utc(capture["captured_at"])
-    if now - captured > timedelta(days=STALE_DAYS):
-        warnings.append(f"the capture is stale: taken {captured:%Y-%m-%d}, "
-                        f"{(now - captured).days} days ago (over {STALE_DAYS})")
+    stale = stale_warning(capture["captured_at"], now)
+    warnings: list[str] = [stale] if stale else []
     deadline = s.get("trade_deadline")
     if cp is not None and deadline and now > _utc(deadline):
         warnings.append(f"the trade deadline passed on {deadline[:10]}; ESPN will not process "
@@ -377,7 +384,8 @@ def score_move(capture: Mapping[str, Any], move: Move, *, byes: Mapping[str, int
         after={k: float(v.mean()) for k, v in after_hit.items()},
         playoffs=est["playoffs"], bye=est["bye"], title=est["title"],
         indistinguishable={k: _apart(e) for k, e in est.items()},
-        counterparty=counter, flat_share=flat / total if total else 0.0, warnings=warnings,
+        counterparty=counter, flat_share=flat / total if total else 0.0,
+        byes_zeroed=byes is not None, warnings=warnings,
         moved=shown)
 
 
@@ -416,7 +424,8 @@ def render(res: MoveResult) -> list[str]:
     out.append("  Other teams keep their current rosters and start their best lineup by "
                "projection; that flatters weak managers.")
     out.append(f"  Remaining weeks are a flat projection for {res.flat_share:.0%} of "
-               "player-weeks (the rest are captured week projections), zeroed on NFL byes.")
+               "player-weeks (the rest are captured week projections)"
+               + (", zeroed on NFL byes." if res.byes_zeroed else "."))
     out += [f"  WARNING: {w}" for w in res.warnings]
     return out
 
@@ -473,6 +482,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, ContractViolation) as e:
         print(f"hub.season.ros: {path} is not a usable capture: {e}", file=sys.stderr)
         return 1
+    # The header and a stale warning come before scoring, so a run that fails below still
+    # says which capture it read and how old it is.
+    now = datetime.now(UTC)
+    stale = stale_warning(capture["captured_at"], now)
+    print(f"  {path.name}: week {capture['week']}, captured {capture['captured_at']}")
+    if stale:
+        print(f"  WARNING: {stale}")
 
     byes = None
     if not a.no_byes:
@@ -489,13 +505,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"hub.season.ros: NFL schedule unavailable ({type(e).__name__}: {e})",
                   file=sys.stderr)
     try:
-        res = score_move(capture, move, byes=byes, n_draws=a.draws, seed=a.seed,
+        res = score_move(capture, move, byes=byes, n_draws=a.draws, seed=a.seed, now=now,
                          opponents=opponents)
     except MoveError as e:
         print(f"hub.season.ros: {e}", file=sys.stderr)
         return 1
-    print(f"  {path.name}: week {capture['week']}, captured {capture['captured_at']}")
-    print("\n".join(render(res)))
+    print("\n".join(render(replace(res, warnings=[w for w in res.warnings if w != stale]))))
     return 0
 
 
