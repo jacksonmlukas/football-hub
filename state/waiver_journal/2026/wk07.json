@@ -3,7 +3,103 @@
  "basis": "value = the free agent's ESPN projection per game minus that of the lowest-projected non-IR rostered player at his position (ESPN's own points, unshrunk); rest-of-season totals and bye_ahead are shown, not used",
  "claimed": null,
  "label": "provisional",
- "outcome": null,
+ "outcome": {
+  "horizon_weeks": [
+   7,
+   8,
+   9
+  ],
+  "mean_net": 6.33,
+  "n_unscored": 5,
+  "picks": [
+   {
+    "player": "Tyler Bass",
+    "reason": "K is not in nflverse player stats, so no realised points exist to score it against",
+    "replaces": "Eddy Pineiro",
+    "scored": false
+   },
+   {
+    "in_points": 9.6,
+    "n_no_row": 2,
+    "net": -14.4,
+    "out_points": 24.0,
+    "player": "Kimani Vidal",
+    "replaces": "Chris Rodriguez Jr."
+   },
+   {
+    "in_points": 31.4,
+    "n_no_row": 1,
+    "net": 19.8,
+    "out_points": 11.6,
+    "player": "Ryan Flournoy",
+    "replaces": "Marvin Harrison Jr."
+   },
+   {
+    "in_points": 11.1,
+    "n_no_row": 3,
+    "net": -0.5,
+    "out_points": 11.6,
+    "player": "Treylon Burks",
+    "replaces": "Marvin Harrison Jr."
+   },
+   {
+    "player": "Matt Gay",
+    "reason": "K is not in nflverse player stats, so no realised points exist to score it against",
+    "replaces": "Eddy Pineiro",
+    "scored": false
+   },
+   {
+    "in_points": 42.3,
+    "n_no_row": 1,
+    "net": 30.7,
+    "out_points": 11.6,
+    "player": "Caleb Douglas",
+    "replaces": "Marvin Harrison Jr."
+   },
+   {
+    "in_points": 25.2,
+    "n_no_row": 1,
+    "net": 13.6,
+    "out_points": 11.6,
+    "player": "Efton Chism III",
+    "replaces": "Marvin Harrison Jr."
+   },
+   {
+    "in_points": 15.9,
+    "n_no_row": 2,
+    "net": 4.3,
+    "out_points": 11.6,
+    "player": "Antonio Williams",
+    "replaces": "Marvin Harrison Jr."
+   },
+   {
+    "player": "Trey Smack",
+    "reason": "K is not in nflverse player stats, so no realised points exist to score it against",
+    "replaces": "Eddy Pineiro",
+    "scored": false
+   },
+   {
+    "player": "Cam Little",
+    "reason": "K is not in nflverse player stats, so no realised points exist to score it against",
+    "replaces": "Eddy Pineiro",
+    "scored": false
+   },
+   {
+    "player": "Andre Szmyt",
+    "reason": "K is not in nflverse player stats, so no realised points exist to score it against",
+    "replaces": "Eddy Pineiro",
+    "scored": false
+   },
+   {
+    "in_points": 14.8,
+    "n_no_row": 1,
+    "net": -9.2,
+    "out_points": 24.0,
+    "player": "Samaje Perine",
+    "replaces": "Chris Rodriguez Jr."
+   }
+  ]
+ },
  "picks": [
   {
    "ecr": null,
@@ -151,7 +247,7 @@
   }
  ],
  "recorded_at": "2026-10-21T15:49:35.201584+00:00",
- "scored": false,
+ "scored": true,
  "season": 2026,
  "shrinkage": "unshrunk: the empirical-Bayes player model (#497) is not built, so a top-of-the-pool projection is biased upward by the selection that put it there",
  "week": 7,

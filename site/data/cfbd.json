@@ -1,23 +1,23 @@
 {
   "name": "cfbd",
   "source": "hub.fetch.cfbd",
-  "generated_at": "2026-11-07T18:37:56+00:00",
+  "generated_at": "2026-11-11T18:21:33+00:00",
   "shape": "summary",
   "season": 2026,
-  "week": 10,
+  "week": 11,
   "fetched": true,
   "stale": false,
   "reason": null,
   "unfetched_since": null,
   "escalate": false,
   "rows_by_endpoint": {
-    "games": 321,
-    "lines": 124,
-    "box": 13
+    "games": 315,
+    "lines": 67,
+    "box": 3
   },
   "quota": {
     "month": "2026-11",
-    "used": 11,
+    "used": 18,
     "limit": 1000
   }
 }

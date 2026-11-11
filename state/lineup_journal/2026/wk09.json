@@ -31,9 +31,26 @@
   "week": 9
  },
  "realised": {
-  "ecr": null,
-  "espn": null,
-  "mu": null
+  "consensus": {
+   "n_no_row": 0,
+   "points": 157.88,
+   "scores": "published.lineup"
+  },
+  "espn": {
+   "n_no_row": 0,
+   "points": 164.78,
+   "scores": "sources.espn.lineup"
+  },
+  "mu": {
+   "n_no_row": 0,
+   "points": 161.68,
+   "scores": "sources.mu.lineup"
+  },
+  "set": {
+   "n_no_row": 0,
+   "points": 157.88,
+   "scores": "published.lineup"
+  }
  },
  "recorded_at": "2026-11-04T18:27:32.200458+00:00",
  "rule": {
@@ -57,8 +74,9 @@
   "source": "ecr",
   "week": 9
  },
- "scored": false,
+ "scored": true,
  "season": 2026,
+ "set_scored_from": "published",
  "sources": {
   "ecr": {
    "lineup": null,

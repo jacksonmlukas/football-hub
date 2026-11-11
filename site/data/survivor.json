@@ -1,19 +1,19 @@
 {
   "name": "survivor",
   "source": "hub.season.survivor",
-  "generated_at": "2026-11-07T18:38:10+00:00",
+  "generated_at": "2026-11-11T18:21:51+00:00",
   "shape": "rows",
   "n": 15,
   "rows": [
     {
       "week": 10,
-      "team": "CAR",
-      "win_prob": 0.5468592666108859
+      "team": "IND",
+      "win_prob": 0.6082280606232515
     },
     {
       "week": 11,
-      "team": "LAC",
-      "win_prob": 0.7720528190539049
+      "team": "BUF",
+      "win_prob": 0.9023453679183251
     },
     {
       "week": 12,
@@ -52,13 +52,13 @@
     },
     {
       "week": 16,
-      "team": "NO",
-      "win_prob": 0.6670120023224967
+      "team": "LAC",
+      "win_prob": 0.7086370600968896
     },
     {
       "week": 16,
-      "team": "PIT",
-      "win_prob": 0.6082280606232515
+      "team": "NO",
+      "win_prob": 0.6670120023224967
     },
     {
       "week": 17,
@@ -72,8 +72,8 @@
     },
     {
       "week": 18,
-      "team": "BUF",
-      "win_prob": 0.7837344437707137
+      "team": "CAR",
+      "win_prob": 0.5777798142127708
     },
     {
       "week": 18,
@@ -89,7 +89,7 @@
   "pool_digest": "b3365833",
   "status": "unread-state",
   "season": 2026,
-  "survival": 0.0037262279662414162,
+  "survival": 0.004160417532972539,
   "unpriced_weeks": [],
   "weeks_remaining": [
     10,
@@ -125,7 +125,6 @@
     "SF"
   ],
   "snapshot_only_weeks": [
-    11,
     12,
     13,
     14,

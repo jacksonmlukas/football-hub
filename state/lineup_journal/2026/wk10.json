@@ -1,0 +1,90 @@
+{
+ "disagree": true,
+ "published": {
+  "decided_at": "2026-11-11T18:21:50.752271+00:00",
+  "ecr_from_week": 7,
+  "ecr_week": 9,
+  "label": "provisional",
+  "lineup": [
+   "Bhayshul Tuten",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "reason": "no pre-kickoff consensus capture for week 10; set on week 9's lineup capture of 2026-11-06 (last-good)",
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 10
+ },
+ "realised": {
+  "ecr": null,
+  "espn": null,
+  "mu": null
+ },
+ "recorded_at": "2026-11-11T18:21:40.972004+00:00",
+ "rule": {
+  "basis": "weekly expert consensus rank (FantasyPros ECR), from the newest capture taken before the week's first game day; best legal lineup by rank among projected, startable, available players not on bye",
+  "caveat": "provisional rule (ADR-0014), not a measured edge: no gate has run on it; it sets the lineup from week 7 (#492) until a forward-gated model beats it, and every week is journalled so the forward record can reopen it",
+  "ecr_from_week": 7,
+  "ecr_week": 9,
+  "label": "provisional",
+  "lineup": [
+   "Bhayshul Tuten",
+   "Drake London",
+   "Ja'Marr Chase",
+   "Javonte Williams",
+   "Jordan Love",
+   "Matthew Golden",
+   "Ollie Gordon II",
+   "T.J. Hockenson"
+  ],
+  "reason": "no pre-kickoff consensus capture for week 10; set on week 9's lineup capture of 2026-11-06 (last-good)",
+  "rule": "ecr",
+  "source": "ecr",
+  "week": 10
+ },
+ "scored": false,
+ "season": 2026,
+ "sources": {
+  "ecr": {
+   "lineup": null,
+   "n_unranked": 12,
+   "reason": "no pre-kickoff consensus capture for week 10",
+   "superseded_by": "published",
+   "superseded_reason": "no Wednesday consensus capture is written since ADR-0027 (#515); from the switch week the consensus lineup is the one published off the Friday lineup capture, scored at settle as `realised.consensus` (#530)"
+  },
+  "espn": {
+   "lineup": [
+    "Bhayshul Tuten",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "Matthew Golden",
+    "Ollie Gordon II",
+    "T.J. Hockenson"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  },
+  "mu": {
+   "lineup": [
+    "Bhayshul Tuten",
+    "Denzel Boston",
+    "Drake London",
+    "Ja'Marr Chase",
+    "Javonte Williams",
+    "Jordan Love",
+    "Matthew Golden",
+    "T.J. Hockenson"
+   ],
+   "n_unranked": 0,
+   "reason": null
+  }
+ },
+ "week": 10
+}
