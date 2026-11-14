@@ -1,21 +1,30 @@
 {
  "disagree": true,
  "published": {
-  "decided_at": "2026-11-11T18:21:50.752271+00:00",
+  "decided_at": "2026-11-14T19:01:54.454703+00:00",
+  "ecr_capture": {
+   "captured_at": "2026-11-14T14:44:28.797854+00:00",
+   "note": "consensus ranks as of Fri 2026-11-13, taken after Thursday's games, so in time only for players whose game had not started",
+   "purpose": "lineup",
+   "scrape_date": "2026-11-13"
+  },
   "ecr_from_week": 7,
-  "ecr_week": 9,
+  "ecr_week": 10,
   "label": "provisional",
   "lineup": [
    "Bhayshul Tuten",
-   "Drake London",
+   "Brenton Strange",
    "Ja'Marr Chase",
    "Javonte Williams",
    "Jordan Love",
+   "Malik Nabers",
    "Matthew Golden",
-   "Ollie Gordon II",
-   "T.J. Hockenson"
+   "Ollie Gordon II"
   ],
-  "reason": "no pre-kickoff consensus capture for week 10; set on week 9's lineup capture of 2026-11-06 (last-good)",
+  "locked": [
+   "Malik Nabers"
+  ],
+  "reason": null,
   "rule": "ecr",
   "source": "ecr",
   "week": 10
