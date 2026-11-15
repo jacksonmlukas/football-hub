@@ -1,0 +1,21 @@
+{
+ "captured_at": "2026-11-15T19:09:22.236776",
+ "rows": [
+  {
+   "captured_at": "2026-11-15T19:09:22.236776",
+   "close_spread": -3.75,
+   "close_total": 51.5,
+   "game_id": "2026_11_CIN_WAS",
+   "ml_away_price": -206.49,
+   "ml_home_price": 168.5,
+   "ml_home_prob": 0.3560082793915811,
+   "polls_unmoved": 1,
+   "spread_price": -107.44186046511626,
+   "spread_price_away": -112.44,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-15T19:09:22.236776"
+  }
+ ],
+ "season": 2026,
+ "week": 11
+}
