@@ -1,0 +1,32 @@
+{
+ "captured_at": "2026-11-15T20:59:45.598416+00:00",
+ "closes": [
+  {
+   "books": 8,
+   "game_id": "2026_10_LA_ARI",
+   "home_win_prob": 0.19463897288980847,
+   "kickoff": "2026-11-15T21:05:00+00:00",
+   "lead_minutes": 5.2400264000000005
+  },
+  {
+   "books": 8,
+   "game_id": "2026_10_SEA_LV",
+   "home_win_prob": 0.28270042194092826,
+   "kickoff": "2026-11-15T21:05:00+00:00",
+   "lead_minutes": 5.2400264000000005
+  },
+  {
+   "books": 8,
+   "game_id": "2026_10_SF_DAL",
+   "home_win_prob": 0.3639819851435925,
+   "kickoff": "2026-11-15T21:25:00+00:00",
+   "lead_minutes": 25.240026399999998
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "3da5908dc661990f776ae14590f85b91a1b4b4f5398f643cfd6d7677ec586cdb",
+ "remaining": 417,
+ "snapshot_id": "20261115T205945Z-3da5908dc661",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 10
+}
