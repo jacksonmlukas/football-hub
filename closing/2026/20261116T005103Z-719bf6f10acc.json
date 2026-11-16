@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-11-16T00:51:03.820240+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_10_PIT_CIN",
+   "home_win_prob": 0.6572769953051644,
+   "kickoff": "2026-11-16T01:20:00+00:00",
+   "lead_minutes": 28.936329333333333
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "719bf6f10accec26e4f8bf0de3e704b86639676b049c0892ec70b7c5a3f934f2",
+ "remaining": 413,
+ "snapshot_id": "20261116T005103Z-719bf6f10acc",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 15
+}
