@@ -1,0 +1,35 @@
+{
+ "captured_at": "2026-11-16T01:06:30.246770",
+ "rows": [
+  {
+   "captured_at": "2026-11-16T01:06:30.246770",
+   "close_spread": 4.0,
+   "close_total": 49.0,
+   "game_id": "2026_10_PIT_CIN",
+   "ml_away_price": 180.0,
+   "ml_home_price": -220.0,
+   "ml_home_prob": 0.6581196581196581,
+   "polls_unmoved": 1,
+   "spread_price": -113.0,
+   "spread_price_away": -105.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-16T01:06:30.246770"
+  },
+  {
+   "captured_at": "2026-11-16T01:06:30.246770",
+   "close_spread": 4.5,
+   "close_total": 39.0,
+   "game_id": "2026_10_LAC_BAL",
+   "ml_away_price": 186.0,
+   "ml_home_price": -225.0,
+   "ml_home_prob": 0.6636481241914618,
+   "polls_unmoved": 3,
+   "spread_price": -109.99999999999999,
+   "spread_price_away": -110.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-15T19:09:22.236776"
+  }
+ ],
+ "season": 2026,
+ "week": 10
+}
