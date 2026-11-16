@@ -1,0 +1,21 @@
+{
+ "captured_at": "2026-11-16T20:42:29.798128",
+ "rows": [
+  {
+   "captured_at": "2026-11-16T20:42:29.798128",
+   "close_spread": 4.5,
+   "close_total": 39.0,
+   "game_id": "2026_10_LAC_BAL",
+   "ml_away_price": 185.0,
+   "ml_home_price": -225.0,
+   "ml_home_prob": 0.6636481241914618,
+   "polls_unmoved": 4,
+   "spread_price": -109.99999999999999,
+   "spread_price_away": -108.0,
+   "total_price": -109.99999999999999,
+   "unmoved_since": "2026-11-15T19:09:22.236776"
+  }
+ ],
+ "season": 2026,
+ "week": 10
+}
