@@ -1,0 +1,349 @@
+{
+ "contestants": [
+  {
+   "abs_gap": {
+    "estimate": 0.158698,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.059004,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "coin_flip",
+   "log_loss_diff": {
+    "estimate": 0.13007,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.16362,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.081356,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "home_constant",
+   "log_loss_diff": {
+    "estimate": 0.174913,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.02207,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.006779,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "hub",
+   "log_loss_diff": {
+    "estimate": 0.016488,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.062642,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.013493,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm1:blind",
+   "log_loss_diff": {
+    "estimate": 0.030333,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.005477,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": -0.001318,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm1:line_aware",
+   "log_loss_diff": {
+    "estimate": -0.003097,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.064623,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.016507,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm2:blind",
+   "log_loss_diff": {
+    "estimate": 0.036406,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.005199,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": -0.000761,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm2:line_aware",
+   "log_loss_diff": {
+    "estimate": -0.00173,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.080029,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.017913,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm3:blind",
+   "log_loss_diff": {
+    "estimate": 0.040883,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.002405,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": -0.000948,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm3:line_aware",
+   "log_loss_diff": {
+    "estimate": -0.002029,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.013024,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": -0.000773,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm4+retrieval:line_aware",
+   "log_loss_diff": {
+    "estimate": -0.00191,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.062229,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": 0.003159,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm4:blind",
+   "log_loss_diff": {
+    "estimate": 0.000921,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  },
+  {
+   "abs_gap": {
+    "estimate": 0.004211,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "brier_diff": {
+    "estimate": -0.000117,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "contestant": "llm4:line_aware",
+   "log_loss_diff": {
+    "estimate": 4.2e-05,
+    "games": 14,
+    "hi": null,
+    "lo": null,
+    "weeks": 1
+   },
+   "missing": 0,
+   "missing_games": [],
+   "scorable": 14
+  }
+ ],
+ "first_scored_week": 10,
+ "h2_implementation": "hub.forecasters.score@58fbfb71d617",
+ "interim": true,
+ "label": "Interim: descriptive, not a test.",
+ "market_snapshot_ids": [
+  "20261105T144035Z-3fbdf9fc6017",
+  "20261108T144019Z-2f84920348a1",
+  "20261108T154021Z-7193fab8c039",
+  "20261109T144019Z-e2802c2948e3",
+  "20261112T144021Z-7ba81080fa0d",
+  "20261114T144013Z-acc591876ffe",
+  "20261115T144018Z-67f8fdfc2d98",
+  "20261116T144019Z-e0288e59f480"
+ ],
+ "missing_games": [],
+ "packet_refused": 0,
+ "scored_weeks": [
+  10
+ ],
+ "season": 2026,
+ "through_week": 10
+}
