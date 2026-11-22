@@ -1,0 +1,32 @@
+{
+ "captured_at": "2026-11-22T20:55:51.904599+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_11_JAX_NYG",
+   "home_win_prob": 0.2918454935622318,
+   "kickoff": "2026-11-22T21:25:00+00:00",
+   "lead_minutes": 29.13492335
+  },
+  {
+   "books": 9,
+   "game_id": "2026_11_LV_DEN",
+   "home_win_prob": 0.8384831460674158,
+   "kickoff": "2026-11-22T21:25:00+00:00",
+   "lead_minutes": 29.13492335
+  },
+  {
+   "books": 9,
+   "game_id": "2026_11_NYJ_LAC",
+   "home_win_prob": 0.6102941176470588,
+   "kickoff": "2026-11-22T21:05:00+00:00",
+   "lead_minutes": 9.134923350000001
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "3e32a90d63afd2985e38e44e2ae8b287a205c3fa9c8bae37e864800252b2752c",
+ "remaining": 383,
+ "snapshot_id": "20261122T205551Z-3e32a90d63af",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 10
+}
