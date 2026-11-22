@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-11-22T20:35:57.036126+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_11_NYJ_LAC",
+   "home_win_prob": 0.6102941176470588,
+   "kickoff": "2026-11-22T21:05:00+00:00",
+   "lead_minutes": 29.0493979
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "99549e3b6a9c334a3fd726d867a4d72ffa3681cb78aff94003605523a2877b6c",
+ "remaining": 387,
+ "snapshot_id": "20261122T203557Z-99549e3b6a9c",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 12
+}
