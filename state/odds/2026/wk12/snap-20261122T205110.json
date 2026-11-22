@@ -1,0 +1,21 @@
+{
+ "captured_at": "2026-11-22T20:51:10.936155",
+ "rows": [
+  {
+   "captured_at": "2026-11-22T20:51:10.936155",
+   "close_spread": 3.0,
+   "close_total": 45.5,
+   "game_id": "2026_12_GB_LA",
+   "ml_away_price": 140.0,
+   "ml_home_price": -169.0,
+   "ml_home_prob": 0.6032331337207587,
+   "polls_unmoved": 1,
+   "spread_price": -112.44444444444444,
+   "spread_price_away": -106.99,
+   "total_price": -108.99082568807339,
+   "unmoved_since": "2026-11-22T20:51:10.936155"
+  }
+ ],
+ "season": 2026,
+ "week": 12
+}
