@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-11-23T00:53:21.309964+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_11_MIN_SF",
+   "home_win_prob": 0.6588235294117647,
+   "kickoff": "2026-11-23T01:20:00+00:00",
+   "lead_minutes": 26.644833933333334
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "c9704d2f5f8f12863e7cdd517e99d1e0c4c46b41e96cb3d4d9f8e89af2b7af99",
+ "remaining": 379,
+ "snapshot_id": "20261123T005321Z-c9704d2f5f8f",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 19
+}
