@@ -1,7 +1,7 @@
 {
-  "remaining": 364,
-  "checked_at": "2026-11-26T14:40:20.017990",
-  "last_cost": 5,
-  "declared_cost": 2,
-  "asked_for": "study:forecast:h2h,spreads"
+  "remaining": 360,
+  "checked_at": "2026-11-26T21:01:19.846224",
+  "last_cost": 4,
+  "declared_cost": 1,
+  "asked_for": "study:closing:h2h"
 }
