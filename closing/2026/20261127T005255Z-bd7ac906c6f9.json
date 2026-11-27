@@ -1,0 +1,18 @@
+{
+ "captured_at": "2026-11-27T00:52:55.088289+00:00",
+ "closes": [
+  {
+   "books": 9,
+   "game_id": "2026_12_KC_BUF",
+   "home_win_prob": 0.595,
+   "kickoff": "2026-11-27T01:20:00+00:00",
+   "lead_minutes": 27.08186185
+  }
+ ],
+ "job": "closing",
+ "raw_sha256": "bd7ac906c6f919c6fb74f8504d46822cef6db20a0cca2c404fa1157c08e6151b",
+ "remaining": 356,
+ "snapshot_id": "20261127T005255Z-bd7ac906c6f9",
+ "source": "the-odds-api v4 /sports/americanfootball_nfl/odds",
+ "unmatched": 23
+}
